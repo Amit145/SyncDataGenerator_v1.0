@@ -330,6 +330,27 @@ for row in sat_pol:
     elif policy_start < earliest_policy_start_by_person[person_hk]:
         earliest_policy_start_by_person[person_hk] = policy_start
 
+for row in sat_lea:
+    lead_hk = row.get("Lead Hash Key")
+    converted_date = row.get("Converted Date")
+    if not lead_hk or not converted_date:
+        continue
+
+    person_hk = lead_to_person_map.get(lead_hk)
+    if not person_hk:
+        continue
+
+    earliest_policy_start = earliest_policy_start_by_person.get(person_hk)
+    if not earliest_policy_start:
+        continue
+
+    converted_dt = datetime.fromisoformat(converted_date)
+    earliest_policy_dt = datetime.fromisoformat(earliest_policy_start)
+
+    min_allowed_converted_dt = earliest_policy_dt - timedelta(days=1)
+    if converted_dt > min_allowed_converted_dt:
+        row["Converted Date"] = min_allowed_converted_dt.strftime("%Y-%m-%d %H:%M:%S")
+
 sat_cus = sat_customer(
     person_to_customer,
     SAT_DATE,

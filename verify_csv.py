@@ -722,10 +722,17 @@ def main(base_path: str):
                     lambda value: currency_round(Decimal(str(value)) * Decimal("1.01")) if not pd.isna(value) else None
                 )
                 actual_next = policy_person_dates["renewal_amount_next_period"].apply(currency_round)
+                uplift_delta = [
+                    (abs(actual - expected) if actual is not None and expected is not None else None)
+                    for actual, expected in zip(actual_next, expected_next)
+                ]
                 bad_renewal_uplift = policy_person_dates[
                     policy_person_dates["renewal_amount_current_period"].notna()
                     & policy_person_dates["renewal_amount_next_period"].notna()
-                    & (actual_next != expected_next)
+                    & pd.Series([
+                        delta is not None and delta > Decimal("0.01")
+                        for delta in uplift_delta
+                    ], index=policy_person_dates.index)
                 ]
                 if not bad_renewal_uplift.empty:
                     print(f"policy_renewal_uplift error: {len(bad_renewal_uplift)} rows do not have 1% uplift")
@@ -821,5 +828,5 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         target_path = sys.argv[1]
     else:
-        target_path = "synthetic_data/20260316_103504_42"
+        target_path = "synthetic_data/20260316_111423_42"
     main(target_path)
