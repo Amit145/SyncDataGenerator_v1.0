@@ -1,0 +1,107 @@
+from pyspark.sql import functions as F, Window
+
+def get_parent_hk(df):
+    hk_cols = [c for c in df.columns if c.endswith("_hash_key")]
+    
+    if len(hk_cols) != 1:
+        raise ValueError(f"Expected 1 parent hash key, found {hk_cols}")
+    
+    return hk_cols[0]
+
+from pyspark.sql import functions as F
+
+def split_columns(df):
+    
+    # Rule for tech columns
+    tech_cols = [
+        c for c in df.columns
+        if (
+            c.endswith("_hash_key")
+            or c.lower() in {
+                "load_date",
+                "record_source",
+                "hashdiff",
+                "effective_from",
+                "effective_to",
+                "is_current"
+            }
+        )
+    ]
+    
+    # Descriptive columns
+    desc_cols = [c for c in df.columns if c not in tech_cols]
+    
+    return tech_cols, desc_cols
+
+def process_sat_incremental(df_new, df_existing):
+    
+    tech_cols, desc_cols = split_columns(df_new)
+    hk_col = get_parent_hk(df_new)
+    
+    # Create temp hashdiff for comparison
+    def add_hashdiff(df):
+        return df.withColumn(
+            "_tmp_hashdiff",
+            F.md5(
+                F.concat_ws(
+                    "||",
+                    *[F.coalesce(F.col(c).cast("string"), F.lit("âˆ…")) for c in desc_cols]
+                )
+            )
+        )
+    
+    df_new_h = add_hashdiff(df_new)
+    df_existing_h = add_hashdiff(df_existing)
+    
+    # Get latest record per HK
+    window = Window.partitionBy(hk_col).orderBy(F.col("load_date").desc())
+    
+    df_latest = (
+        df_existing_h
+        .withColumn("rn", F.row_number().over(window))
+        .filter(F.col("rn") == 1)
+        .select(hk_col, "_tmp_hashdiff")
+        .withColumnRenamed("_tmp_hashdiff", "_latest_hashdiff")
+    )
+    
+    # Compare
+    df_to_insert = (
+        df_new_h
+        .join(df_latest, on=hk_col, how="left")
+        .filter(
+            F.col("_latest_hashdiff").isNull()
+            | (F.col("_tmp_hashdiff") != F.col("_latest_hashdiff"))
+        )
+        .drop("_tmp_hashdiff", "_latest_hashdiff")
+    )
+    
+    # Append changed rows only
+    #df_to_insert.write.format("delta").mode("append").saveAsTable(table_name)
+    
+    print(f"{table_name} -> Inserted rows: {df_to_insert.count()}")
+
+import pyspark.sql.functions as F
+from pyspark.sql.functions import expr
+
+# Run for Incremental load or SCD2 load - /data, /scd2
+input_csv_path = "/Volumes/allianz/general/files_volume/amit/incremental_data/20260226_091958_42/"
+
+catalog = 'allianz_coe'
+schema = 'dvault_360'
+
+files = dbutils.fs.ls(input_csv_path)
+
+for f in files:
+    if f.name.endswith('.csv') and f.name == 'sat_policy.csv':
+        table_name = f.name[:-4]
+
+        if table_name.startswith('sat_'):
+            # Load CSV Dataframe
+            df = spark.read.format('csv').option('header', 'true').option('inferSchema', 'true').option('multiLine', 'true').load(f.path)
+            print(df.count())
+            # Load relevant table
+            delta_table = spark.table(f'{catalog}.{schema}.{table_name}')
+            print(delta_table.count())
+            process_sat_incremental(df, delta_table)
+                        
+            

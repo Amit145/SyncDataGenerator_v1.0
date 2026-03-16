@@ -1,0 +1,17 @@
+Policy Lifecycle:
+
+if a person holds policy
+-policy tenure from first policy will be 3 monhts
+-set dates automatically based on policy tenure like start date, end date renewal date
+-a person renews a policy within 0-10 days
+- make sure if dates are present dates it should be active and appropriate renewal date and plicu status
+
+- Lead to POLICY Conversion
+
+Make sure lead turns into policy any time between 1-30 days
+
+renewal cost should be increase in 1% of exisiting policy
+ALL insurance coroprate or personal can be any valid tenures. ensuring they follow all above rules
+
+all cob=nversion
+lead to policy, quote to policy, funnel drop off and avg conversion time should be valid

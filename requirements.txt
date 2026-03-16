@@ -1,0 +1,7 @@
+faker
+pandas
+dotenv
+python-dotenv
+tqdm
+openai
+anthropic
