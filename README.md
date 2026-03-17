@@ -132,7 +132,7 @@ Semantic product meaning is preserved in:
 - policies are created from quotes
 - first policy tenure is `1 year`
 - `Policy Length = 12`
-- `Policy Start Date = latest lead converted date + 1 to 30 days`
+- `Policy Start Date = latest lead converted date + 1 to 90 days`
 - `Policy End Date = Policy Start Date + 1 year` for non-cancelled policies
 - `Renewal Date = Policy End Date - 0 to 10 days`
 - `Renewal Amount Next Period = Renewal Amount Current Period * 1.01`
@@ -191,7 +191,7 @@ Dates that may be after load date:
 Currently validated timelines:
 
 - `Lead Converted Date < Policy Start Date < Policy End Date`
-- lead-to-policy conversion window is `1 to 30 days`
+- lead-to-policy conversion window is `1 to 90 days`
 - policy renewal window is `0 to 10 days` before end date
 - non-cancelled policy duration is exactly `1 year`
 - renewal uplift is exactly `1%`

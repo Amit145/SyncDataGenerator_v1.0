@@ -44,6 +44,9 @@ from helper.satellite_builder import (
     sat_home,
     sat_motor,
     sat_product,
+    apply_lead_interest_levels,
+    apply_customer_segments,
+    apply_customer_ratings,
 )
 
 from misc.ref_check import latest_run, second_latest_run
@@ -310,6 +313,13 @@ sat_pol = sat_policy(
     latest_lead_converted_by_person=latest_lead_converted_by_person,
     person_account_status_by_person=person_account_status_by_person,
 )
+sat_lea = apply_lead_interest_levels(
+    sat_lea,
+    person_to_lead,
+    policy_holder_persons=policy_holder_persons,
+    quote_persons=set(person_to_quote.keys()),
+    engaged_persons=set(person_to_men.keys()),
+)
 
 earliest_policy_start_by_person = {}
 for row in sat_pol:
@@ -357,6 +367,22 @@ sat_cus = sat_customer(
     business_start_date=BUSINESS_START_DATE,
     as_of_date=AS_OF_DATE,
     earliest_policy_start_by_person=earliest_policy_start_by_person,
+)
+sat_cus = apply_customer_segments(
+    sat_cus,
+    person_to_customer,
+    person_to_account_hk=person_to_account,
+    sat_policy_rows=sat_pol,
+    sat_account_rows=sat_acc,
+    policy_to_person_map=policy_to_person_map,
+)
+sat_cus = apply_customer_ratings(
+    sat_cus,
+    person_to_customer,
+    person_to_account_hk=person_to_account,
+    sat_policy_rows=sat_pol,
+    sat_account_rows=sat_acc,
+    policy_to_person_map=policy_to_person_map,
 )
 
 motor_hks = [r["Motor Hash Key"] for r in hub_mot_rows]
@@ -484,10 +510,10 @@ if are_files_checked:
 
         second_latest_run_path = second_latest_run()
         if second_latest_run_path:
-            second_latest_run_path = second_latest_run_path.replace("output", "")
-            scd2_input = SYNTHETIC_DATA + "\\" + second_latest_run_path + "\\"
-            scd2_output = SATELLITE_PATH + "\\" + second_latest_run_path + "\\"
-            create_scd_data(scd2_input, scd2_output, SAT_DATE)
+            current_run_name = latest_run_path_new.lstrip("\\/")
+            scd2_input = SYNTHETIC_DATA
+            scd2_output = SATELLITE_PATH + "\\" + current_run_name + "\\"
+            create_scd_data(scd2_input, scd2_output, SAT_DATE, exclude_run_name=current_run_name)
 
 end_time = datetime.now()
 print("Total time taken:", end_time - start_time)

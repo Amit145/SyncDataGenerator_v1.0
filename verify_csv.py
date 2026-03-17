@@ -573,6 +573,258 @@ def main(base_path: str):
     else:
         print("policy_home_asset valid")
 
+    print("\n===== DERIVED ATTRIBUTE RULES =====\n")
+
+    if not sat_lead.empty and {"lead_hash_key", "interested_level", "person_score"}.issubset(sat_lead.columns) and {"person_hash_key", "lead_hash_key"}.issubset(l_p_lead.columns):
+        lead_eval = sat_lead[["lead_hash_key", "interested_level", "person_score"]].copy().merge(
+            l_p_lead[["person_hash_key", "lead_hash_key"]],
+            on="lead_hash_key",
+            how="left",
+        )
+        lead_eval["interested_level"] = lead_eval["interested_level"].astype(str).str.upper().str.strip()
+        lead_eval["person_score"] = pd.to_numeric(lead_eval["person_score"], errors="coerce").fillna(0)
+
+        expected_interested = []
+        for _, row in lead_eval.iterrows():
+            person_hk = row.get("person_hash_key")
+            person_score = row.get("person_score", 0)
+            if person_hk in policy_holder_persons or person_hk in quote_persons:
+                expected_interested.append("HIGH")
+            elif person_hk in men_persons or person_score >= 70:
+                expected_interested.append("MEDIUM")
+            else:
+                expected_interested.append("LOW")
+
+        lead_eval["expected_interested_level"] = expected_interested
+        bad_interested = lead_eval[lead_eval["interested_level"] != lead_eval["expected_interested_level"]]
+        if not bad_interested.empty:
+            print(f"lead_interested_level error: {len(bad_interested)} rows do not match derived logic")
+            print(
+                "sample:",
+                bad_interested[["lead_hash_key", "person_hash_key", "interested_level", "expected_interested_level", "person_score"]]
+                .head(10)
+                .to_dict("records")
+            )
+        else:
+            print("lead_interested_level valid")
+    else:
+        print("lead_interested_level: skipped (missing required files/columns)")
+
+    policy_to_person_df = pd.DataFrame()
+    if {"policy_hash_key", "customer_hash_key"}.issubset(l_pol_customer.columns) and {"customer_hash_key", "person_hash_key"}.issubset(l_c_person.columns):
+        policy_to_person_df = (
+            l_pol_customer[["policy_hash_key", "customer_hash_key"]]
+            .merge(l_c_person[["customer_hash_key", "person_hash_key"]], on="customer_hash_key", how="left")
+        )
+
+    account_status_by_person = {}
+    if not sat_account.empty and {"account_hash_key", "account_status"}.issubset(sat_account.columns) and {"person_hash_key", "account_hash_key"}.issubset(l_p_account.columns):
+        account_status_by_person = dict(
+            l_p_account[["person_hash_key", "account_hash_key"]]
+            .merge(sat_account[["account_hash_key", "account_status"]], on="account_hash_key", how="left")
+            .dropna(subset=["person_hash_key", "account_status"])
+            .drop_duplicates(subset=["person_hash_key"], keep="last")[["person_hash_key", "account_status"]]
+            .itertuples(index=False, name=None)
+        )
+
+    if not sat_policy.empty and not policy_to_person_df.empty and {
+        "policy_hash_key", "policy_status", "fraud_flag", "gross_revenue", "declined_claims",
+        "number_of_active_claim", "number_of_previous_claim"
+    }.issubset(sat_policy.columns):
+        policy_eval = sat_policy[[
+            "policy_hash_key",
+            "policy_status",
+            "fraud_flag",
+            "gross_revenue",
+            "declined_claims",
+            "number_of_active_claim",
+            "number_of_previous_claim",
+        ]].copy().merge(policy_to_person_df[["policy_hash_key", "person_hash_key"]], on="policy_hash_key", how="left")
+
+        policy_eval["declined_claims"] = pd.to_numeric(policy_eval["declined_claims"], errors="coerce").fillna(0)
+        policy_eval["number_of_active_claim"] = pd.to_numeric(policy_eval["number_of_active_claim"], errors="coerce").fillna(0)
+        policy_eval["number_of_previous_claim"] = pd.to_numeric(policy_eval["number_of_previous_claim"], errors="coerce").fillna(0)
+        policy_eval["fraud_flag"] = policy_eval["fraud_flag"].astype(str).str.upper().str.strip()
+        policy_eval["account_status"] = policy_eval["person_hash_key"].map(account_status_by_person)
+
+        def expected_fraud_flag(row):
+            score = 0
+            if row["declined_claims"] > 0:
+                score += 2
+            if row["number_of_previous_claim"] >= 3:
+                score += 1
+            if row["number_of_active_claim"] >= 2:
+                score += 1
+            if row["policy_status"] == "CANCELLED":
+                score += 2
+            elif row["policy_status"] == "LAPSED":
+                score += 1
+            if row["account_status"] == "SUSPENDED":
+                score += 2
+            elif row["account_status"] == "CLOSED":
+                score += 3
+            return "Y" if score >= 3 else "N"
+
+        policy_eval["expected_fraud_flag"] = policy_eval.apply(expected_fraud_flag, axis=1)
+        bad_fraud = policy_eval[policy_eval["fraud_flag"] != policy_eval["expected_fraud_flag"]]
+        if not bad_fraud.empty:
+            print(f"policy_fraud_flag error: {len(bad_fraud)} rows do not match fraud rules")
+            print(
+                "sample:",
+                bad_fraud[[
+                    "policy_hash_key", "person_hash_key", "policy_status", "account_status",
+                    "declined_claims", "number_of_active_claim", "number_of_previous_claim",
+                    "fraud_flag", "expected_fraud_flag"
+                ]].head(10).to_dict("records")
+            )
+        else:
+            print("policy_fraud_flag valid")
+    else:
+        print("policy_fraud_flag: skipped (missing required files/columns)")
+
+    if not sat_customer.empty and {"customer_hash_key", "customer_status", "customer_segment", "customer_rating", "nps_score"}.issubset(sat_customer.columns) and {"customer_hash_key", "person_hash_key"}.issubset(l_c_person.columns):
+        customer_eval = sat_customer[["customer_hash_key", "customer_status", "customer_segment", "customer_rating", "nps_score"]].copy().merge(
+            l_c_person[["customer_hash_key", "person_hash_key"]],
+            on="customer_hash_key",
+            how="left",
+        )
+        customer_eval["customer_segment"] = customer_eval["customer_segment"].astype(str).str.upper().str.strip()
+        customer_eval["customer_rating"] = pd.to_numeric(customer_eval["customer_rating"], errors="coerce")
+        customer_eval["nps_score"] = pd.to_numeric(customer_eval["nps_score"], errors="coerce").fillna(0)
+
+        person_policy_summary = {}
+        if not sat_policy.empty and not policy_to_person_df.empty and {"policy_hash_key", "policy_status", "fraud_flag", "gross_revenue", "declined_claims"}.issubset(sat_policy.columns):
+            policy_summary_df = sat_policy[[
+                "policy_hash_key", "policy_status", "fraud_flag", "gross_revenue", "declined_claims"
+            ]].copy().merge(policy_to_person_df[["policy_hash_key", "person_hash_key"]], on="policy_hash_key", how="left")
+            policy_summary_df["gross_revenue"] = pd.to_numeric(policy_summary_df["gross_revenue"], errors="coerce").fillna(0)
+            policy_summary_df["declined_claims"] = pd.to_numeric(policy_summary_df["declined_claims"], errors="coerce").fillna(0)
+
+            for _, row in policy_summary_df.iterrows():
+                person_hk = row.get("person_hash_key")
+                if pd.isna(person_hk):
+                    continue
+                summary = person_policy_summary.setdefault(person_hk, {
+                    "has_active": False,
+                    "has_lapsed": False,
+                    "has_cancelled": False,
+                    "fraud_flag": False,
+                    "max_revenue": 0.0,
+                    "declined_claims": 0,
+                })
+                if row["policy_status"] == "ACTIVE":
+                    summary["has_active"] = True
+                elif row["policy_status"] == "LAPSED":
+                    summary["has_lapsed"] = True
+                elif row["policy_status"] == "CANCELLED":
+                    summary["has_cancelled"] = True
+                summary["fraud_flag"] = summary["fraud_flag"] or (str(row["fraud_flag"]).upper().strip() == "Y")
+                summary["max_revenue"] = max(summary["max_revenue"], float(row["gross_revenue"]))
+                summary["declined_claims"] = max(summary["declined_claims"], int(row["declined_claims"]))
+
+        expected_segments = []
+        expected_ratings = []
+        for _, row in customer_eval.iterrows():
+            person_hk = row.get("person_hash_key")
+            policy_summary = person_policy_summary.get(person_hk, {})
+            account_status = account_status_by_person.get(person_hk)
+            nps_score = int(row.get("nps_score", 0))
+
+            segment_score = 0
+            if policy_summary.get("has_active"):
+                segment_score += 1
+            if account_status == "OPEN":
+                segment_score += 1
+            if nps_score >= 8:
+                segment_score += 1
+            if policy_summary.get("max_revenue", 0) >= 1200:
+                segment_score += 1
+            if policy_summary.get("fraud_flag"):
+                segment_score -= 2
+            if policy_summary.get("has_cancelled"):
+                segment_score -= 1
+            elif policy_summary.get("has_lapsed"):
+                segment_score -= 1
+
+            expected_segment = "PREMIUM" if segment_score >= 3 else "STANDARD"
+            expected_segments.append(expected_segment)
+
+            rating = 3
+            customer_status = row.get("customer_status", None)
+            if customer_status == "ACTIVE":
+                rating += 1
+            if expected_segment == "PREMIUM":
+                rating += 1
+            if nps_score >= 8:
+                rating += 1
+            elif nps_score <= 3:
+                rating -= 1
+            if policy_summary.get("has_active"):
+                rating += 1
+            if policy_summary.get("has_lapsed"):
+                rating -= 1
+            if policy_summary.get("has_cancelled"):
+                rating -= 2
+            if account_status == "OPEN":
+                rating += 1
+            elif account_status == "SUSPENDED":
+                rating -= 1
+            elif account_status == "CLOSED":
+                rating -= 2
+            if policy_summary.get("fraud_flag"):
+                rating -= 2
+            if policy_summary.get("declined_claims", 0) > 0:
+                rating -= 1
+            expected_ratings.append(max(1, min(5, rating)))
+
+        customer_eval["expected_customer_segment"] = expected_segments
+        customer_eval["expected_customer_rating"] = expected_ratings
+
+        bad_segment = customer_eval[customer_eval["customer_segment"] != customer_eval["expected_customer_segment"]]
+        if not bad_segment.empty:
+            print(f"customer_segment error: {len(bad_segment)} rows do not match segment rules")
+            print(
+                "sample:",
+                bad_segment[["customer_hash_key", "person_hash_key", "customer_segment", "expected_customer_segment", "nps_score"]]
+                .head(10)
+                .to_dict("records")
+            )
+        else:
+            print("customer_segment valid")
+
+        out_of_range_rating = customer_eval[
+            customer_eval["customer_rating"].notna()
+            & ((customer_eval["customer_rating"] < 1) | (customer_eval["customer_rating"] > 5))
+        ]
+        if not out_of_range_rating.empty:
+            print(f"customer_rating_range error: {len(out_of_range_rating)} rows outside 1..5")
+            print(
+                "sample:",
+                out_of_range_rating[["customer_hash_key", "customer_rating"]].head(10).to_dict("records")
+            )
+        else:
+            print("customer_rating_range valid")
+
+        bad_rating = customer_eval[
+            customer_eval["customer_rating"].notna()
+            & (customer_eval["customer_rating"].astype(int) != customer_eval["expected_customer_rating"])
+        ]
+        if not bad_rating.empty:
+            print(f"customer_rating error: {len(bad_rating)} rows do not match rating rules")
+            print(
+                "sample:",
+                bad_rating[[
+                    "customer_hash_key", "person_hash_key", "customer_rating", "expected_customer_rating",
+                    "customer_segment", "expected_customer_segment", "nps_score"
+                ]].head(10).to_dict("records")
+            )
+        else:
+            print("customer_rating valid")
+    else:
+        print("customer_segment: skipped (missing required files/columns)")
+        print("customer_rating_range: skipped (missing required files/columns)")
+        print("customer_rating: skipped (missing required files/columns)")
+
     print("\n===== TIMELINE RULES =====\n")
 
     hub_load_dt = first_load_date(hub_person)
@@ -789,10 +1041,10 @@ def main(base_path: str):
             bad_lead_policy_window = policy_person_dates[
                 policy_person_dates["converted_date"].notna()
                 & policy_person_dates["policy_start_date"].notna()
-                & ((lead_policy_days < 1) | (lead_policy_days > 30))
+                & ((lead_policy_days < 1) | (lead_policy_days > 90))
             ]
             if not bad_lead_policy_window.empty:
-                print(f"lead_to_policy_window error: {len(bad_lead_policy_window)} rows outside 1-30 days")
+                print(f"lead_to_policy_window error: {len(bad_lead_policy_window)} rows outside 1-90 days")
                 print(
                     "sample:",
                     bad_lead_policy_window[["person_hash_key", "policy_hash_key", "converted_date", "policy_start_date"]]
@@ -828,5 +1080,5 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         target_path = sys.argv[1]
     else:
-        target_path = "synthetic_data/20260316_111423_42"
+        target_path = "synthetic_data/20260317_125239_42"
     main(target_path)

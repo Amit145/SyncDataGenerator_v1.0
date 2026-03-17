@@ -363,7 +363,7 @@ def sat_natural_person(person_to_nat_hk, load_date):
                 "Full Name": p["full_name"],
                 "Courtesy Title": p["title"],
                 "Occupation": p["occupation"],
-                "Birth Date": birth_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                "Birth Date": birth_dt.strftime("%Y-%m-%d"),
                 "Birth Year": p["birth_year"],
                 "Nationality": p["nationality"],
                 "Gender": p["gender"],
@@ -426,7 +426,15 @@ def sat_person(person_hks, load_date, person_type, person_to_lead=None, person_t
 
 
 # ---------------- LEAD ----------------
-def sat_lead(person_to_lead_hk, load_date, business_start_date="2020-01-01", as_of_date=None):
+def sat_lead(
+        person_to_lead_hk,
+        load_date,
+        business_start_date="2020-01-01",
+        as_of_date=None,
+        policy_holder_persons=None,
+        quote_persons=None,
+        engaged_persons=None,
+):
     """
     No new columns.
     Makes Converted Date realistic within a known window instead of "this decade".
@@ -435,20 +443,71 @@ def sat_lead(person_to_lead_hk, load_date, business_start_date="2020-01-01", as_
     biz_start = _as_date(business_start_date)
     upper_dt = min(_coerce_datetime(as_of_date), _coerce_datetime(load_date)) if as_of_date else _coerce_datetime(load_date)
     upper_date = upper_dt.date()
+    policy_holder_persons = set(policy_holder_persons or [])
+    quote_persons = set(quote_persons or [])
+    engaged_persons = set(engaged_persons or [])
 
-    for _, hk_or_hks in person_to_lead_hk.items():
+    for person_hk, hk_or_hks in person_to_lead_hk.items():
         for lead_hk in _as_list(hk_or_hks):
             converted_dt = _cap_datetime_to_load(_rand_datetime_between(biz_start, upper_date), load_date)
+            person_score = random.randint(1, 100)
+
+            if person_hk in policy_holder_persons or person_hk in quote_persons:
+                interested_level = "HIGH"
+            elif person_hk in engaged_persons:
+                interested_level = "MEDIUM"
+            elif person_score >= 70:
+                interested_level = "MEDIUM"
+            else:
+                interested_level = "LOW"
+
             rows.append({
                 "Lead Hash Key": lead_hk,
                 "Load Date": load_date,
-                "Interested Level": random.choice(["LOW", "MEDIUM", "HIGH"]),
+                "Interested Level": interested_level,
                 "Preferred Contact Method": random.choice(["EMAIL", "SMS", "CALL"]),
-                "Person Score": random.randint(1, 100),
+                "Person Score": person_score,
                 "Person Status": random.choice(["NEW", "QUALIFIED"]),
                 "Converted Date": converted_dt.strftime("%Y-%m-%d %H:%M:%S")
             })
     return rows
+
+
+def apply_lead_interest_levels(
+        sat_lead_rows,
+        person_to_lead_hk,
+        policy_holder_persons=None,
+        quote_persons=None,
+        engaged_persons=None,
+):
+    policy_holder_persons = set(policy_holder_persons or [])
+    quote_persons = set(quote_persons or [])
+    engaged_persons = set(engaged_persons or [])
+
+    lead_to_person = {}
+    for person_hk, lead_hks in person_to_lead_hk.items():
+        for lead_hk in _as_list(lead_hks):
+            lead_to_person[lead_hk] = person_hk
+
+    for row in sat_lead_rows:
+        lead_hk = row.get("Lead Hash Key")
+        person_hk = lead_to_person.get(lead_hk)
+        if not person_hk:
+            continue
+
+        person_score = row.get("Person Score", 0)
+        if person_hk in policy_holder_persons or person_hk in quote_persons:
+            interested_level = "HIGH"
+        elif person_hk in engaged_persons:
+            interested_level = "MEDIUM"
+        elif person_score >= 70:
+            interested_level = "MEDIUM"
+        else:
+            interested_level = "LOW"
+
+        row["Interested Level"] = interested_level
+
+    return sat_lead_rows
 
 
 # ---------------- CUSTOMER ----------------
@@ -494,12 +553,207 @@ def sat_customer(
                 "Customer Status": random.choice(["ACTIVE", "LAPSED"]),
                 "Customer Status Reason": random.choice(["RENEWAL", "PAYMENT", "CUSTOMER_REQUEST"]),
                 "Customer Since": customer_since.strftime("%Y-%m-%d %H:%M:%S"),
-                "Customer Rating": random.randint(1, 5),
-                "Customer Segment": random.choice(["STANDARD", "PREMIUM"]),
+                "Customer Rating": 3,
+                "Customer Segment": "STANDARD",
                 "Line Of Business": random.choice(["MOTOR", "HOME"]),
                 "NPS Score": random.randint(0, 10)
             })
     return rows
+
+
+def apply_customer_segments(
+        sat_customer_rows,
+        person_to_customer_hk,
+        person_to_account_hk=None,
+        sat_policy_rows=None,
+        sat_account_rows=None,
+        policy_to_person_map=None,
+):
+    sat_policy_rows = sat_policy_rows or []
+    sat_account_rows = sat_account_rows or []
+    policy_to_person_map = policy_to_person_map or {}
+    person_to_account_hk = person_to_account_hk or {}
+
+    customer_to_person = {}
+    for person_hk, customer_hk_or_hks in person_to_customer_hk.items():
+        for customer_hk in _as_list(customer_hk_or_hks):
+            customer_to_person[customer_hk] = person_hk
+
+    account_to_person = {}
+    for person_hk, account_hk_or_hks in person_to_account_hk.items():
+        for account_hk in _as_list(account_hk_or_hks):
+            account_to_person[account_hk] = person_hk
+
+    person_account_status = {}
+    for row in sat_account_rows:
+        account_hk = row.get("Account Hash Key")
+        account_status = row.get("Account Status")
+        if not account_hk or not account_status:
+            continue
+        person_hk = account_to_person.get(account_hk)
+        if person_hk:
+            person_account_status[person_hk] = account_status
+
+    person_policy_summary = {}
+    for row in sat_policy_rows:
+        policy_hk = row.get("Policy Hash Key")
+        person_hk = policy_to_person_map.get(policy_hk)
+        if not person_hk:
+            continue
+
+        summary = person_policy_summary.setdefault(person_hk, {
+            "has_active": False,
+            "has_lapsed": False,
+            "has_cancelled": False,
+            "fraud_flag": False,
+            "max_revenue": 0.0,
+        })
+
+        status = row.get("Policy Status")
+        if status == "ACTIVE":
+            summary["has_active"] = True
+        elif status == "LAPSED":
+            summary["has_lapsed"] = True
+        elif status == "CANCELLED":
+            summary["has_cancelled"] = True
+
+        summary["fraud_flag"] = summary["fraud_flag"] or (row.get("Fraud Flag") == "Y")
+        summary["max_revenue"] = max(summary["max_revenue"], float(row.get("Gross Revenue", 0) or 0))
+
+    for row in sat_customer_rows:
+        customer_hk = row.get("Customer Hash Key")
+        person_hk = customer_to_person.get(customer_hk)
+        if not person_hk:
+            row["Customer Segment"] = "STANDARD"
+            continue
+
+        segment_score = 0
+        account_status = person_account_status.get(person_hk)
+        policy_summary = person_policy_summary.get(person_hk, {})
+        nps_score = int(row.get("NPS Score", 0))
+
+        if policy_summary.get("has_active"):
+            segment_score += 1
+        if account_status == "OPEN":
+            segment_score += 1
+        if nps_score >= 8:
+            segment_score += 1
+        if policy_summary.get("max_revenue", 0) >= 1200:
+            segment_score += 1
+        if policy_summary.get("fraud_flag"):
+            segment_score -= 2
+        if policy_summary.get("has_cancelled"):
+            segment_score -= 1
+        elif policy_summary.get("has_lapsed"):
+            segment_score -= 1
+
+        row["Customer Segment"] = "PREMIUM" if segment_score >= 3 else "STANDARD"
+
+    return sat_customer_rows
+
+
+def apply_customer_ratings(
+        sat_customer_rows,
+        person_to_customer_hk,
+        person_to_account_hk=None,
+        sat_policy_rows=None,
+        sat_account_rows=None,
+        policy_to_person_map=None,
+):
+    sat_policy_rows = sat_policy_rows or []
+    sat_account_rows = sat_account_rows or []
+    policy_to_person_map = policy_to_person_map or {}
+    person_to_account_hk = person_to_account_hk or {}
+
+    customer_to_person = {}
+    for person_hk, customer_hk_or_hks in person_to_customer_hk.items():
+        for customer_hk in _as_list(customer_hk_or_hks):
+            customer_to_person[customer_hk] = person_hk
+
+    person_policy_summary = {}
+    for row in sat_policy_rows:
+        policy_hk = row.get("Policy Hash Key")
+        person_hk = policy_to_person_map.get(policy_hk)
+        if not person_hk:
+            continue
+
+        summary = person_policy_summary.setdefault(person_hk, {
+            "has_active": False,
+            "has_lapsed": False,
+            "has_cancelled": False,
+            "fraud_flag": False,
+            "declined_claims": 0,
+        })
+
+        status = row.get("Policy Status")
+        if status == "ACTIVE":
+            summary["has_active"] = True
+        elif status == "LAPSED":
+            summary["has_lapsed"] = True
+        elif status == "CANCELLED":
+            summary["has_cancelled"] = True
+
+        summary["fraud_flag"] = summary["fraud_flag"] or (row.get("Fraud Flag") == "Y")
+        summary["declined_claims"] = max(summary["declined_claims"], int(row.get("Declined Claims", 0)))
+
+    account_to_person = {}
+    for person_hk, account_hk_or_hks in person_to_account_hk.items():
+        for account_hk in _as_list(account_hk_or_hks):
+            account_to_person[account_hk] = person_hk
+
+    person_account_status = {}
+    for row in sat_account_rows:
+        account_hk = row.get("Account Hash Key")
+        account_status = row.get("Account Status")
+        if not account_hk or not account_status:
+            continue
+        person_hk = account_to_person.get(account_hk)
+        if person_hk:
+            person_account_status[person_hk] = account_status
+
+    for row in sat_customer_rows:
+        customer_hk = row.get("Customer Hash Key")
+        person_hk = customer_to_person.get(customer_hk)
+        if not person_hk:
+            row["Customer Rating"] = max(1, min(5, int(row.get("Customer Rating", 3))))
+            continue
+
+        score = 3
+        customer_status = row.get("Customer Status")
+        customer_segment = row.get("Customer Segment")
+        nps_score = int(row.get("NPS Score", 0))
+
+        policy_summary = person_policy_summary.get(person_hk, {})
+        if customer_status == "ACTIVE":
+            score += 1
+        if customer_segment == "PREMIUM":
+            score += 1
+        if nps_score >= 8:
+            score += 1
+        elif nps_score <= 3:
+            score -= 1
+
+        if policy_summary.get("has_active"):
+            score += 1
+        if policy_summary.get("has_lapsed"):
+            score -= 1
+        if policy_summary.get("has_cancelled"):
+            score -= 2
+        account_status = person_account_status.get(person_hk)
+        if account_status == "OPEN":
+            score += 1
+        elif account_status == "SUSPENDED":
+            score -= 1
+        elif account_status == "CLOSED":
+            score -= 2
+        if policy_summary.get("fraud_flag"):
+            score -= 2
+        if policy_summary.get("declined_claims", 0) > 0:
+            score -= 1
+
+        row["Customer Rating"] = max(1, min(5, score))
+
+    return sat_customer_rows
 
 
 # ---------------- IDENTITIES (CONSISTENT HASHED EMAIL) ----------------
@@ -683,7 +937,7 @@ def sat_policy(
         if policy_to_person_map and latest_lead_converted_by_person:
             if person_hk and person_hk in latest_lead_converted_by_person:
                 lead_converted_dt = _coerce_datetime(latest_lead_converted_by_person[person_hk])
-                candidate_start = lead_converted_dt + timedelta(days=random.randint(1, 30))
+                candidate_start = lead_converted_dt + timedelta(days=random.randint(1, 90))
                 policy_start = min(candidate_start, load_dt)
 
         if policy_start is None:
@@ -712,17 +966,41 @@ def sat_policy(
 
         renewal_current = round(random.uniform(200, 1500), 2)
         renewal_next = round(renewal_current * 1.01, 2)
+        declined_claims = random.randint(0, 3)
+        active_claims = random.randint(0, 2)
+        previous_claims = random.randint(0, 5)
+        gross_revenue = round(random.uniform(300, 2500), 2)
+        net_revenue = round(random.uniform(200, 2000), 2)
+        sales_channel = random.choice(["ONLINE", "AGENT", "BRANCH"])
+
+        fraud_risk_score = 0
+        if declined_claims > 0:
+            fraud_risk_score += 2
+        if previous_claims >= 3:
+            fraud_risk_score += 1
+        if active_claims >= 2:
+            fraud_risk_score += 1
+        if status == "CANCELLED":
+            fraud_risk_score += 2
+        elif status == "LAPSED":
+            fraud_risk_score += 1
+        if account_status == "SUSPENDED":
+            fraud_risk_score += 2
+        elif account_status == "CLOSED":
+            fraud_risk_score += 3
+
+        fraud_flag = "Y" if fraud_risk_score >= 3 else "N"
 
         rows.append({
             "Policy Hash Key": hk,
             "Load Date": load_date,
             "Cover Option": random.choice(["BASIC", "FULL"]),
-            "Declined Claims": random.randint(0, 3),
-            "Fraud Flag": random.choice(["Y", "N"]),
-            "Gross Revenue": round(random.uniform(300, 2500), 2),
-            "Net Revenue": round(random.uniform(200, 2000), 2),
-            "Number of Active Claim": random.randint(0, 2),
-            "Number of Previous Claim": random.randint(0, 5),
+            "Declined Claims": declined_claims,
+            "Fraud Flag": fraud_flag,
+            "Gross Revenue": gross_revenue,
+            "Net Revenue": net_revenue,
+            "Number of Active Claim": active_claims,
+            "Number of Previous Claim": previous_claims,
             "Policy Cicle": random.randint(1, 5),
             "Policy End Date": policy_end.strftime("%Y-%m-%d %H:%M:%S"),
             "Policy Length": policy_length_months,
@@ -732,7 +1010,7 @@ def sat_policy(
             "Renewal Amount Current Period": renewal_current,
             "Renewal Amount Next Period": renewal_next,
             "Renewal Date": renewal_date.strftime("%Y-%m-%d %H:%M:%S"),
-            "Sales Channel": random.choice(["ONLINE", "AGENT", "BRANCH"])
+            "Sales Channel": sales_channel
         })
     return rows
 

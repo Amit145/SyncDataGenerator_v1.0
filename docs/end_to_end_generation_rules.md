@@ -232,6 +232,23 @@ Rules:
 - each lead person can have 1 to 2 lead rows by default
 - `Link_Person_Lead` links persons to all generated lead rows
 
+### `Sat_Lead.Interested Level`
+
+`Interested Level` is no longer random.
+
+Current implemented rule:
+
+- `HIGH`
+  - if the lead person has a quote
+  - or if the lead person became a policy holder
+- `MEDIUM`
+  - if the lead person has marketing engagement
+  - or if person score is `>= 70`
+- `LOW`
+  - otherwise
+
+This makes the lead interest level behavior-driven instead of independent of funnel progression.
+
 ### `Sat_Person.Is Lead`
 
 Implemented rule:
@@ -304,7 +321,7 @@ The current generator enforces these policy rules:
 
 - first policy tenure is `1 year`
 - `Policy Length = 12`
-- `Policy Start Date = latest Lead Converted Date + 1 to 30 days` when lead history exists
+- `Policy Start Date = latest Lead Converted Date + 1 to 90 days` when lead history exists
 - fallback policies without usable lead history still get a valid start date capped by policy satellite load date
 - non-cancelled policies have:
   - `Policy End Date = Policy Start Date + 1 year`
@@ -327,6 +344,31 @@ Important clarification:
   - `CANCELLED`
 - `EXPIRED` is not currently used
 
+### `Sat_Policy.Fraud Flag`
+
+`Fraud Flag` is no longer random.
+
+Current implemented rule:
+
+- start with fraud risk score `0`
+- add:
+  - `+2` if `Declined Claims > 0`
+  - `+1` if `Number of Previous Claim >= 3`
+  - `+1` if `Number of Active Claim >= 2`
+  - `+2` if `Policy Status = CANCELLED`
+  - `+1` if `Policy Status = LAPSED`
+  - `+2` if related `Account Status = SUSPENDED`
+  - `+3` if related `Account Status = CLOSED`
+- set:
+  - `Fraud Flag = Y` if total fraud risk score is `>= 3`
+  - `Fraud Flag = N` otherwise
+
+Dependency direction:
+
+- policy and account risk signals are generated first
+- `Fraud Flag` is then derived from those signals
+- customer segment and customer rating use the resulting fraud flag as a negative input
+
 
 ## 12. Customer and Account Rules
 
@@ -347,6 +389,37 @@ Important clarification:
 - customer is not derived from account
 - account is not derived from customer
 - both are derived from policy-holder status
+
+### Account lifecycle
+
+`Sat_Account.Account Status` is lifecycle-driven.
+
+Current implemented statuses:
+
+- `OPEN`
+- `SUSPENDED`
+- `CLOSED`
+
+Current implemented rules:
+
+- all account business dates must be `<= Sat_Account.Load Date`
+- `OPEN`
+  - `Account Last Access >= Account Last Change`
+- `SUSPENDED`
+  - `Account Last Access <= Account Last Change`
+- `CLOSED`
+  - `Account Last Access <= Account Last Change`
+
+### Account to policy dependency
+
+Policy lifecycle is not fully independent of account state.
+
+Current implemented rule:
+
+- if the related account is `SUSPENDED` or `CLOSED`
+- then the related policy cannot remain active
+- current implementation forces the policy into a non-active path
+  - currently `CANCELLED`
 
 
 ## 13. Product and Asset Rules
@@ -440,13 +513,13 @@ Implemented rule:
 The generator enforces this by:
 
 - generating policy start from the latest lead conversion for the person
-- applying a `1 to 30 day` lead-to-policy conversion window
+- applying a `1 to 90 day` lead-to-policy conversion window
 - capping policy start so it cannot exceed policy satellite load date
 
 Validation expectation:
 
 - every lead conversion tied to a policy-holder person must be earlier than that person's earliest policy start
-- lead-to-policy window must stay within `1 to 30 days`
+- lead-to-policy window must stay within `1 to 90 days`
 
 ### Policy lifecycle timeline
 
@@ -476,6 +549,45 @@ Implemented rule:
 Generator behavior:
 
 - `sat_customer()` uses earliest policy start as an upper bound when available
+
+### Customer segment and rating
+
+`Customer Segment` is no longer random.
+
+Current implemented segment rule:
+
+- `PREMIUM`
+  - if enough positive signals exist across:
+    - active policy
+    - open account
+    - high NPS
+    - higher policy revenue
+- `STANDARD`
+  - otherwise
+
+Negative signals reduce premium eligibility:
+
+- fraud flag
+- cancelled policy
+- lapsed policy
+
+`Customer Rating` is derived after segment assignment and is clamped to `1..5`.
+
+Current implemented rating inputs include:
+
+- customer status
+- customer segment
+- NPS
+- policy status
+- account status
+- fraud flag
+- declined claims
+
+Rating guardrail:
+
+- final customer rating is always clamped to the valid range
+  - minimum `1`
+  - maximum `5`
 
 ### Other datetime fields
 
@@ -560,12 +672,15 @@ Checks:
 - load date sequence
 - historical business dates before or on satellite load date
 - `Lead.Converted Date < Policy Start Date`
-- lead-to-policy window `1 to 30 days`
+- lead-to-policy window `1 to 90 days`
 - `Policy Start Date <= Policy End Date`
 - annual policy duration for non-cancelled policies
 - renewal date window `0 to 10 days`
 - renewal uplift exactly `1%`
 - policy status timeline consistency relative to policy load date
+- account lifecycle dates before or on account load date
+- account open and non-open timeline consistency
+- account to policy status consistency
 
 
 ## 18. SCD2 Mutation Rules
@@ -598,7 +713,22 @@ Important note:
 
 ### Existing helper
 
-`helper/scd2_generator.py` creates delta-style SCD2 satellite rows from a prior normalized satellite run.
+`helper/scd2_generator.py` creates delta-style SCD2 satellite rows from historical normalized satellite runs.
+
+Current implemented behavior:
+
+- input history is the normalized `synthetic_data` root
+- the current run is excluded from the historical candidate pool
+- all previous normalized runs are scanned
+- for each `sat_*.csv`:
+  - rows from all previous runs are combined
+  - the latest known version per business key is retained based on `load_date`
+- mutation sampling is taken from that latest-version pool
+- selected rows are mutated using the configured per-file column rules
+- new changed rows are written with the current run `SAT_DATE`
+
+This means the helper no longer depends only on the immediately previous run.
+It now produces the current run delta from the latest historical version across all prior runs.
 
 ### New standalone updater
 
@@ -644,7 +774,7 @@ Normalized export:
 
 SCD2-style delta output:
 
-- `scd2_sat/<prior_run_id>`
+- `scd2_sat/<current_run_id>`
 
 Updated SCD2 output:
 
@@ -721,6 +851,12 @@ To compare original and updated SCD2 rows:
 ```bash
 python compare_scd2_updates.py --original scd2_sat/<run_id> --updated scd2_updated/<run_id>
 ```
+
+Important note about standard pipeline behavior:
+
+- the normal pipeline SCD2 flow uses all previous normalized runs as history input
+- it writes only the new delta for the current run
+- `update_scd2_records.py` remains an optional standalone utility and is not required for the normal SCD2 pipeline
 
 
 ## 23. Source Files Most Relevant to Rules
