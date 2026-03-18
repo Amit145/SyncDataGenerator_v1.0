@@ -101,7 +101,7 @@ def build_hubs(cfg, run_id, hub_date):
     # lead-dependent objects: must align to actual person_to_lead mapping
     hub_cns_rows, person_to_consent = hub_consent(lead_persons, run_id, hub_date, coverage=1.0)
     hub_mpr_rows, person_to_mpr = hub_marketing_preference(lead_persons, run_id, hub_date)
-    hub_men_rows, person_to_men = hub_marketing_engagement(lead_persons, run_id, hub_date, coverage=1.0)
+    hub_men_rows, person_to_men = hub_marketing_engagement(lead_persons, run_id, hub_date, coverage=0.7)
 
     # --- Home Address (1 per person)
     hub_addr_rows = []

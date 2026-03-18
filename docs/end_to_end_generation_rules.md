@@ -111,11 +111,19 @@ Current catalog:
 
 - `NATURAL`
   - `PRD_MOTOR_PERSONAL` weight `0.4`
-  - `PRD_HOME_PERSONAL` weight `0.4`
+  - `PRD_HOME_PERSONAL` weight `0.3`
   - `PRD_HEALTH_PERSONAL` weight `0.2`
+  - `PRD_TRAVEL` weight `0.1`
 - `LEGAL`
-  - `PRD_COMMERCIAL_MOTOR` weight `0.6`
+  - `PRD_COMMERCIAL_MOTOR` weight `0.4`
   - `PRD_PROPERTY_COMMERCIAL` weight `0.4`
+  - `PRD_CYBER_INSURANCE` weight `0.2`
+
+Important current cardinality note:
+
+- `Link_Quote_Person` is currently configured as `1..3`
+- this allows one person to hold multiple quotes
+- because policies are created from quotes, this also allows one eligible customer to hold multiple policies
 
 
 ## 4. Metadata Bootstrap Rules
@@ -198,6 +206,20 @@ Validation expectation:
 
 - a person must never be both natural and legal
 - a person must never be neither natural nor legal
+
+### Natural person age rule
+
+Current implemented birth-date rule:
+
+- natural-person date of birth is generated in a realistic adult range
+- the age range is evaluated relative to the satellite row `Load Date`
+  - minimum age `18`
+  - maximum age `85`
+
+Reason:
+
+- natural-person customers should remain within a realistic adult age band
+- maximum age is capped to keep the synthetic natural-person population realistic
 
 
 ## 7. Supporting Hub Rules
@@ -294,6 +316,8 @@ Rules:
 - each quote links to exactly one person
 - each quote links to exactly one product
 - quote product selection depends on person type and product catalog weights
+- a person can currently get up to `3` quotes
+- when a person has multiple quotes, quote-to-product assignment prefers distinct eligible products before repeating a product
 
 Validation expectation:
 
@@ -436,6 +460,7 @@ Rules:
 - product hub rows are built from the catalog
 - quote products are chosen from the catalog based on person type
 - policies inherit product meaning from the converted quote
+- a person with multiple converted quotes can hold multiple eligible product policies
 - products containing `MOTOR` create motor assets
 - products containing `HOME` or `PROPERTY` create home assets
 - home assets also get asset-level home addresses
@@ -549,6 +574,20 @@ Implemented rule:
 Generator behavior:
 
 - `sat_customer()` uses earliest policy start as an upper bound when available
+
+### Customer age realism
+
+Implemented rule:
+
+- natural-person customers must be realistic adults
+- age is evaluated relative to customer `Load Date`
+- current enforced range is:
+  - minimum age `18`
+  - maximum age `85`
+
+Validation expectation:
+
+- `customer_age_range`
 
 ### Customer segment and rating
 
@@ -671,6 +710,7 @@ Checks:
 - `Sat_Person.Operational Paperless Consent` consistency
 - load date sequence
 - historical business dates before or on satellite load date
+- natural-person customer age range `18..85`
 - `Lead.Converted Date < Policy Start Date`
 - lead-to-policy window `1 to 90 days`
 - `Policy Start Date <= Policy End Date`
@@ -794,6 +834,15 @@ This is now the single source of truth for:
 - available product codes
 - product selection weights by person type
 
+If the new product is:
+
+- motor-like:
+  - product code should contain `MOTOR`
+- home/property-like:
+  - product code should contain `HOME` or `PROPERTY`
+
+because current asset generation and rolled-up KPI logic still classify products using those semantic product-type patterns.
+
 ### If you change cardinalities
 
 Edit:
@@ -825,7 +874,38 @@ Those two should stay aligned.
 - renewal is represented on the same policy row, not as a separate next-term policy record
 
 
-## 22. Recommended Commands
+## 22. KPI Report Notes
+
+Files involved:
+
+- `kpi_reports/bronze_kpis.py`
+
+Current KPI output includes:
+
+- total people
+- total leads
+- total customers
+- converted leads
+- lead to customer conversion %
+- quote to policy conversion %
+- average policies per customer
+- people with multiple product policies
+- multiple product policy people %
+- average lead to policy days
+- motor policy %
+- home/property policy %
+- policy mix by product type %
+- consent rate %
+- marketing engagement %
+
+Current product KPI implementation:
+
+- rolled-up motor/home percentages use `Sat_Product.Type`
+- full product-type percentages also use `Sat_Product.Type`
+- multi-product policy customers are counted by distinct product type per person, not by generated product hash key
+
+
+## 23. Recommended Commands
 
 After generating a run:
 
@@ -859,7 +939,7 @@ Important note about standard pipeline behavior:
 - `update_scd2_records.py` remains an optional standalone utility and is not required for the normal SCD2 pipeline
 
 
-## 23. Source Files Most Relevant to Rules
+## 24. Source Files Most Relevant to Rules
 
 - `main.py`
 - `helper/hub_builder.py`

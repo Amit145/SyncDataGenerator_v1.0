@@ -30,6 +30,7 @@ def main():
     hub_policy = _read(run, "Hub_Policy.csv")
     sat_lead = _read(run, "Sat_Lead.csv")
     sat_policy = _read(run, "Sat_Policy.csv")
+    sat_product = _read(run, "Sat_Product.csv")
 
     l_person_lead = _read(run, "Link_Person_Lead.csv")
     l_customer_person = _read(run, "Link_Customer_Person.csv")
@@ -53,9 +54,12 @@ def main():
     quote_to_policy = (policies / max(1, quotes)) * 100
     avg_pol_per_cust = policies / max(1, len(hub_customer))
 
-    prod_counts = l_policy_product["Product Hash Key"].astype(str).value_counts()
-    motor = sum(v for k, v in prod_counts.items() if "MOTOR" in k)
-    home = sum(v for k, v in prod_counts.items() if ("HOME" in k) or ("PROPERTY" in k))
+    policy_product_types = (
+        l_policy_product[["Policy Hash Key", "Product Hash Key"]]
+        .merge(sat_product[["Product Hash Key", "Type"]], on="Product Hash Key", how="left")
+    )
+    motor = int(policy_product_types["Type"].astype(str).str.contains("MOTOR", na=False).sum())
+    home = int(policy_product_types["Type"].astype(str).str.contains("HOME|PROPERTY", na=False).sum())
     motor_pct = (motor / max(1, policies)) * 100
     home_pct = (home / max(1, policies)) * 100
 
@@ -65,6 +69,33 @@ def main():
     ) * 100
 
     active_customers = l_policy_customer["Customer Hash Key"].nunique()
+    multi_product_policy_people = 0
+    multi_product_policy_people_pct = 0.0
+
+    policy_person_products = (
+        l_policy_customer[["Policy Hash Key", "Customer Hash Key"]]
+        .merge(l_customer_person[["Customer Hash Key", "Person Hash Key"]], on="Customer Hash Key", how="left")
+        .merge(l_policy_product[["Policy Hash Key", "Product Hash Key"]], on="Policy Hash Key", how="left")
+        .merge(sat_product[["Product Hash Key", "Type"]], on="Product Hash Key", how="left")
+    )
+    if not policy_person_products.empty:
+        distinct_products_per_person = (
+            policy_person_products.dropna(subset=["Person Hash Key", "Type"])
+            .groupby("Person Hash Key")["Type"]
+            .nunique()
+        )
+        multi_product_policy_people = int((distinct_products_per_person > 1).sum())
+        multi_product_policy_people_pct = (
+            multi_product_policy_people / max(1, len(distinct_products_per_person))
+        ) * 100
+
+    product_mix_pct = {}
+    if not policy_product_types.empty:
+        product_type_counts = policy_product_types["Type"].dropna().astype(str).value_counts()
+        product_mix_pct = {
+            product_type: (count / max(1, policies)) * 100
+            for product_type, count in product_type_counts.items()
+        }
 
     avg_lead_to_policy_days = None
     if (
@@ -111,6 +142,8 @@ def main():
     print("Policies:", policies)
     print(f"Quote to Policy %: {quote_to_policy:.2f}")
     print(f"Avg Policies / Customer: {avg_pol_per_cust:.2f}")
+    print(f"People with Multiple Product Policies: {multi_product_policy_people}")
+    print(f"Multiple Product Policy People %: {multi_product_policy_people_pct:.2f}")
     if avg_lead_to_policy_days is None:
         print("Avg Lead to Policy Days: unavailable")
     else:
@@ -118,6 +151,10 @@ def main():
 
     print(f"\nMotor Policies %: {motor_pct:.2f}")
     print(f"Home/Property Policies %: {home_pct:.2f}")
+    if product_mix_pct:
+        print("\nPolicy Mix by Product Type %:")
+        for product_type, pct in product_mix_pct.items():
+            print(f"{product_type}: {pct:.2f}")
 
     print(f"\nConsent Rate %: {consent_rate:.2f}")
     print(f"Marketing Engagement %: {engaged_rate:.2f}")

@@ -84,6 +84,14 @@ def _add_one_year(dt: datetime) -> datetime:
         return dt.replace(year=dt.year + 1, day=min(dt.day, last_day))
 
 
+def _add_years(dt: datetime, years: int) -> datetime:
+    try:
+        return dt.replace(year=dt.year + years)
+    except ValueError:
+        last_day = calendar.monthrange(dt.year + years, dt.month)[1]
+        return dt.replace(year=dt.year + years, day=min(dt.day, last_day))
+
+
 def pick_gender_and_title():
     gender = random.choice(["M", "F"])  # extend if you want: ["M","F","X"]
     if gender == "M":
@@ -285,7 +293,14 @@ def _pick_occupation_and_job_consistent(rng: random.Random):
     return occupation, job_title
 
 
-def get_or_create_person_profile(person_hk: str) -> dict:
+def _birth_date_for_age_range(rng: random.Random, reference_date, minimum_age: int, maximum_age: int):
+    ref_dt = _coerce_datetime(reference_date) if reference_date else datetime.now().replace(microsecond=0)
+    latest_birth = _add_years(ref_dt, -minimum_age).date()
+    earliest_birth = _add_years(ref_dt, -maximum_age).date()
+    return fake.date_between(start_date=earliest_birth, end_date=latest_birth)
+
+
+def get_or_create_person_profile(person_hk: str, reference_date=None) -> dict:
     """
     Canonical person info for consistency across satellites.
     DOES NOT change HKs or row counts. Only attribute values.
@@ -301,7 +316,7 @@ def get_or_create_person_profile(person_hk: str) -> dict:
     first = fake.first_name_male() if gender == "Male" else fake.first_name_female()
     last = fake.last_name()
 
-    dob = fake.date_of_birth(minimum_age=18, maximum_age=80)
+    dob = _birth_date_for_age_range(rng, reference_date, minimum_age=18, maximum_age=85)
     title = _pick_title_uk(gender, marital_status, rng)
 
     occupation, job_title = _pick_occupation_and_job_consistent(rng)
@@ -352,7 +367,7 @@ def sat_natural_person(person_to_nat_hk, load_date):
     """
     rows = []
     for person_hk, hk_or_hks in person_to_nat_hk.items():
-        p = get_or_create_person_profile(person_hk)
+        p = get_or_create_person_profile(person_hk, load_date)
         birth_dt = _cap_datetime_to_load(_datetime_from_date_with_random_time(p["dob"]), load_date)
         for nat_hk in _as_list(hk_or_hks):
             rows.append({
@@ -449,14 +464,25 @@ def sat_lead(
 
     for person_hk, hk_or_hks in person_to_lead_hk.items():
         for lead_hk in _as_list(hk_or_hks):
-            converted_dt = _cap_datetime_to_load(_rand_datetime_between(biz_start, upper_date), load_date)
+            # Bias lead conversions toward recent history so downstream policy
+            # timelines produce a more realistic active/lapsed portfolio mix.
+            if random.random() < 0.8:
+                recent_start = max(biz_start, upper_date - timedelta(days=365))
+                converted_dt = _cap_datetime_to_load(_rand_datetime_between(recent_start, upper_date), load_date)
+            else:
+                converted_dt = _cap_datetime_to_load(_rand_datetime_between(biz_start, upper_date), load_date)
             person_score = random.randint(1, 100)
+            interest_signal = person_score
+            if person_hk in quote_persons:
+                interest_signal += 20
+            if person_hk in policy_holder_persons:
+                interest_signal += 10
+            if person_hk in engaged_persons:
+                interest_signal += 5
 
-            if person_hk in policy_holder_persons or person_hk in quote_persons:
+            if interest_signal >= 85:
                 interested_level = "HIGH"
-            elif person_hk in engaged_persons:
-                interested_level = "MEDIUM"
-            elif person_score >= 70:
+            elif interest_signal >= 55:
                 interested_level = "MEDIUM"
             else:
                 interested_level = "LOW"
@@ -495,12 +521,18 @@ def apply_lead_interest_levels(
         if not person_hk:
             continue
 
-        person_score = row.get("Person Score", 0)
-        if person_hk in policy_holder_persons or person_hk in quote_persons:
+        person_score = int(row.get("Person Score", 0) or 0)
+        interest_signal = person_score
+        if person_hk in quote_persons:
+            interest_signal += 20
+        if person_hk in policy_holder_persons:
+            interest_signal += 10
+        if person_hk in engaged_persons:
+            interest_signal += 5
+
+        if interest_signal >= 85:
             interested_level = "HIGH"
-        elif person_hk in engaged_persons:
-            interested_level = "MEDIUM"
-        elif person_score >= 70:
+        elif interest_signal >= 55:
             interested_level = "MEDIUM"
         else:
             interested_level = "LOW"
@@ -550,7 +582,7 @@ def sat_customer(
                 "Customer Hash Key": hk,
                 "Load Date": load_date,
                 "Customer Number": random.randint(100000, 999999),
-                "Customer Status": random.choice(["ACTIVE", "LAPSED"]),
+                "Customer Status": random.choices(["ACTIVE", "LAPSED"], weights=[0.8, 0.2])[0],
                 "Customer Status Reason": random.choice(["RENEWAL", "PAYMENT", "CUSTOMER_REQUEST"]),
                 "Customer Since": customer_since.strftime("%Y-%m-%d %H:%M:%S"),
                 "Customer Rating": 3,
@@ -633,12 +665,12 @@ def apply_customer_segments(
         nps_score = int(row.get("NPS Score", 0))
 
         if policy_summary.get("has_active"):
-            segment_score += 1
+            segment_score += 2
         if account_status == "OPEN":
             segment_score += 1
-        if nps_score >= 8:
+        if nps_score >= 9:
             segment_score += 1
-        if policy_summary.get("max_revenue", 0) >= 1200:
+        if policy_summary.get("max_revenue", 0) >= 1800:
             segment_score += 1
         if policy_summary.get("fraud_flag"):
             segment_score -= 2
@@ -647,7 +679,7 @@ def apply_customer_segments(
         elif policy_summary.get("has_lapsed"):
             segment_score -= 1
 
-        row["Customer Segment"] = "PREMIUM" if segment_score >= 3 else "STANDARD"
+        row["Customer Segment"] = "PREMIUM" if segment_score >= 4 else "STANDARD"
 
     return sat_customer_rows
 
@@ -718,7 +750,7 @@ def apply_customer_ratings(
             row["Customer Rating"] = max(1, min(5, int(row.get("Customer Rating", 3))))
             continue
 
-        score = 3
+        score = 2
         customer_status = row.get("Customer Status")
         customer_segment = row.get("Customer Segment")
         nps_score = int(row.get("NPS Score", 0))
@@ -728,9 +760,9 @@ def apply_customer_ratings(
             score += 1
         if customer_segment == "PREMIUM":
             score += 1
-        if nps_score >= 8:
+        if nps_score >= 9:
             score += 1
-        elif nps_score <= 3:
+        elif nps_score <= 1:
             score -= 1
 
         if policy_summary.get("has_active"):
@@ -738,7 +770,7 @@ def apply_customer_ratings(
         if policy_summary.get("has_lapsed"):
             score -= 1
         if policy_summary.get("has_cancelled"):
-            score -= 2
+            score -= 1
         account_status = person_account_status.get(person_hk)
         if account_status == "OPEN":
             score += 1
@@ -747,8 +779,8 @@ def apply_customer_ratings(
         elif account_status == "CLOSED":
             score -= 2
         if policy_summary.get("fraud_flag"):
-            score -= 2
-        if policy_summary.get("declined_claims", 0) > 0:
+            score -= 1
+        if policy_summary.get("declined_claims", 0) > 1:
             score -= 1
 
         row["Customer Rating"] = max(1, min(5, score))
@@ -815,7 +847,7 @@ def sat_account(person_to_account_hk, load_date):
         for hk in _as_list(hk_or_hks):
             account_status = random.choices(
                 ["OPEN", "SUSPENDED", "CLOSED"],
-                weights=[0.70, 0.15, 0.15],
+                weights=[0.80, 0.12, 0.08],
             )[0]
 
             created_anchor = load_dt - timedelta(days=random.randint(30, 365 * 3))
@@ -948,8 +980,7 @@ def sat_policy(
         planned_end = _add_one_year(policy_start)
 
         account_status = person_account_status_by_person.get(person_hk) if person_account_status_by_person and person_hk else None
-        is_cancelled = account_status in {"SUSPENDED", "CLOSED"} or (random.random() < 0.10)
-        if is_cancelled:
+        if account_status == "CLOSED":
             status = "CANCELLED"
             min_end = policy_start + timedelta(days=7)
             max_end = min(planned_end - timedelta(days=1), load_dt)
@@ -958,9 +989,32 @@ def sat_policy(
                 policy_end = min_end + timedelta(seconds=random.randint(0, span_seconds))
             else:
                 policy_end = min_end
+        elif account_status == "SUSPENDED":
+            if planned_end <= as_of_dt:
+                policy_end = planned_end
+                status = "LAPSED"
+            else:
+                status = "CANCELLED"
+                min_end = policy_start + timedelta(days=7)
+                max_end = min(planned_end - timedelta(days=1), load_dt)
+                if max_end >= min_end:
+                    span_seconds = int((max_end - min_end).total_seconds())
+                    policy_end = min_end + timedelta(seconds=random.randint(0, span_seconds))
+                else:
+                    policy_end = min_end
         else:
-            policy_end = planned_end
-            status = "ACTIVE" if policy_end > as_of_dt else "LAPSED"
+            if random.random() < 0.05:
+                status = "CANCELLED"
+                min_end = policy_start + timedelta(days=7)
+                max_end = min(planned_end - timedelta(days=1), load_dt)
+                if max_end >= min_end:
+                    span_seconds = int((max_end - min_end).total_seconds())
+                    policy_end = min_end + timedelta(seconds=random.randint(0, span_seconds))
+                else:
+                    policy_end = min_end
+            else:
+                policy_end = planned_end
+                status = "ACTIVE" if policy_end > as_of_dt else "LAPSED"
 
         renewal_date = policy_end - timedelta(days=random.randint(0, 10))
 
@@ -974,22 +1028,22 @@ def sat_policy(
         sales_channel = random.choice(["ONLINE", "AGENT", "BRANCH"])
 
         fraud_risk_score = 0
-        if declined_claims > 0:
+        if declined_claims >= 2:
             fraud_risk_score += 2
-        if previous_claims >= 3:
+        if previous_claims >= 4:
             fraud_risk_score += 1
         if active_claims >= 2:
             fraud_risk_score += 1
         if status == "CANCELLED":
-            fraud_risk_score += 2
-        elif status == "LAPSED":
             fraud_risk_score += 1
+        elif status == "LAPSED":
+            fraud_risk_score += 0
         if account_status == "SUSPENDED":
-            fraud_risk_score += 2
+            fraud_risk_score += 1
         elif account_status == "CLOSED":
-            fraud_risk_score += 3
+            fraud_risk_score += 2
 
-        fraud_flag = "Y" if fraud_risk_score >= 3 else "N"
+        fraud_flag = "Y" if fraud_risk_score >= 4 else "N"
 
         rows.append({
             "Policy Hash Key": hk,

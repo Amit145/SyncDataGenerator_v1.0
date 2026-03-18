@@ -164,12 +164,27 @@ assert_unique(hub_person_rows, "Person Hash Key")
 quote_to_product_id = {}
 
 for person_hk, quote_hks in person_to_quote.items():
-    for quote_hk in quote_hks:
-        current_person_type = person_type[person_hk]
-        quote_to_product_id[quote_hk] = random.choices(
-            get_product_codes_for_person_type(current_person_type),
-            get_product_weights_for_person_type(current_person_type),
-        )[0]
+    current_person_type = person_type[person_hk]
+    eligible_codes = get_product_codes_for_person_type(current_person_type)
+    eligible_weights = get_product_weights_for_person_type(current_person_type)
+    assigned_codes = []
+
+    for idx, quote_hk in enumerate(quote_hks):
+        remaining_codes = [code for code in eligible_codes if code not in assigned_codes]
+
+        # Diversify products across a person's quotes where possible so a
+        # customer can legitimately end up with multiple eligible products.
+        if remaining_codes:
+            remaining_weights = [
+                eligible_weights[eligible_codes.index(code)]
+                for code in remaining_codes
+            ]
+            selected_code = random.choices(remaining_codes, remaining_weights)[0]
+        else:
+            selected_code = random.choices(eligible_codes, eligible_weights)[0]
+
+        quote_to_product_id[quote_hk] = selected_code
+        assigned_codes.append(selected_code)
 
 # =========================================================
 # 3) POLICY GENERATION

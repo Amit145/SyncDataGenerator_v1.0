@@ -376,11 +376,8 @@ def main(base_path: str):
     else:
         print("lead_mpr valid")
 
-    if missing_men:
-        print(f"lead_men error: missing for {len(missing_men)} lead persons")
-        print("sample:", list(missing_men)[:10])
-    else:
-        print("lead_men valid")
+    men_coverage_pct = (len(men_persons & lead_persons) / max(1, len(lead_persons))) * 100
+    print(f"lead_men coverage: {men_coverage_pct:.2f}% of lead persons")
 
     print("\n===== QUOTE SOURCE RULE =====\n")
 
@@ -588,9 +585,16 @@ def main(base_path: str):
         for _, row in lead_eval.iterrows():
             person_hk = row.get("person_hash_key")
             person_score = row.get("person_score", 0)
-            if person_hk in policy_holder_persons or person_hk in quote_persons:
+            interest_signal = person_score
+            if person_hk in quote_persons:
+                interest_signal += 20
+            if person_hk in policy_holder_persons:
+                interest_signal += 10
+            if person_hk in men_persons:
+                interest_signal += 5
+            if interest_signal >= 85:
                 expected_interested.append("HIGH")
-            elif person_hk in men_persons or person_score >= 70:
+            elif interest_signal >= 55:
                 expected_interested.append("MEDIUM")
             else:
                 expected_interested.append("LOW")
@@ -649,21 +653,21 @@ def main(base_path: str):
 
         def expected_fraud_flag(row):
             score = 0
-            if row["declined_claims"] > 0:
+            if row["declined_claims"] >= 2:
                 score += 2
-            if row["number_of_previous_claim"] >= 3:
+            if row["number_of_previous_claim"] >= 4:
                 score += 1
             if row["number_of_active_claim"] >= 2:
                 score += 1
             if row["policy_status"] == "CANCELLED":
-                score += 2
-            elif row["policy_status"] == "LAPSED":
                 score += 1
+            elif row["policy_status"] == "LAPSED":
+                score += 0
             if row["account_status"] == "SUSPENDED":
-                score += 2
+                score += 1
             elif row["account_status"] == "CLOSED":
-                score += 3
-            return "Y" if score >= 3 else "N"
+                score += 2
+            return "Y" if score >= 4 else "N"
 
         policy_eval["expected_fraud_flag"] = policy_eval.apply(expected_fraud_flag, axis=1)
         bad_fraud = policy_eval[policy_eval["fraud_flag"] != policy_eval["expected_fraud_flag"]]
@@ -732,12 +736,12 @@ def main(base_path: str):
 
             segment_score = 0
             if policy_summary.get("has_active"):
-                segment_score += 1
+                segment_score += 2
             if account_status == "OPEN":
                 segment_score += 1
-            if nps_score >= 8:
+            if nps_score >= 9:
                 segment_score += 1
-            if policy_summary.get("max_revenue", 0) >= 1200:
+            if policy_summary.get("max_revenue", 0) >= 1800:
                 segment_score += 1
             if policy_summary.get("fraud_flag"):
                 segment_score -= 2
@@ -746,25 +750,25 @@ def main(base_path: str):
             elif policy_summary.get("has_lapsed"):
                 segment_score -= 1
 
-            expected_segment = "PREMIUM" if segment_score >= 3 else "STANDARD"
+            expected_segment = "PREMIUM" if segment_score >= 4 else "STANDARD"
             expected_segments.append(expected_segment)
 
-            rating = 3
+            rating = 2
             customer_status = row.get("customer_status", None)
             if customer_status == "ACTIVE":
                 rating += 1
             if expected_segment == "PREMIUM":
                 rating += 1
-            if nps_score >= 8:
+            if nps_score >= 9:
                 rating += 1
-            elif nps_score <= 3:
+            elif nps_score <= 1:
                 rating -= 1
             if policy_summary.get("has_active"):
                 rating += 1
             if policy_summary.get("has_lapsed"):
                 rating -= 1
             if policy_summary.get("has_cancelled"):
-                rating -= 2
+                rating -= 1
             if account_status == "OPEN":
                 rating += 1
             elif account_status == "SUSPENDED":
@@ -772,8 +776,8 @@ def main(base_path: str):
             elif account_status == "CLOSED":
                 rating -= 2
             if policy_summary.get("fraud_flag"):
-                rating -= 2
-            if policy_summary.get("declined_claims", 0) > 0:
+                rating -= 1
+            if policy_summary.get("declined_claims", 0) > 1:
                 rating -= 1
             expected_ratings.append(max(1, min(5, rating)))
 
@@ -868,6 +872,49 @@ def main(base_path: str):
     check_date_not_after_load(sat_legal_person, "converted_date", "load_date", "legal_person_converted_before_load")
     check_date_not_after_load(sat_legal_person, "date_of_constitution", "load_date", "constitution_before_load")
     check_date_not_after_load(sat_natural_person, "birth_date", "load_date", "birth_date_before_load")
+
+    if (
+        not sat_customer.empty and not sat_natural_person.empty
+        and {"customer_hash_key", "load_date"}.issubset(sat_customer.columns)
+        and {"customer_hash_key", "person_hash_key"}.issubset(l_c_person.columns)
+        and {"person_hash_key", "natural_person_hash_key"}.issubset(l_p_nat.columns)
+        and {"natural_person_hash_key", "birth_date"}.issubset(sat_natural_person.columns)
+    ):
+        customer_age_df = (
+            sat_customer[["customer_hash_key", "load_date"]]
+            .merge(l_c_person[["customer_hash_key", "person_hash_key"]], on="customer_hash_key", how="left")
+            .merge(l_p_nat[["person_hash_key", "natural_person_hash_key"]], on="person_hash_key", how="left")
+            .merge(sat_natural_person[["natural_person_hash_key", "birth_date"]], on="natural_person_hash_key", how="left")
+        )
+        customer_age_df["load_date"] = parse_dt(customer_age_df["load_date"])
+        customer_age_df["birth_date"] = parse_dt(customer_age_df["birth_date"])
+        load_dates = customer_age_df["load_date"].dt.date
+        birth_dates = customer_age_df["birth_date"].dt.date
+        customer_age_df["age_years"] = [
+            (
+                ld.year - bd.year
+                - ((ld.month, ld.day) < (bd.month, bd.day))
+            ) if pd.notna(ld) and pd.notna(bd) else None
+            for ld, bd in zip(load_dates, birth_dates)
+        ]
+        natural_customer_age = customer_age_df[
+            customer_age_df["birth_date"].notna() & customer_age_df["load_date"].notna()
+        ].copy()
+        bad_customer_age = natural_customer_age[
+            (natural_customer_age["age_years"] < 18) | (natural_customer_age["age_years"] > 85)
+        ]
+        if not bad_customer_age.empty:
+            print(f"customer_age_range error: {len(bad_customer_age)} natural customers outside 18..85")
+            print(
+                "sample:",
+                bad_customer_age[["customer_hash_key", "person_hash_key", "birth_date", "load_date", "age_years"]]
+                .head(10)
+                .to_dict("records")
+            )
+        else:
+            print("customer_age_range valid")
+    else:
+        print("customer_age_range: skipped (missing required files/columns)")
 
     if sat_lead.empty or sat_policy.empty:
         print("timeline_rules: skipped (sat_lead.csv or sat_policy.csv missing/empty)")
@@ -1080,5 +1127,5 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         target_path = sys.argv[1]
     else:
-        target_path = "synthetic_data/20260317_125239_42"
+        target_path = "synthetic_data/20260318_095608_42"
     main(target_path)
