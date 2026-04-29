@@ -9,6 +9,7 @@ import pandas as pd
 from faker import Faker
 
 from enums.sat_enums import SAT_ENUMS
+from config.storage_paths import SCD2_BASE_ROOT, SCD2_UPDATED_ROOT
 
 fake = Faker("en_GB")
 
@@ -121,7 +122,7 @@ def update_scd_records(input_folder: str, output_folder: str, sat_date: str | No
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Update existing SCD2 satellite rows into a new scd2_updated folder.")
+    parser = argparse.ArgumentParser(description="Update existing SCD2 satellite rows into a new data/scd2/updated folder.")
     parser.add_argument("--input", dest="input_folder", help="Input folder containing existing SCD2 satellite CSVs.")
     parser.add_argument("--output", dest="output_folder", help="Output folder for updated SCD2 satellite CSVs.")
     parser.add_argument("--sat-date", dest="sat_date", help="Optional replacement load_date for updated rows.")
@@ -134,8 +135,8 @@ def main():
     )
     args = parser.parse_args()
 
-    input_folder = Path(args.input_folder) if args.input_folder else resolve_latest_run(Path("scd2_sat"))
-    output_folder = Path(args.output_folder) if args.output_folder else Path("scd2_updated") / input_folder.name
+    input_folder = Path(args.input_folder) if args.input_folder else resolve_latest_run(Path(SCD2_BASE_ROOT))
+    output_folder = Path(args.output_folder) if args.output_folder else Path(SCD2_UPDATED_ROOT) / input_folder.name
 
     update_scd_records(
         input_folder=str(input_folder),

@@ -1,5 +1,11 @@
 import os
 from dotenv import load_dotenv
+from config.storage_paths import (
+    OUTPUT_ROOT,
+    RAW_ROOT,
+    SYNTHETIC_BASE_ROOT,
+    SILVER_API_ROOT,
+)
 
 load_dotenv()
 
@@ -14,5 +20,7 @@ CSV_OUTPUT_DIR = os.getenv("CSV_OUTPUT_DIR")
 
 RAW_DDL = r"metadata/fixed_C360-DV.ddl"
 DDL_JSON_PATH = r"metadata/table_metadata_ordered.json"
-OUTPUT_BASE = r"output"
-SYNTHETIC_DATA = r"synthetic_data"
+OUTPUT_BASE = OUTPUT_ROOT
+SYNTHETIC_DATA = SYNTHETIC_BASE_ROOT
+RAW_BASE = RAW_ROOT
+SYNTHETIC_DATA_API = SILVER_API_ROOT

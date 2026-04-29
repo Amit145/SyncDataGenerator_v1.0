@@ -9,18 +9,31 @@ from config.runConfig import (
     RAW_DDL,
     DDL_JSON_PATH,
     OUTPUT_BASE,
+    RAW_BASE,
     SYNTHETIC_DATA,
+    SYNTHETIC_DATA_API,
 )
+from config.storage_paths import KAGGLE_INPUT_ROOT, SCD2_BASE_ROOT, ensure_data_roots
 from generators.transaction_generator import (
     hub_policy,
     hub_assets_from_policies,
 )
+from generators.raw_crm_generator import write_raw_crm_batch
+from generators.raw_api_generator import write_raw_api_batch
+from generators.raw_claims_generator import write_raw_claims_batch
+from generators.raw_kaggle_generator import discover_input_dir_for_config, write_kaggle_raw_batch
+from generators.raw_data_source_generator import generate_data_source_raw
 
 from helper.config_loader import load_config
+from helper.crm_mapper import map_crm_raw_to_canonical
 from helper.csv_writer import write_csv, normalize_csv
 from helper.hub_builder import build_hubs
-from helper.key_factory import get_run_id
+from helper.key_factory import get_folder_run_id, get_run_id
+from helper.api_silver_builder import build_api_silver
+from helper.data_source_mapper import map_data_source_to_canonical
+from helper.raw_scd2_generator import generate_raw_scd2
 from helper.scd2_generator import create_scd_data
+from helper.source_context_builder import build_source_context
 from helper.link_builder import build_links, make_link
 from modules.inference import inference_module
 from modules.module_parser import parse_ddl_module, file_ready
@@ -49,7 +62,7 @@ from helper.satellite_builder import (
     apply_customer_ratings,
 )
 
-from misc.ref_check import latest_run, second_latest_run
+from misc.ref_check import latest_run
 from validators.file_cols_validator import check_file_and_cols
 from validators.integrity_checker import validate_integrity
 from generators.supporting_generator import hub_account
@@ -64,7 +77,7 @@ start_time = datetime.now()
 # ---------------- Inputs ----------------
 BUSINESS_START_DATE = "2020-01-01"
 AS_OF_DATE = None
-SATELLITE_PATH = r".\scd2_sat"
+SATELLITE_PATH = SCD2_BASE_ROOT
 
 # ---------------- Load date setup ----------------
 load_date = "2025-03-12T00:10:21"
@@ -93,6 +106,8 @@ HUB_DATE = hub_dt.isoformat()
 LINK_DATE = link_dt.isoformat()
 SAT_DATE = sat_dt.isoformat()
 
+ensure_data_roots()
+
 # ---------------- Create Metadata ordered Table ----------------
 if not file_ready(PARSED_DDL_PATH):
     parse_ddl_module(RAW_DDL)
@@ -110,7 +125,36 @@ seed = cfg["run_settings"]["random_seed"]
 random.seed(seed)
 
 run_id = get_run_id(seed)
-out = f"output/{run_id}"
+folder_run_id = get_folder_run_id()
+out = os.path.join(OUTPUT_BASE, folder_run_id)
+
+
+def generate_kaggle_raw_batches():
+    configs_dir = os.path.join("config", "kaggle_mappings")
+    generated = []
+
+    if not os.path.isdir(configs_dir):
+        return generated
+
+    for file_name in sorted(os.listdir(configs_dir)):
+        if not file_name.lower().endswith(".json"):
+            continue
+
+        config_path = os.path.join(configs_dir, file_name)
+        input_dir = discover_input_dir_for_config(config_path)
+        if not input_dir:
+            print(f"KAGGLE: skipping {file_name} (no matching input folder under {KAGGLE_INPUT_ROOT})")
+            continue
+
+        raw_dir = write_kaggle_raw_batch(
+            input_dir=input_dir,
+            config_path=config_path,
+            batch_id=folder_run_id,
+        )
+        generated.append((file_name, raw_dir))
+        print(f"KAGGLE RAW: {file_name} -> {raw_dir}")
+
+    return generated
 
 # =========================================================
 # 1) HUB GENERATION
@@ -228,6 +272,7 @@ link_quote_product = [
             "Quote Hash Key": quote_hk,
             "Product Hash Key": prod_hk_by_code[product_id],
         },
+        LINK_DATE,
     )
     for quote_hk, product_id in quote_to_product_id.items()
 ]
@@ -499,6 +544,121 @@ write_csv(out, "Sat_Home.csv", sat_hom)
 write_csv(out, "Sat_Home_Address.csv", sat_adr)
 write_csv(out, "Sat_Product.csv", sat_product(hub_prod_rows, SAT_DATE, product_code_by_hk))
 
+extract_ts = (hub_dt - timedelta(days=7)).isoformat()
+raw_out = write_raw_crm_batch(
+    RAW_BASE,
+    folder_run_id,
+    {
+        "hub_person_rows": hub_person_rows,
+        "hub_nat": hub_nat,
+        "hub_leg": hub_leg,
+        "hub_prod_rows": hub_prod_rows,
+        "hub_lead_rows": hub_lead_rows,
+        "hub_cust_rows": hub_cust_rows,
+        "hub_id_rows": hub_id_rows,
+        "hub_con_rows": hub_con_rows,
+        "hub_cns_rows": hub_cns_rows,
+        "hub_acc_rows": hub_acc_rows,
+        "hub_mpr_rows": hub_mpr_rows,
+        "hub_men_rows": hub_men_rows,
+        "hub_quo_rows": hub_quo_rows,
+        "hub_pol_rows": hub_pol_rows,
+        "hub_mot_rows": hub_mot_rows,
+        "hub_home_rows": hub_home_rows,
+        "hub_addr_rows": hub_addr_rows,
+        "person_to_nat": person_to_nat,
+        "person_to_leg": person_to_leg,
+        "person_to_identity": person_to_identity,
+        "person_to_contact": person_to_contact,
+        "person_to_consent": person_to_consent,
+        "person_to_home_address": person_to_home_address,
+        "person_to_mpr": person_to_mpr,
+        "person_to_men": person_to_men,
+        "person_to_account": person_to_account,
+        "person_to_quote": person_to_quote,
+        "person_to_customer": person_to_customer,
+        "person_to_lead": person_to_lead,
+        "policy_person_map": policy_person_map,
+        "policy_to_quote_map": policy_to_quote_map,
+        "policy_to_product_id": policy_to_product_id,
+        "policy_to_motor": policy_to_motor,
+        "policy_to_home": policy_to_home,
+        "home_to_addr": home_to_addr,
+        "quote_to_product_id": quote_to_product_id,
+        "product_code_by_hk": product_code_by_hk,
+        "links": links,
+        "hub_load_date": HUB_DATE,
+        "link_load_date": LINK_DATE,
+        "sat_load_date": SAT_DATE,
+        "sat_nat": sat_nat,
+        "sat_leg": sat_leg,
+        "sat_per": sat_per,
+        "sat_lea": sat_lea,
+        "sat_cus": sat_cus,
+        "sat_eci": sat_eci,
+        "sat_con": sat_con,
+        "sat_cns": sat_cns,
+        "sat_acc": sat_acc,
+        "sat_mpr": sat_mpr,
+        "sat_men": sat_men,
+        "sat_quo": sat_quo,
+        "sat_pol": sat_pol,
+        "sat_mot": sat_mot,
+        "sat_hom": sat_hom,
+        "sat_adr": sat_adr,
+        "extract_ts": extract_ts,
+    },
+)
+generated_crm_canonical = map_crm_raw_to_canonical(folder_run_id, raw_out)
+
+api_source_ctx = build_source_context(
+    cfg,
+    f"{run_id}_api",
+    HUB_DATE,
+    LINK_DATE,
+    SAT_DATE,
+    BUSINESS_START_DATE,
+    as_of_date=AS_OF_DATE,
+    seed_override=seed + 101,
+)
+raw_api_out = write_raw_api_batch(
+    RAW_BASE,
+    folder_run_id,
+    api_source_ctx,
+)
+claims_source_ctx = build_source_context(
+    cfg,
+    f"{run_id}_claims",
+    HUB_DATE,
+    LINK_DATE,
+    SAT_DATE,
+    BUSINESS_START_DATE,
+    as_of_date=AS_OF_DATE,
+    seed_override=seed + 303,
+)
+raw_claims_out = write_raw_claims_batch(
+    RAW_BASE,
+    folder_run_id,
+    claims_source_ctx,
+)
+data_source_ctx = build_source_context(
+    cfg,
+    f"{run_id}_icrm",
+    HUB_DATE,
+    LINK_DATE,
+    SAT_DATE,
+    BUSINESS_START_DATE,
+    as_of_date=AS_OF_DATE,
+    seed_override=seed + 202,
+)
+generated_data_source_raw = generate_data_source_raw(folder_run_id, ctx=data_source_ctx)
+generated_data_source_canonical = map_data_source_to_canonical(folder_run_id, generated_data_source_raw)
+generated_kaggle_raw = generate_kaggle_raw_batches()
+generated_kaggle_raw_dirs = [path for _, path in generated_kaggle_raw]
+generated_raw_scd2 = generate_raw_scd2(folder_run_id, crm_raw_dir=raw_out, api_raw_dir=raw_api_out, kaggle_raw_dirs=generated_kaggle_raw_dirs)
+synthetic_data_api = os.path.join(SYNTHETIC_DATA_API, folder_run_id)
+build_api_silver(raw_api_out, synthetic_data_api)
+
 # =========================================================
 # 8) VALIDATIONS + LOAD
 # =========================================================
@@ -510,25 +670,31 @@ assert_unique(hub_quo_rows, "Quote Hash Key")
 
 print("Basic PK validation OK")
 print("DONE:", out)
+print("RAW CRM:", raw_out)
+print("RAW CRM CANONICAL:", generated_crm_canonical)
+print("RAW API:", raw_api_out)
+print("RAW CLAIMS:", raw_claims_out)
+for domain_name in sorted(generated_data_source_raw):
+    print(f"RAW DATA_SOURCE {domain_name.upper()}:", generated_data_source_raw[domain_name])
+print("RAW DATA_SOURCE CANONICAL:", generated_data_source_canonical)
+for _, kaggle_raw_out in generated_kaggle_raw:
+    print("RAW KAGGLE:", kaggle_raw_out)
+for raw_scd2_summary in generated_raw_scd2:
+    print("RAW SCD2:", raw_scd2_summary["output_dir"])
+print("SILVER API:", synthetic_data_api)
 
 are_files_checked = check_file_and_cols(DDL_JSON_PATH, OUTPUT_BASE)
 if are_files_checked:
     is_valid_integrity = validate_integrity(OUTPUT_BASE)
     if is_valid_integrity:
         print("Data is valid and maintains Referential Integrity. Data can be loaded")
+        synthetic_data = os.path.join(SYNTHETIC_DATA, folder_run_id)
+        normalize_csv(out, synthetic_data)
 
-        latest_run_path = latest_run()
-        latest_run_path_new = latest_run_path.replace("output", "")
-        synthetic_data = SYNTHETIC_DATA + "\\" + latest_run_path_new
-
-        normalize_csv(latest_run_path, synthetic_data)
-
-        second_latest_run_path = second_latest_run()
-        if second_latest_run_path:
-            current_run_name = latest_run_path_new.lstrip("\\/")
+        if prev_run_path:
             scd2_input = SYNTHETIC_DATA
-            scd2_output = SATELLITE_PATH + "\\" + current_run_name + "\\"
-            create_scd_data(scd2_input, scd2_output, SAT_DATE, exclude_run_name=current_run_name)
+            scd2_output = os.path.join(SATELLITE_PATH, folder_run_id)
+            create_scd_data(scd2_input, scd2_output, SAT_DATE, exclude_run_name=folder_run_id)
 
 end_time = datetime.now()
 print("Total time taken:", end_time - start_time)

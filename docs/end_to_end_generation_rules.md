@@ -878,7 +878,6 @@ Those two should stay aligned.
 
 Files involved:
 
-- `kpi_reports/bronze_kpis.py`
 
 Current KPI output includes:
 

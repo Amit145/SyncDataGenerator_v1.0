@@ -960,7 +960,7 @@ def sat_policy(
     rows = []
     biz_start = _as_date(business_start_date)
     load_dt = _coerce_datetime(load_date)
-    as_of_dt = _coerce_datetime(as_of_date) if as_of_date else datetime.now().replace(microsecond=0)
+    as_of_dt = _coerce_datetime(as_of_date) if as_of_date else load_dt
     as_of_dt = min(as_of_dt, load_dt)
 
     for hk in policy_hks:
