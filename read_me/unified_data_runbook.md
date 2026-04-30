@@ -3,7 +3,9 @@
 This runbook describes the current storage layout and the commands to run:
 
 - base synthetic generation
+- enhanced synthetic generation
 - raw source generation
+- source-specific `new_outputs_src` generation
 - normalized synthetic output
 - SCD2 delta generation
 - Kaggle raw ingestion
@@ -26,14 +28,17 @@ Main folders:
 - `data/raw/data_source_canonical`
 - `data/output`
 - `data/synthetic/base`
+- `data/synthetic/enhanced`
 - `data/silver/rebuild`
 - `data/silver/api`
 - `data/silver/kaggle`
 - `data/silver/data_source`
 - `data/scd2/base`
+- `data/scd2/enhanced`
 - `data/scd2/raw`
 - `data/scd2/updated`
 - `data/scd2/reports`
+- `data/new_outputs_src`
 
 Meaning:
 
@@ -41,7 +46,9 @@ Meaning:
 - `data/raw/crm/<run_id>`: raw CRM landing generated from the synthetic vault output
 - `data/raw/api/<run_id>`: raw API landing
 - `data/synthetic/base/<run_id>`: normalized synthetic CSVs produced from `data/output/<run_id>`
+- `data/synthetic/enhanced/<run_id>`: enhanced synthetic output aligned to the enhanced 360 DDL
 - `data/scd2/base/<run_id>`: incremental SCD2 satellite delta rows derived from previous runs
+- `data/scd2/enhanced/<run_id>`: incremental enhanced SCD2 satellite delta rows derived from previous enhanced runs
 - `data/scd2/raw/crm/<run_id>`: raw CRM delta rows versus the prior raw CRM batch
 - `data/scd2/raw/api/<run_id>`: raw API delta rows versus the prior raw API batch
 - `data/scd2/raw/kaggle/<dataset>/<run_id>`: raw Kaggle delta rows versus the prior Kaggle batch for that dataset
@@ -54,6 +61,8 @@ Meaning:
 - `data/silver/data_source/<run_id>`: vault-style silver output rebuilt from data_source canonical raw
 - `data/silver/rebuild/<run_id>`: local silver rebuild from CRM raw
 - `data/silver/api/<run_id>`: local silver rebuild from API raw
+- `data/new_outputs_src/<source>/data/<run_id>`: source-specific exported datasets
+- `data/new_outputs_src/<source>/scd2/<run_id>`: per-source SCD2 output
 
 ## Prerequisites
 
@@ -82,17 +91,23 @@ Outputs:
 - `data/output/<run_id>`
 - `data/raw/crm/<run_id>`
 - `data/raw/api/<run_id>`
+- `data/raw/data_source_canonical/<run_id>`
 - `data/silver/api/<run_id>`
 - `data/synthetic/base/<run_id>`
+- `data/synthetic/enhanced/<run_id>`
 
 What `main.py` also does:
 
 - validates DDL/file structure
 - validates referential and business integrity
 - if there is a previous normalized run, generates SCD2 deltas under `data/scd2/base/<run_id>`
+- if there is a previous enhanced run, generates SCD2 deltas under `data/scd2/enhanced/<run_id>`
 - if there is a previous raw batch for CRM, API, or Kaggle, generates raw SCD2 deltas under `data/scd2/raw/...`
+- generates `new_outputs_src` for `crm`, `adp`, `transunion`, and `experian`
+- if there is a previous source batch, generates source-specific deltas under `data/new_outputs_src/<source>/scd2/<run_id>`
 - generates raw CRM
 - generates raw API
+- generates enhanced synthetic 360 output
 - generates raw Kaggle for any discoverable dataset under `data/input/kaggle` or legacy `kaggle_input`
 
 ## One-Command Raw To Silver
@@ -160,6 +175,10 @@ Normal incremental flow:
    - `data/scd2/raw/crm/<run_id>`
    - `data/scd2/raw/api/<run_id>`
    - `data/scd2/raw/kaggle/<dataset>/<run_id>`
+5. It compares prior enhanced runs and writes:
+   - `data/scd2/enhanced/<run_id>`
+6. It compares `new_outputs_src` source batches and writes:
+   - `data/new_outputs_src/<source>/scd2/<run_id>`
 
 Generate a new base run:
 
@@ -305,6 +324,22 @@ Verify the latest `data_source` silver again:
 python .\misc\verify_data_source_silver.py
 ```
 
+## Enhanced Verification
+
+Enhanced-specific verification:
+
+```powershell
+$env:PYTHONUTF8='1'
+python .\misc\verify_enhanced_synthetic.py
+```
+
+Or for a specific run:
+
+```powershell
+$env:PYTHONUTF8='1'
+python .\misc\verify_enhanced_synthetic.py .\data\synthetic\enhanced\<run_id>
+```
+
 ## Notes
 
 - `AutoInsurance.csv` is only a partial fit for the full vault model.
@@ -313,3 +348,4 @@ python .\misc\verify_data_source_silver.py
 - Those tables still exist in Kaggle silver output, but many will be empty and some verification checks will be reported as skipped.
 - Raw CRM and raw API SCD2 may show many `new_rows` because the synthetic generator regenerates source identifiers each run.
 - Kaggle raw SCD2 is more stable when the source file itself is unchanged because business keys come from the dataset mapping.
+- Enhanced rules and alignment details are documented in `docs/enhanced_synthetic_plan.md`.

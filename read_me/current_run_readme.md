@@ -3,7 +3,9 @@
 This runbook captures the current operational flow for:
 
 - base load
+- enhanced synthetic load
 - raw generation for all current sources
+- source-specific `new_outputs_src` generation
 - common raw-to-silver transformation
 - silver verification
 - second-run SCD2 generation
@@ -40,10 +42,13 @@ Main folders:
 - `data/silver/kaggle`
 - `data/silver/data_source`
 - `data/synthetic/base`
+- `data/synthetic/enhanced`
 - `data/scd2/base`
+- `data/scd2/enhanced`
 - `data/scd2/raw`
 - `data/scd2/updated`
 - `data/scd2/reports`
+- `data/new_outputs_src`
 
 Meaning:
 
@@ -59,11 +64,18 @@ Meaning:
 - `data/silver/kaggle/<run_id>`: vault silver rebuilt from Kaggle canonical raw
 - `data/silver/data_source/<run_id>`: vault silver rebuilt from data source canonical raw
 - `data/synthetic/base/<run_id>`: normalized synthetic output derived from `data/output/<run_id>`
+- `data/synthetic/enhanced/<run_id>`: enhanced synthetic output containing all base tables plus enhanced-only tables
 - `data/scd2/base/<run_id>`: synthetic satellite SCD2 delta rows for a later run
+- `data/scd2/enhanced/<run_id>`: enhanced synthetic satellite SCD2 delta rows for a later run
 - `data/scd2/raw/crm/<run_id>`: raw CRM delta versus previous CRM raw batch
 - `data/scd2/raw/api/<run_id>`: raw API delta versus previous API raw batch
 - `data/scd2/raw/kaggle/<dataset>/<run_id>`: raw Kaggle delta versus previous batch for that dataset
 - `data/scd2/updated/<run_id>`: optional manually modified SCD2 output
+- `data/new_outputs_src/crm/data/<run_id>`: CRM-specific source export
+- `data/new_outputs_src/adp/data/<run_id>`: ADP JSONL source export
+- `data/new_outputs_src/transunion/data/<run_id>`: TransUnion CSV source export
+- `data/new_outputs_src/experian/data/<run_id>`: Experian CSV source export
+- `data/new_outputs_src/<source>/scd2/<run_id>`: per-source delta output for later runs
 
 ## Source Inputs
 
@@ -113,30 +125,38 @@ python .\main.py
 What `main.py` currently does:
 
 - creates base vault-style synthetic output
+- creates enhanced synthetic output
 - generates raw CRM
 - generates raw API
 - generates raw data source extracts for `motor` and `home`
+- maps data source raw into canonical raw
 - generates raw Kaggle for discoverable dataset/config matches
+- generates `new_outputs_src` outputs for `crm`, `adp`, `transunion`, and `experian`
 - builds API silver
 - normalizes the latest synthetic output into `data/synthetic/base/<run_id>`
 - on later runs, generates synthetic-base SCD2
+- on later runs, generates enhanced synthetic SCD2
 - on later runs, generates raw SCD2 for CRM, API, and Kaggle
+- on later runs, generates per-source SCD2 for `new_outputs_src`
 - runs file and integrity validation on the primary output
 
 Base load outputs:
 
 - `data/output/<run_id>`
+- `data/synthetic/enhanced/<run_id>`
 - `data/raw/crm/<run_id>`
 - `data/raw/api/<run_id>`
 - `data/raw/data_source/motor/<run_id>`
 - `data/raw/data_source/home/<run_id>`
+- `data/raw/data_source_canonical/<run_id>`
 - `data/raw/kaggle/<dataset>/<run_id>` when matching Kaggle input exists
+- `data/new_outputs_src/<source>/data/<run_id>`
 - `data/silver/api/<run_id>`
 - `data/synthetic/base/<run_id>`
 
 Important note:
 
-- `main.py` does not currently build `data_source` canonical raw
+- `main.py` now builds `data_source` canonical raw
 - `main.py` does not currently build `data_source` silver
 - `main.py` does not currently build CRM silver or Kaggle silver
 
@@ -218,9 +238,12 @@ You can replace that path with any silver folder:
 On the first run:
 
 - `data/output/<run_id>` is created
+- `data/synthetic/enhanced/<run_id>` is created
 - raw CRM, API, data source, and eligible Kaggle outputs are created
+- `new_outputs_src` outputs are created
 - API silver is created by `main.py`
 - no synthetic-base SCD2 is created yet
+- no enhanced synthetic SCD2 is created yet
 - no raw SCD2 is created yet unless an older raw batch already exists
 
 Usually on a clean workspace, the first run creates no SCD2 output because there is no previous run to compare against.
@@ -250,6 +273,16 @@ Behavior:
 - previous latest synthetic satellite versions are loaded
 - a small percentage of satellite rows are mutated
 - changed rows are written as the new SCD2 delta set
+
+### Enhanced synthetic SCD2
+
+Input:
+
+- historical runs under `data/synthetic/enhanced`
+
+Output:
+
+- `data/scd2/enhanced/<run_id>`
 
 ### Raw CRM SCD2
 
@@ -298,6 +331,24 @@ Current state:
 That means there is currently no:
 
 - `data/scd2/raw/data_source/<run_id>`
+
+### Source-specific `new_outputs_src` SCD2
+
+Input:
+
+- previous `data/new_outputs_src/<source>/data/<previous_run_id>`
+- current `data/new_outputs_src/<source>/data/<run_id>`
+
+Output:
+
+- `data/new_outputs_src/<source>/scd2/<run_id>`
+
+Covered sources:
+
+- `crm`
+- `adp`
+- `transunion`
+- `experian`
 
 ## Manual SCD2 Update Flow
 
@@ -368,7 +419,8 @@ python .\misc\verify_data_source_silver.py
 ## Current Caveats
 
 - `main.py` prints Unicode status messages, so `PYTHONUTF8=1` is recommended on Windows consoles
-- `data_source` raw depends on CRM raw from the same run
+- `data_source` raw is generated from its own independent synthetic context
 - `data_source` canonical raw is an intermediate normalization layer, not an independent source landing
 - Kaggle silver may legitimately have skipped validations for unsupported domains
 - raw SCD2 currently covers CRM, API, and Kaggle, but not data source
+- enhanced-specific rules and validation are documented in `docs/enhanced_synthetic_plan.md`

@@ -21,7 +21,7 @@ from helper.key_factory import md5_hasher
 
 ROOT = Path(__file__).resolve().parents[1]
 ENHANCED_EXAMPLE_DIR = ROOT / "enhanced_360" / "data_example"
-RS = "ENHANCED_360"
+RS = "CRM"
 
 
 def _norm_name(value: str) -> str:
