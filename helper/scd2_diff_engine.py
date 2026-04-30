@@ -5,6 +5,8 @@ import json
 import os
 from pathlib import Path
 
+from helper.crm_raw_layout import CRM_RAW_FILE_MAP, to_crm_raw_column
+
 
 RAW_PRIMARY_KEYS = {
     "crm_person.csv": ["person_id"],
@@ -40,6 +42,12 @@ RAW_PRIMARY_KEYS = {
     "home.jsonl": ["home_id"],
     "motor.jsonl": ["motor_id"],
 }
+
+RAW_PRIMARY_KEYS.update({
+    raw_file_name: [to_crm_raw_column(column) for column in key_fields]
+    for canonical_file_name, raw_file_name in CRM_RAW_FILE_MAP.items()
+    if (key_fields := RAW_PRIMARY_KEYS.get(canonical_file_name))
+})
 
 
 def latest_subdir(base_dir: str) -> str | None:

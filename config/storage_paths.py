@@ -16,11 +16,13 @@ RAW_CLAIMS_CANONICAL_ROOT = os.path.join(RAW_ROOT, "claims_canonical")
 RAW_KAGGLE_ROOT = os.path.join(RAW_ROOT, "kaggle")
 RAW_DATA_SOURCE_ROOT = os.path.join(RAW_ROOT, "data_source")
 RAW_DATA_SOURCE_CANONICAL_ROOT = os.path.join(RAW_ROOT, "data_source_canonical")
+NEW_OUTPUTS_SRC_ROOT = os.path.join(DATA_ROOT, "new_outputs_src")
 
 OUTPUT_ROOT = os.path.join(DATA_ROOT, "output")
 
 SYNTHETIC_ROOT = os.path.join(DATA_ROOT, "synthetic")
 SYNTHETIC_BASE_ROOT = os.path.join(SYNTHETIC_ROOT, "base")
+SYNTHETIC_ENHANCED_ROOT = os.path.join(SYNTHETIC_ROOT, "enhanced")
 
 SILVER_ROOT = os.path.join(DATA_ROOT, "silver")
 SILVER_REBUILT_ROOT = os.path.join(SILVER_ROOT, "rebuild")
@@ -31,6 +33,7 @@ SILVER_DATA_SOURCE_ROOT = os.path.join(SILVER_ROOT, "data_source")
 
 SCD2_ROOT = os.path.join(DATA_ROOT, "scd2")
 SCD2_BASE_ROOT = os.path.join(SCD2_ROOT, "base")
+SCD2_ENHANCED_ROOT = os.path.join(SCD2_ROOT, "enhanced")
 SCD2_UPDATED_ROOT = os.path.join(SCD2_ROOT, "updated")
 SCD2_RAW_ROOT = os.path.join(SCD2_ROOT, "raw")
 SCD2_REPORT_ROOT = os.path.join(SCD2_ROOT, "reports")
@@ -50,9 +53,11 @@ def ensure_data_roots():
         RAW_KAGGLE_ROOT,
         RAW_DATA_SOURCE_ROOT,
         RAW_DATA_SOURCE_CANONICAL_ROOT,
+        NEW_OUTPUTS_SRC_ROOT,
         OUTPUT_ROOT,
         SYNTHETIC_ROOT,
         SYNTHETIC_BASE_ROOT,
+        SYNTHETIC_ENHANCED_ROOT,
         SILVER_ROOT,
         SILVER_REBUILT_ROOT,
         SILVER_API_ROOT,
@@ -61,6 +66,7 @@ def ensure_data_roots():
         SILVER_DATA_SOURCE_ROOT,
         SCD2_ROOT,
         SCD2_BASE_ROOT,
+        SCD2_ENHANCED_ROOT,
         SCD2_UPDATED_ROOT,
         SCD2_RAW_ROOT,
         SCD2_REPORT_ROOT,

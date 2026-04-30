@@ -31,6 +31,13 @@ MUTATION_COLUMNS = {
     "sat_policy.csv": ["cover_option"],
     "sat_product.csv": [],
     "sat_quote.csv": ["renewal_amt_next_period"],
+    "sat_broker.csv": ["agent_net_promoter_score"],
+    "sat_campaign.csv": ["campaign_status"],
+    "sat_channel.csv": ["channel_type"],
+    "sat_claim.csv": ["claim_status"],
+    "sat_complaints.csv": ["complaint_status"],
+    "sat_override.csv": ["override_reason"],
+    "sat_regulations.csv": ["regulation_compliance_status"],
 }
 
 

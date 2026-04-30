@@ -27,11 +27,11 @@ def _invert_multi_map(mapping):
     return out
 
 
-def _with_meta(row, batch_id, extract_ts):
+def _with_meta(row, batch_id, extract_ts, source_system):
     return {
         "_batch_id": batch_id,
         "_extract_ts": extract_ts,
-        "_source_system": "CRM",
+        "_source_system": source_system,
         **row,
     }
 
@@ -41,8 +41,8 @@ def _safe_get(index, key, column):
     return row.get(column) if row else None
 
 
-def write_raw_crm_batch(base_folder, batch_id, ctx):
-    out_dir = os.path.join(base_folder, "crm", batch_id)
+def write_raw_crm_batch(base_folder, batch_id, ctx, source_dir_name="crm", source_system="CRM"):
+    out_dir = os.path.join(base_folder, source_dir_name, batch_id)
     extract_ts = ctx.get("extract_ts") or get_now_iso()
 
     hub_person_by_hk = _index_by(ctx["hub_person_rows"], "Person Hash Key")
@@ -247,7 +247,7 @@ def write_raw_crm_batch(base_folder, batch_id, ctx):
             "legal_source_type": sat_leg.get("Source Type"),
             "date_of_constitution": sat_leg.get("Date of Constitution"),
             "lead_converted_date": sat_leg.get("Converted Date"),
-        }, batch_id, extract_ts))
+        }, batch_id, extract_ts, source_system))
 
     for contact_hk, hub_contact in hub_contact_by_hk.items():
         person_hk = person_by_contact_hk.get(contact_hk)
@@ -258,7 +258,7 @@ def write_raw_crm_batch(base_folder, batch_id, ctx):
             "work_email": _safe_get(sat_contact_by_hk, contact_hk, "Work Email"),
             "work_phone": _safe_get(sat_contact_by_hk, contact_hk, "Work Phone"),
             "home_phone": _safe_get(sat_contact_by_hk, contact_hk, "Home Phone"),
-        }, batch_id, extract_ts))
+        }, batch_id, extract_ts, source_system))
 
     for identity_hk, hub_identity in hub_identity_by_hk.items():
         person_hk = person_by_identity_hk.get(identity_hk)
@@ -267,7 +267,7 @@ def write_raw_crm_batch(base_folder, batch_id, ctx):
             "identities_id": hub_identity["Identities Id"],
             "ecid": _safe_get(sat_identity_by_hk, identity_hk, "ECID"),
             "hashed_email": _safe_get(sat_identity_by_hk, identity_hk, "Hashed Email"),
-        }, batch_id, extract_ts))
+        }, batch_id, extract_ts, source_system))
 
     for addr_hk, hub_addr in hub_addr_by_hk.items():
         person_hk = person_by_addr_hk.get(addr_hk)
@@ -280,7 +280,7 @@ def write_raw_crm_batch(base_folder, batch_id, ctx):
             "city": sat_addr.get("City"),
             "state": sat_addr.get("State"),
             "country": sat_addr.get("Country"),
-        }, batch_id, extract_ts))
+        }, batch_id, extract_ts, source_system))
 
     for person_hk, lead_hks in ctx["person_to_lead"].items():
         for lead_hk in _as_list(lead_hks):
@@ -292,7 +292,7 @@ def write_raw_crm_batch(base_folder, batch_id, ctx):
                 "person_score": _safe_get(sat_lead_by_hk, lead_hk, "Person Score"),
                 "person_status": _safe_get(sat_lead_by_hk, lead_hk, "Person Status"),
                 "converted_date": _safe_get(sat_lead_by_hk, lead_hk, "Converted Date"),
-            }, batch_id, extract_ts))
+            }, batch_id, extract_ts, source_system))
 
     for customer_hk, hub_customer in hub_customer_by_hk.items():
         person_hk = person_by_customer_hk.get(customer_hk)
@@ -308,7 +308,7 @@ def write_raw_crm_batch(base_folder, batch_id, ctx):
             "customer_segment": sat_customer.get("Customer Segment"),
             "line_of_business": sat_customer.get("Line Of Business"),
             "nps_score": sat_customer.get("NPS Score"),
-        }, batch_id, extract_ts))
+        }, batch_id, extract_ts, source_system))
 
     for row in ctx["links"].get("Link_Customer_Lead", []):
         customer_hk = row.get("Customer Hash Key")
@@ -316,7 +316,7 @@ def write_raw_crm_batch(base_folder, batch_id, ctx):
         raw_rows["crm_customer_lead.csv"].append(_with_meta({
             "customer_id": _safe_get(hub_customer_by_hk, customer_hk, "Customer Id"),
             "lead_id": _safe_get(hub_lead_by_hk, lead_hk, "Lead Id"),
-        }, batch_id, extract_ts))
+        }, batch_id, extract_ts, source_system))
 
     for consent_hk, hub_consent in hub_consent_by_hk.items():
         person_hk = person_by_consent_hk.get(consent_hk)
@@ -325,7 +325,7 @@ def write_raw_crm_batch(base_folder, batch_id, ctx):
             "consent_id": hub_consent["Consent Id"],
             "opt_in_validated": _safe_get(sat_consent_by_hk, consent_hk, "Opt In Validated"),
             "opt_in_legitimate_interest": _safe_get(sat_consent_by_hk, consent_hk, "Opt In Legitimate Interest"),
-        }, batch_id, extract_ts))
+        }, batch_id, extract_ts, source_system))
 
     for mpr_hk, hub_mpr in hub_mpr_by_hk.items():
         person_hk = person_by_mpr_hk.get(mpr_hk)
@@ -340,7 +340,7 @@ def write_raw_crm_batch(base_folder, batch_id, ctx):
             "any": sat_mpr.get("Any"),
             "commercial_email": sat_mpr.get("Commercial Email"),
             "postal_mail": sat_mpr.get("Postal Mail"),
-        }, batch_id, extract_ts))
+        }, batch_id, extract_ts, source_system))
 
     for men_hk, hub_men in hub_men_by_hk.items():
         person_hk = person_by_men_hk.get(men_hk)
@@ -351,7 +351,7 @@ def write_raw_crm_batch(base_folder, batch_id, ctx):
             "promotion_code": sat_men.get("Promotion Code"),
             "opened_email": sat_men.get("Opened Email"),
             "marketing_status": sat_men.get("Marketing Status"),
-        }, batch_id, extract_ts))
+        }, batch_id, extract_ts, source_system))
 
     for account_hk, hub_account in hub_account_by_hk.items():
         person_hk = person_by_account_hk.get(account_hk)
@@ -365,14 +365,14 @@ def write_raw_crm_batch(base_folder, batch_id, ctx):
             "account_last_change": sat_account.get("Account Last Change"),
             "account_creation_type": sat_account.get("Account Creation Type"),
             "account_status": sat_account.get("Account Status"),
-        }, batch_id, extract_ts))
+        }, batch_id, extract_ts, source_system))
 
     for product_hk, hub_product in hub_product_by_hk.items():
         raw_rows["crm_product.csv"].append(_with_meta({
             "product_id": hub_product["Product Id"],
             "product_code": product_code_by_hk.get(product_hk),
             "product_type": product_code_by_hk.get(product_hk),
-        }, batch_id, extract_ts))
+        }, batch_id, extract_ts, source_system))
 
     for quote_hk, hub_quote in hub_quote_by_hk.items():
         person_hk = person_by_quote_hk.get(quote_hk)
@@ -390,7 +390,7 @@ def write_raw_crm_batch(base_folder, batch_id, ctx):
             "quote_status": sat_quote.get("Quote Status"),
             "renewal_amt_current_period": sat_quote.get("Renewal Amt Current Period"),
             "renewal_amt_next_period": sat_quote.get("Renewal Amt Next Period"),
-        }, batch_id, extract_ts))
+        }, batch_id, extract_ts, source_system))
 
     for policy_hk, hub_policy in hub_policy_by_hk.items():
         person_hk = person_by_policy_hk.get(policy_hk)
@@ -423,7 +423,7 @@ def write_raw_crm_batch(base_folder, batch_id, ctx):
             "renewal_amount_next_period": sat_policy.get("Renewal Amount Next Period"),
             "renewal_date": sat_policy.get("Renewal Date"),
             "sales_channel": sat_policy.get("Sales Channel"),
-        }, batch_id, extract_ts))
+        }, batch_id, extract_ts, source_system))
 
     for policy_hk, home_hk in ctx["policy_to_home"].items():
         product_code = ctx["policy_to_product_id"].get(policy_hk)
@@ -447,7 +447,7 @@ def write_raw_crm_batch(base_folder, batch_id, ctx):
             "city": sat_addr.get("City"),
             "state": sat_addr.get("State"),
             "country": sat_addr.get("Country"),
-        }, batch_id, extract_ts))
+        }, batch_id, extract_ts, source_system))
 
     for policy_hk, motor_hks in ctx["policy_to_motor"].items():
         product_code = ctx["policy_to_product_id"].get(policy_hk)
@@ -476,7 +476,7 @@ def write_raw_crm_batch(base_folder, batch_id, ctx):
                 "motor_sum_insrd": sat_motor.get("Motor Sum Insrd"),
                 "vehicle_year": sat_motor.get("Vehicle Year"),
                 "vehicle_age": sat_motor.get("Vehicle Age"),
-            }, batch_id, extract_ts))
+            }, batch_id, extract_ts, source_system))
 
     os.makedirs(out_dir, exist_ok=True)
     for file_name, rows in raw_rows.items():

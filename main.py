@@ -13,7 +13,8 @@ from config.runConfig import (
     SYNTHETIC_DATA,
     SYNTHETIC_DATA_API,
 )
-from config.storage_paths import KAGGLE_INPUT_ROOT, SCD2_BASE_ROOT, ensure_data_roots
+from config.storage_paths import KAGGLE_INPUT_ROOT, SCD2_BASE_ROOT, SCD2_ENHANCED_ROOT, SYNTHETIC_ENHANCED_ROOT, ensure_data_roots
+from generators.enhanced_synthetic_generator import build_enhanced_synthetic
 from generators.transaction_generator import (
     hub_policy,
     hub_assets_from_policies,
@@ -29,10 +30,12 @@ from helper.crm_mapper import map_crm_raw_to_canonical
 from helper.csv_writer import write_csv, normalize_csv
 from helper.hub_builder import build_hubs
 from helper.key_factory import get_folder_run_id, get_run_id
+from helper.new_outputs_src import generate_new_outputs_src, generate_new_outputs_src_scd2
 from helper.api_silver_builder import build_api_silver
 from helper.data_source_mapper import map_data_source_to_canonical
 from helper.raw_scd2_generator import generate_raw_scd2
 from helper.scd2_generator import create_scd_data
+from helper.scd2_diff_engine import previous_subdir
 from helper.source_context_builder import build_source_context
 from helper.link_builder import build_links, make_link
 from modules.inference import inference_module
@@ -542,73 +545,75 @@ write_csv(out, "Sat_Policy.csv", sat_pol)
 write_csv(out, "Sat_Motor.csv", sat_mot)
 write_csv(out, "Sat_Home.csv", sat_hom)
 write_csv(out, "Sat_Home_Address.csv", sat_adr)
-write_csv(out, "Sat_Product.csv", sat_product(hub_prod_rows, SAT_DATE, product_code_by_hk))
+sat_prod = sat_product(hub_prod_rows, SAT_DATE, product_code_by_hk)
+write_csv(out, "Sat_Product.csv", sat_prod)
 
 extract_ts = (hub_dt - timedelta(days=7)).isoformat()
-raw_out = write_raw_crm_batch(
-    RAW_BASE,
-    folder_run_id,
-    {
-        "hub_person_rows": hub_person_rows,
-        "hub_nat": hub_nat,
-        "hub_leg": hub_leg,
-        "hub_prod_rows": hub_prod_rows,
-        "hub_lead_rows": hub_lead_rows,
-        "hub_cust_rows": hub_cust_rows,
-        "hub_id_rows": hub_id_rows,
-        "hub_con_rows": hub_con_rows,
-        "hub_cns_rows": hub_cns_rows,
-        "hub_acc_rows": hub_acc_rows,
-        "hub_mpr_rows": hub_mpr_rows,
-        "hub_men_rows": hub_men_rows,
-        "hub_quo_rows": hub_quo_rows,
-        "hub_pol_rows": hub_pol_rows,
-        "hub_mot_rows": hub_mot_rows,
-        "hub_home_rows": hub_home_rows,
-        "hub_addr_rows": hub_addr_rows,
-        "person_to_nat": person_to_nat,
-        "person_to_leg": person_to_leg,
-        "person_to_identity": person_to_identity,
-        "person_to_contact": person_to_contact,
-        "person_to_consent": person_to_consent,
-        "person_to_home_address": person_to_home_address,
-        "person_to_mpr": person_to_mpr,
-        "person_to_men": person_to_men,
-        "person_to_account": person_to_account,
-        "person_to_quote": person_to_quote,
-        "person_to_customer": person_to_customer,
-        "person_to_lead": person_to_lead,
-        "policy_person_map": policy_person_map,
-        "policy_to_quote_map": policy_to_quote_map,
-        "policy_to_product_id": policy_to_product_id,
-        "policy_to_motor": policy_to_motor,
-        "policy_to_home": policy_to_home,
-        "home_to_addr": home_to_addr,
-        "quote_to_product_id": quote_to_product_id,
-        "product_code_by_hk": product_code_by_hk,
-        "links": links,
-        "hub_load_date": HUB_DATE,
-        "link_load_date": LINK_DATE,
-        "sat_load_date": SAT_DATE,
-        "sat_nat": sat_nat,
-        "sat_leg": sat_leg,
-        "sat_per": sat_per,
-        "sat_lea": sat_lea,
-        "sat_cus": sat_cus,
-        "sat_eci": sat_eci,
-        "sat_con": sat_con,
-        "sat_cns": sat_cns,
-        "sat_acc": sat_acc,
-        "sat_mpr": sat_mpr,
-        "sat_men": sat_men,
-        "sat_quo": sat_quo,
-        "sat_pol": sat_pol,
-        "sat_mot": sat_mot,
-        "sat_hom": sat_hom,
-        "sat_adr": sat_adr,
-        "extract_ts": extract_ts,
-    },
-)
+base_context = {
+    "seed": seed,
+    "hub_person_rows": hub_person_rows,
+    "hub_nat": hub_nat,
+    "hub_leg": hub_leg,
+    "hub_prod_rows": hub_prod_rows,
+    "hub_lead_rows": hub_lead_rows,
+    "hub_cust_rows": hub_cust_rows,
+    "hub_id_rows": hub_id_rows,
+    "hub_con_rows": hub_con_rows,
+    "hub_cns_rows": hub_cns_rows,
+    "hub_acc_rows": hub_acc_rows,
+    "hub_mpr_rows": hub_mpr_rows,
+    "hub_men_rows": hub_men_rows,
+    "hub_quo_rows": hub_quo_rows,
+    "hub_pol_rows": hub_pol_rows,
+    "hub_mot_rows": hub_mot_rows,
+    "hub_home_rows": hub_home_rows,
+    "hub_addr_rows": hub_addr_rows,
+    "person_hks": person_hks,
+    "person_to_nat": person_to_nat,
+    "person_to_leg": person_to_leg,
+    "person_to_identity": person_to_identity,
+    "person_to_contact": person_to_contact,
+    "person_to_consent": person_to_consent,
+    "person_to_home_address": person_to_home_address,
+    "person_to_mpr": person_to_mpr,
+    "person_to_men": person_to_men,
+    "person_to_account": person_to_account,
+    "person_to_quote": person_to_quote,
+    "person_to_customer": person_to_customer,
+    "person_to_lead": person_to_lead,
+    "policy_person_map": policy_person_map,
+    "policy_to_quote_map": policy_to_quote_map,
+    "policy_to_product_id": policy_to_product_id,
+    "policy_to_motor": policy_to_motor,
+    "policy_to_home": policy_to_home,
+    "home_to_addr": home_to_addr,
+    "quote_to_product_id": quote_to_product_id,
+    "product_code_by_hk": product_code_by_hk,
+    "links": links,
+    "link_quote_product": link_quote_product,
+    "hub_load_date": HUB_DATE,
+    "link_load_date": LINK_DATE,
+    "sat_load_date": SAT_DATE,
+    "sat_nat": sat_nat,
+    "sat_leg": sat_leg,
+    "sat_per": sat_per,
+    "sat_lea": sat_lea,
+    "sat_cus": sat_cus,
+    "sat_eci": sat_eci,
+    "sat_con": sat_con,
+    "sat_cns": sat_cns,
+    "sat_acc": sat_acc,
+    "sat_mpr": sat_mpr,
+    "sat_men": sat_men,
+    "sat_quo": sat_quo,
+    "sat_pol": sat_pol,
+    "sat_mot": sat_mot,
+    "sat_hom": sat_hom,
+    "sat_adr": sat_adr,
+    "sat_product_rows": sat_prod,
+    "extract_ts": extract_ts,
+}
+raw_out = write_raw_crm_batch(RAW_BASE, folder_run_id, base_context)
 generated_crm_canonical = map_crm_raw_to_canonical(folder_run_id, raw_out)
 
 api_source_ctx = build_source_context(
@@ -656,8 +661,31 @@ generated_data_source_canonical = map_data_source_to_canonical(folder_run_id, ge
 generated_kaggle_raw = generate_kaggle_raw_batches()
 generated_kaggle_raw_dirs = [path for _, path in generated_kaggle_raw]
 generated_raw_scd2 = generate_raw_scd2(folder_run_id, crm_raw_dir=raw_out, api_raw_dir=raw_api_out, kaggle_raw_dirs=generated_kaggle_raw_dirs)
+generated_new_outputs_src = generate_new_outputs_src(
+    run_id=folder_run_id,
+    cfg=cfg,
+    base_context=base_context,
+    base_run_id=run_id,
+    hub_date=HUB_DATE,
+    link_date=LINK_DATE,
+    sat_date=SAT_DATE,
+    business_start_date=BUSINESS_START_DATE,
+    as_of_date=AS_OF_DATE,
+)
+generated_new_outputs_src_scd2 = generate_new_outputs_src_scd2(folder_run_id, generated_new_outputs_src)
 synthetic_data_api = os.path.join(SYNTHETIC_DATA_API, folder_run_id)
 build_api_silver(raw_api_out, synthetic_data_api)
+enhanced_synthetic = os.path.join(SYNTHETIC_ENHANCED_ROOT, folder_run_id)
+build_enhanced_synthetic(base_context, enhanced_synthetic, cfg=cfg)
+previous_enhanced_run = previous_subdir(SYNTHETIC_ENHANCED_ROOT, exclude_name=folder_run_id)
+if previous_enhanced_run:
+    enhanced_scd2_output = os.path.join(SCD2_ENHANCED_ROOT, folder_run_id)
+    create_scd_data(
+        SYNTHETIC_ENHANCED_ROOT,
+        enhanced_scd2_output,
+        SAT_DATE,
+        exclude_run_name=folder_run_id,
+    )
 
 # =========================================================
 # 8) VALIDATIONS + LOAD
@@ -679,9 +707,16 @@ for domain_name in sorted(generated_data_source_raw):
 print("RAW DATA_SOURCE CANONICAL:", generated_data_source_canonical)
 for _, kaggle_raw_out in generated_kaggle_raw:
     print("RAW KAGGLE:", kaggle_raw_out)
+for source_name in sorted(generated_new_outputs_src):
+    print(f"NEW OUTPUT SRC {source_name.upper()}:", generated_new_outputs_src[source_name]["data_dir"])
 for raw_scd2_summary in generated_raw_scd2:
     print("RAW SCD2:", raw_scd2_summary["output_dir"])
+for scd2_summary in generated_new_outputs_src_scd2:
+    print(f"NEW OUTPUT SRC SCD2 {scd2_summary['source_label'].upper()}:", scd2_summary["output_dir"])
 print("SILVER API:", synthetic_data_api)
+print("SYNTHETIC ENHANCED:", enhanced_synthetic)
+if previous_enhanced_run:
+    print("SCD2 ENHANCED:", enhanced_scd2_output)
 
 are_files_checked = check_file_and_cols(DDL_JSON_PATH, OUTPUT_BASE)
 if are_files_checked:

@@ -44,9 +44,13 @@ def _write_jsonl(path, rows):
             f.write(json.dumps(row) + "\n")
 
 
-def write_raw_api_batch(base_folder, batch_id, ctx):
-    out_dir = os.path.join(base_folder, "api", batch_id)
+def write_raw_api_batch(base_folder, batch_id, ctx, source_dir_name="api", source_system="API", source_prefix="API"):
+    out_dir = os.path.join(base_folder, source_dir_name, batch_id)
     extract_ts = ctx["extract_ts"]
+    src = source_system
+
+    def make_id(value):
+        return _source_id(value, source_prefix=source_prefix)
 
     include_persons = set(ctx["person_hks"])
 
@@ -153,15 +157,15 @@ def write_raw_api_batch(base_folder, batch_id, ctx):
         raw_files["person.jsonl"].append({
             "_batch_id": batch_id,
             "_extract_ts": extract_ts,
-            "_source_system": "API",
-            "person_id": _source_id(hub_person["Person Id"]),
+            "_source_system": src,
+            "person_id": make_id(hub_person["Person Id"]),
             "person_type": sat_person.get("Type"),
             "tenant_id": sat_person.get("Tenant Id"),
             "is_lead": sat_person.get("Is Lead"),
             "operational_paperless_consent": sat_person.get("Operational Paperless Consent"),
-            "source_id": _source_id(sat_person.get("Source Id")),
+            "source_id": make_id(sat_person.get("Source Id")),
             "source_type": sat_person.get("Source Type"),
-            "natural_person_id": _source_id(hub_nat_by_hk.get(nat_hk, {}).get("Natural Person Id")) if nat_hk else None,
+            "natural_person_id": make_id(hub_nat_by_hk.get(nat_hk, {}).get("Natural Person Id")) if nat_hk else None,
             "first_name": sat_nat_by_hk.get(nat_hk, {}).get("First Name") if nat_hk else None,
             "last_name": sat_nat_by_hk.get(nat_hk, {}).get("Last Name") if nat_hk else None,
             "full_name": sat_nat_by_hk.get(nat_hk, {}).get("Full Name") if nat_hk else None,
@@ -176,12 +180,12 @@ def write_raw_api_batch(base_folder, batch_id, ctx):
             "preferred_language": sat_nat_by_hk.get(nat_hk, {}).get("Preferred Language") if nat_hk else None,
             "role": sat_nat_by_hk.get(nat_hk, {}).get("Role") if nat_hk else None,
             "job_title": sat_nat_by_hk.get(nat_hk, {}).get("Job Title") if nat_hk else None,
-            "legal_person_id": _source_id(hub_leg_by_hk.get(leg_hk, {}).get("Legal Person Id")) if leg_hk else None,
+            "legal_person_id": make_id(hub_leg_by_hk.get(leg_hk, {}).get("Legal Person Id")) if leg_hk else None,
             "company_name": sat_leg_by_hk.get(leg_hk, {}).get("Company Name") if leg_hk else None,
             "legal_person_score": sat_leg_by_hk.get(leg_hk, {}).get("Person Score") if leg_hk else None,
             "legal_person_status": sat_leg_by_hk.get(leg_hk, {}).get("Person Status") if leg_hk else None,
             "legal_person_job_title": sat_leg_by_hk.get(leg_hk, {}).get("Job Title") if leg_hk else None,
-            "legal_source_id": _source_id(sat_leg_by_hk.get(leg_hk, {}).get("Source Id")) if leg_hk else None,
+            "legal_source_id": make_id(sat_leg_by_hk.get(leg_hk, {}).get("Source Id")) if leg_hk else None,
             "legal_source_type": sat_leg_by_hk.get(leg_hk, {}).get("Source Type") if leg_hk else None,
             "date_of_constitution": sat_leg_by_hk.get(leg_hk, {}).get("Date of Constitution") if leg_hk else None,
             "lead_converted_date": sat_leg_by_hk.get(leg_hk, {}).get("Converted Date") if leg_hk else None,
@@ -191,9 +195,9 @@ def write_raw_api_batch(base_folder, batch_id, ctx):
         raw_files["contact.jsonl"].append({
             "_batch_id": batch_id,
             "_extract_ts": extract_ts,
-            "_source_system": "API",
-            "person_id": _source_id(hub_person_by_hk[person_by_contact_hk[contact_hk]]["Person Id"]),
-            "contact_id": _source_id(hub_contact_by_hk[contact_hk]["Contact Id"]),
+            "_source_system": src,
+            "person_id": make_id(hub_person_by_hk[person_by_contact_hk[contact_hk]]["Person Id"]),
+            "contact_id": make_id(hub_contact_by_hk[contact_hk]["Contact Id"]),
             "personal_email": sat_contact_by_hk[contact_hk]["Personal Email"],
             "work_email": sat_contact_by_hk[contact_hk]["Work Email"],
             "work_phone": sat_contact_by_hk[contact_hk]["Work Phone"],
@@ -204,9 +208,9 @@ def write_raw_api_batch(base_folder, batch_id, ctx):
         raw_files["identity.jsonl"].append({
             "_batch_id": batch_id,
             "_extract_ts": extract_ts,
-            "_source_system": "API",
-            "person_id": _source_id(hub_person_by_hk[person_by_identity_hk[identity_hk]]["Person Id"]),
-            "identities_id": _source_id(hub_identity_by_hk[identity_hk]["Identities Id"]),
+            "_source_system": src,
+            "person_id": make_id(hub_person_by_hk[person_by_identity_hk[identity_hk]]["Person Id"]),
+            "identities_id": make_id(hub_identity_by_hk[identity_hk]["Identities Id"]),
             "ecid": sat_identity_by_hk[identity_hk]["ECID"],
             "hashed_email": sat_identity_by_hk[identity_hk]["Hashed Email"],
         })
@@ -215,9 +219,9 @@ def write_raw_api_batch(base_folder, batch_id, ctx):
         raw_files["person_address.jsonl"].append({
             "_batch_id": batch_id,
             "_extract_ts": extract_ts,
-            "_source_system": "API",
-            "person_id": _source_id(hub_person_by_hk[person_by_addr_hk[addr_hk]]["Person Id"]),
-            "address_id": _source_id(hub_addr_by_hk[addr_hk]["Home Address Id"]),
+            "_source_system": src,
+            "person_id": make_id(hub_person_by_hk[person_by_addr_hk[addr_hk]]["Person Id"]),
+            "address_id": make_id(hub_addr_by_hk[addr_hk]["Home Address Id"]),
             "street": sat_addr_by_hk[addr_hk]["Street"],
             "postcode": sat_addr_by_hk[addr_hk]["Postcode"],
             "city": sat_addr_by_hk[addr_hk]["City"],
@@ -230,9 +234,9 @@ def write_raw_api_batch(base_folder, batch_id, ctx):
         raw_files["lead.jsonl"].append({
             "_batch_id": batch_id,
             "_extract_ts": extract_ts,
-            "_source_system": "API",
-            "person_id": _source_id(hub_person_by_hk[person_hk]["Person Id"]),
-            "lead_id": _source_id(hub_lead_by_hk[lead_hk]["Lead Id"]),
+            "_source_system": src,
+            "person_id": make_id(hub_person_by_hk[person_hk]["Person Id"]),
+            "lead_id": make_id(hub_lead_by_hk[lead_hk]["Lead Id"]),
             "interested_level": sat_lead_by_hk[lead_hk]["Interested Level"],
             "preferred_contact_method": sat_lead_by_hk[lead_hk]["Preferred Contact Method"],
             "person_score": sat_lead_by_hk[lead_hk]["Person Score"],
@@ -245,10 +249,10 @@ def write_raw_api_batch(base_folder, batch_id, ctx):
         raw_files["customer.jsonl"].append({
             "_batch_id": batch_id,
             "_extract_ts": extract_ts,
-            "_source_system": "API",
-            "person_id": _source_id(hub_person_by_hk[person_hk]["Person Id"]),
-            "customer_id": _source_id(hub_customer_by_hk[customer_hk]["Customer Id"]),
-            "customer_number": _source_id(sat_customer_by_hk[customer_hk]["Customer Number"]),
+            "_source_system": src,
+            "person_id": make_id(hub_person_by_hk[person_hk]["Person Id"]),
+            "customer_id": make_id(hub_customer_by_hk[customer_hk]["Customer Id"]),
+            "customer_number": make_id(sat_customer_by_hk[customer_hk]["Customer Number"]),
             "customer_status": sat_customer_by_hk[customer_hk]["Customer Status"],
             "customer_status_reason": sat_customer_by_hk[customer_hk]["Customer Status Reason"],
             "customer_since": sat_customer_by_hk[customer_hk]["Customer Since"],
@@ -263,18 +267,18 @@ def write_raw_api_batch(base_folder, batch_id, ctx):
             raw_files["customer_lead.jsonl"].append({
                 "_batch_id": batch_id,
                 "_extract_ts": extract_ts,
-                "_source_system": "API",
-                "customer_id": _source_id(hub_customer_by_hk[row["Customer Hash Key"]]["Customer Id"]),
-                "lead_id": _source_id(hub_lead_by_hk[row["Lead Hash Key"]]["Lead Id"]),
+                "_source_system": src,
+                "customer_id": make_id(hub_customer_by_hk[row["Customer Hash Key"]]["Customer Id"]),
+                "lead_id": make_id(hub_lead_by_hk[row["Lead Hash Key"]]["Lead Id"]),
             })
 
     for consent_hk in selected_consent_hks:
         raw_files["consent.jsonl"].append({
             "_batch_id": batch_id,
             "_extract_ts": extract_ts,
-            "_source_system": "API",
-            "person_id": _source_id(hub_person_by_hk[person_by_consent_hk[consent_hk]]["Person Id"]),
-            "consent_id": _source_id(hub_consent_by_hk[consent_hk]["Consent Id"]),
+            "_source_system": src,
+            "person_id": make_id(hub_person_by_hk[person_by_consent_hk[consent_hk]]["Person Id"]),
+            "consent_id": make_id(hub_consent_by_hk[consent_hk]["Consent Id"]),
             "opt_in_validated": sat_consent_by_hk[consent_hk]["Opt In Validated"],
             "opt_in_legitimate_interest": sat_consent_by_hk[consent_hk]["Opt In Legitimate Interest"],
         })
@@ -284,9 +288,9 @@ def write_raw_api_batch(base_folder, batch_id, ctx):
         raw_files["marketing_preference.jsonl"].append({
             "_batch_id": batch_id,
             "_extract_ts": extract_ts,
-            "_source_system": "API",
-            "person_id": _source_id(hub_person_by_hk[person_by_mpr_hk[mpr_hk]]["Person Id"]),
-            "marketing_preference_id": _source_id(hub_mpr_by_hk[mpr_hk]["Marketing Preference Id"]),
+            "_source_system": src,
+            "person_id": make_id(hub_person_by_hk[person_by_mpr_hk[mpr_hk]]["Person Id"]),
+            "marketing_preference_id": make_id(hub_mpr_by_hk[mpr_hk]["Marketing Preference Id"]),
             "sms": sat["SMS"],
             "email": sat["Email"],
             "email_subscriptions": sat["Email Subscriptions"],
@@ -301,9 +305,9 @@ def write_raw_api_batch(base_folder, batch_id, ctx):
         raw_files["marketing_engagement.jsonl"].append({
             "_batch_id": batch_id,
             "_extract_ts": extract_ts,
-            "_source_system": "API",
-            "person_id": _source_id(hub_person_by_hk[person_by_men_hk[men_hk]]["Person Id"]),
-            "marketing_engagement_id": _source_id(hub_men_by_hk[men_hk]["Marketing Engagement Id"]),
+            "_source_system": src,
+            "person_id": make_id(hub_person_by_hk[person_by_men_hk[men_hk]]["Person Id"]),
+            "marketing_engagement_id": make_id(hub_men_by_hk[men_hk]["Marketing Engagement Id"]),
             "promotion_code": sat["Promotion Code"],
             "opened_email": sat["Opened Email"],
             "marketing_status": sat["Marketing Status"],
@@ -314,10 +318,10 @@ def write_raw_api_batch(base_folder, batch_id, ctx):
         raw_files["account.jsonl"].append({
             "_batch_id": batch_id,
             "_extract_ts": extract_ts,
-            "_source_system": "API",
-            "person_id": _source_id(hub_person_by_hk[person_by_account_hk[account_hk]]["Person Id"]),
-            "account_id": _source_id(hub_account_by_hk[account_hk]["Account Id"]),
-            "account_number": _source_id(sat["Account Number"]),
+            "_source_system": src,
+            "person_id": make_id(hub_person_by_hk[person_by_account_hk[account_hk]]["Person Id"]),
+            "account_id": make_id(hub_account_by_hk[account_hk]["Account Id"]),
+            "account_number": make_id(sat["Account Number"]),
             "account_type": sat["Account Type"],
             "account_last_access": sat["Account Last Access"],
             "account_last_change": sat["Account Last Change"],
@@ -329,8 +333,8 @@ def write_raw_api_batch(base_folder, batch_id, ctx):
         raw_files["product.jsonl"].append({
             "_batch_id": batch_id,
             "_extract_ts": extract_ts,
-            "_source_system": "API",
-            "product_id": _source_id(hub_product_by_hk[product_hk]["Product Id"]),
+            "_source_system": src,
+            "product_id": make_id(hub_product_by_hk[product_hk]["Product Id"]),
             "product_code": ctx["product_code_by_hk"][product_hk],
             "product_type": ctx["product_code_by_hk"][product_hk],
         })
@@ -342,14 +346,14 @@ def write_raw_api_batch(base_folder, batch_id, ctx):
         raw_files["quote.jsonl"].append({
             "_batch_id": batch_id,
             "_extract_ts": extract_ts,
-            "_source_system": "API",
-            "person_id": _source_id(hub_person_by_hk[person_by_quote_hk[quote_hk]]["Person Id"]),
-            "quote_id": _source_id(hub_quote_by_hk[quote_hk]["Quote Id"]),
-            "product_id": _source_id(hub_product_by_hk[product_hk]["Product Id"]),
+            "_source_system": src,
+            "person_id": make_id(hub_person_by_hk[person_by_quote_hk[quote_hk]]["Person Id"]),
+            "quote_id": make_id(hub_quote_by_hk[quote_hk]["Quote Id"]),
+            "product_id": make_id(hub_product_by_hk[product_hk]["Product Id"]),
             "product_code": product_code,
             "gross_revenue": sat["Gross Revenue"],
             "net_revenue": sat["Net Revenue"],
-            "quote_number": _source_id(sat["Quote Number"]),
+            "quote_number": make_id(sat["Quote Number"]),
             "quote_status": sat["Quote Status"],
             "renewal_amt_current_period": sat["Renewal Amt Current Period"],
             "renewal_amt_next_period": sat["Renewal Amt Next Period"],
@@ -364,12 +368,12 @@ def write_raw_api_batch(base_folder, batch_id, ctx):
         raw_files["policy.jsonl"].append({
             "_batch_id": batch_id,
             "_extract_ts": extract_ts,
-            "_source_system": "API",
-            "person_id": _source_id(hub_person_by_hk[person_hk]["Person Id"]),
-            "customer_id": _source_id(hub_customer_by_hk[customer_hk]["Customer Id"]),
-            "policy_id": _source_id(hub_policy_by_hk[policy_hk]["Policy Id"]),
-            "quote_id": _source_id(hub_quote_by_hk[ctx["policy_to_quote_map"][policy_hk]]["Quote Id"]),
-            "product_id": _source_id(hub_product_by_hk[product_hk]["Product Id"]),
+            "_source_system": src,
+            "person_id": make_id(hub_person_by_hk[person_hk]["Person Id"]),
+            "customer_id": make_id(hub_customer_by_hk[customer_hk]["Customer Id"]),
+            "policy_id": make_id(hub_policy_by_hk[policy_hk]["Policy Id"]),
+            "quote_id": make_id(hub_quote_by_hk[ctx["policy_to_quote_map"][policy_hk]]["Quote Id"]),
+            "product_id": make_id(hub_product_by_hk[product_hk]["Product Id"]),
             "product_code": product_code,
             "cover_option": sat["Cover Option"],
             "declined_claims": sat["Declined Claims"],
@@ -381,7 +385,7 @@ def write_raw_api_batch(base_folder, batch_id, ctx):
             "policy_cicle": sat["Policy Cicle"],
             "policy_end_date": sat["Policy End Date"],
             "policy_length": sat["Policy Length"],
-            "policy_number": _source_id(sat["Policy Number"]),
+            "policy_number": make_id(sat["Policy Number"]),
             "policy_start_date": sat["Policy Start Date"],
             "policy_status": sat["Policy Status"],
             "renewal_amount_current_period": sat["Renewal Amount Current Period"],
@@ -400,11 +404,11 @@ def write_raw_api_batch(base_folder, batch_id, ctx):
         raw_files["home.jsonl"].append({
             "_batch_id": batch_id,
             "_extract_ts": extract_ts,
-            "_source_system": "API",
-            "policy_id": _source_id(hub_policy_by_hk[policy_hk]["Policy Id"]),
-            "product_id": _source_id(hub_product_by_hk[product_hk]["Product Id"]),
+            "_source_system": src,
+            "policy_id": make_id(hub_policy_by_hk[policy_hk]["Policy Id"]),
+            "product_id": make_id(hub_product_by_hk[product_hk]["Product Id"]),
             "product_code": product_code,
-            "home_id": _source_id(hub_home_by_hk[home_hk]["Home Id"]),
+            "home_id": make_id(hub_home_by_hk[home_hk]["Home Id"]),
             "wall_construction": sat_home["Wall Construction"],
             "home_risk_address": sat_home["Home Risk Address"],
             "roof_construction": sat_home["Roof Construction"],
@@ -426,11 +430,11 @@ def write_raw_api_batch(base_folder, batch_id, ctx):
         raw_files["motor.jsonl"].append({
             "_batch_id": batch_id,
             "_extract_ts": extract_ts,
-            "_source_system": "API",
-            "policy_id": _source_id(hub_policy_by_hk[policy_hk]["Policy Id"]),
-            "product_id": _source_id(hub_product_by_hk[product_hk]["Product Id"]),
+            "_source_system": src,
+            "policy_id": make_id(hub_policy_by_hk[policy_hk]["Policy Id"]),
+            "product_id": make_id(hub_product_by_hk[product_hk]["Product Id"]),
             "product_code": product_code,
-            "motor_id": _source_id(hub_motor_by_hk[motor_hk]["Motor Id"]),
+            "motor_id": make_id(hub_motor_by_hk[motor_hk]["Motor Id"]),
             "auto_decline_vehicle": sat["Auto Decline Vehicle"],
             "body_type": sat["Body Type"],
             "fuel_type": sat["Fuel Type"],
