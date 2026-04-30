@@ -303,6 +303,7 @@ Rules:
 - every policy-channel link must reference a valid policy and a valid channel
 - each policy should have a single enhanced channel link
 - enhanced `sat_channel.channel_name` must match linked base `sat_policy.sales_channel`
+- if `sales_channel = AGENT`, the related policy-holder person must have a broker reference in `link_person_broker`
 
 ### 11.2 Claims
 
@@ -351,6 +352,7 @@ Rules:
 Rules:
 
 - broker links must reference valid person and broker hubs
+- broker references are required for persons behind AGENT-channel policies
 - campaign links must reference valid person and campaign hubs
 - campaigns are generated from lead-side context
 
@@ -430,6 +432,7 @@ It performs three layers of checking.
 - base policy date ordering
 - base lead-to-policy ordering
 - policy-channel alignment
+- AGENT policy to broker alignment
 - claim policy/date/channel/product alignment
 - complaint customer/date/channel/category alignment
 - override policy/reason/commission alignment

@@ -339,8 +339,17 @@ def _add_enhanced_entities(tables: dict[str, list[dict]], ctx: dict, cfg: dict |
         if row.get("Customer Status") in BASE_CUSTOMER_STATUSES
     ]
 
+    agent_policy_persons = sorted({
+        policy_to_person_hk[policy_hk]
+        for policy_hk in policy_hks
+        if policy_sat_by_hk.get(policy_hk, {}).get("Sales Channel") == "AGENT" and policy_to_person_hk.get(policy_hk)
+    })
+
     broker_examples = _read_example("DimBroker.csv")
-    broker_count = min(int(settings["broker_count"]), len(broker_examples) or int(settings["broker_count"]))
+    broker_target_count = int(settings["broker_count"])
+    if agent_policy_persons and broker_target_count <= 0:
+        broker_target_count = 1
+    broker_count = min(broker_target_count, len(broker_examples) or broker_target_count)
     for idx in range(broker_count):
         sample = _sample(broker_examples, idx)
         agent_id = sample.get("AgentID") or f"BRK{idx + 1:05d}"
@@ -362,7 +371,7 @@ def _add_enhanced_entities(tables: dict[str, list[dict]], ctx: dict, cfg: dict |
         })
 
     broker_hks = [row["broker_hash_key"] for row in tables["hub_broker"]]
-    for idx, person_hk in enumerate(policy_persons):
+    for idx, person_hk in enumerate(agent_policy_persons):
         if broker_hks:
             tables["link_person_broker"].append(_link_row(
                 "link_person_broker",

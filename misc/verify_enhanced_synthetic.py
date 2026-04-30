@@ -227,6 +227,8 @@ def verify_enhanced_business_rules(frames: dict[str, pd.DataFrame]) -> int:
     link_regulations_product = frames.get("link_regulations_product", pd.DataFrame())
     link_policy_product = frames.get("link_policy_product", pd.DataFrame())
     link_policy_customer = frames.get("link_policy_customer", pd.DataFrame())
+    link_customer_person = frames.get("link_customer_person", pd.DataFrame())
+    link_person_broker = frames.get("link_person_broker", pd.DataFrame())
 
     policy_cols = {"policy_hash_key", "policy_status", "policy_start_date", "policy_end_date", "sales_channel", "override_commission"}
     if not sat_policy.empty and policy_cols.issubset(set(sat_policy.columns)):
@@ -254,6 +256,41 @@ def verify_enhanced_business_rules(frames: dict[str, pd.DataFrame]) -> int:
         if not mismatch.empty:
             print(f"CHANNEL CHECK FAILED: policy-channel mapping mismatch rows={len(mismatch)}")
             errors += 1
+
+    if not sat_policy.empty and not link_policy_customer.empty and not link_customer_person.empty:
+        agent_policies = sat_policy[
+            sat_policy["sales_channel"].fillna("").astype(str).str.strip() == "AGENT"
+        ][["policy_hash_key"]].drop_duplicates()
+        if not agent_policies.empty:
+            person_broker_pairs = set()
+            if not link_person_broker.empty and {"person_hash_key", "broker_hash_key"}.issubset(link_person_broker.columns):
+                person_broker_pairs = {
+                    (str(person_hk), str(broker_hk))
+                    for person_hk, broker_hk in link_person_broker[["person_hash_key", "broker_hash_key"]].itertuples(index=False, name=None)
+                    if str(person_hk).strip() and str(broker_hk).strip()
+                }
+            broker_people = {pair[0] for pair in person_broker_pairs}
+            agent_policy_people = (
+                agent_policies
+                .merge(link_policy_customer[["policy_hash_key", "customer_hash_key"]], on="policy_hash_key", how="left")
+                .merge(link_customer_person[["customer_hash_key", "person_hash_key"]], on="customer_hash_key", how="left")
+            )
+            missing_broker = agent_policy_people[
+                agent_policy_people["person_hash_key"].fillna("").astype(str).str.strip().eq("")
+            ]
+            if not missing_broker.empty:
+                print("BROKER CHECK FAILED: AGENT policy missing linked person")
+                errors += 1
+            elif person_broker_pairs:
+                invalid_people = agent_policy_people[
+                    ~agent_policy_people["person_hash_key"].astype(str).isin(broker_people)
+                ]
+                if not invalid_people.empty:
+                    print("BROKER CHECK FAILED: AGENT policy person missing broker reference")
+                    errors += 1
+            else:
+                print("BROKER CHECK FAILED: AGENT policies exist but no person-broker links were generated")
+                errors += 1
 
     if not link_policy_claim.empty and not sat_claim.empty and not policy_lookup.empty:
         claim_product_by_policy = {}
