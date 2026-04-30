@@ -582,6 +582,7 @@ base_context = {
     "person_to_customer": person_to_customer,
     "person_to_lead": person_to_lead,
     "policy_person_map": policy_person_map,
+    "policy_to_person_map": policy_to_person_map,
     "policy_to_quote_map": policy_to_quote_map,
     "policy_to_product_id": policy_to_product_id,
     "policy_to_motor": policy_to_motor,

@@ -4,11 +4,18 @@ import csv
 import os
 import random
 import re
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from helper.csv_writer import write_csv
 from helper.enhanced_ddl import parse_enhanced_ddl
+from helper.enhanced_rules import (
+    BASE_CUSTOMER_STATUSES,
+    BASE_POLICY_CHANNELS,
+    CHANNEL_TYPE_BY_NAME,
+    claim_product_for_code,
+    insurance_category_for_code,
+)
 from helper.key_factory import md5_hasher
 
 
@@ -58,6 +65,16 @@ def _date(value: str) -> str:
         return datetime.fromisoformat(value[:19]).date().isoformat()
     except ValueError:
         return value
+
+
+def _date_obj(value) -> date | None:
+    text = _date(value)
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text[:10]).date()
+    except ValueError:
+        return None
 
 
 def _int(value, default="") -> str:
@@ -279,9 +296,48 @@ def _add_enhanced_entities(tables: dict[str, list[dict]], ctx: dict, cfg: dict |
     person_hks = list(ctx.get("person_hks", []))
     policy_hks = [row.get("Policy Hash Key") for row in ctx.get("hub_pol_rows", []) if row.get("Policy Hash Key")]
     customer_hks = [row.get("Customer Hash Key") for row in ctx.get("hub_cust_rows", []) if row.get("Customer Hash Key")]
-    product_rows = ctx.get("hub_prod_rows", [])
-    product_hks = [row.get("Product Hash Key") for row in product_rows if row.get("Product Hash Key")]
+    product_hks = [row.get("Product Hash Key") for row in ctx.get("hub_prod_rows", []) if row.get("Product Hash Key")]
     policy_persons = sorted(ctx.get("policy_person_map", {}).keys())
+    policy_sat_by_hk = {
+        row.get("Policy Hash Key"): row for row in ctx.get("sat_pol", []) if row.get("Policy Hash Key")
+    }
+    customer_sat_by_hk = {
+        row.get("Customer Hash Key"): row for row in ctx.get("sat_cus", []) if row.get("Customer Hash Key")
+    }
+    policy_to_product_code = {
+        policy_hk: ctx.get("policy_to_product_id", {}).get(policy_hk, "")
+        for policy_hk in policy_hks
+    }
+    person_to_customer_hk = {}
+    for person_hk, customer_hk_or_hks in ctx.get("person_to_customer", {}).items():
+        if isinstance(customer_hk_or_hks, list):
+            if customer_hk_or_hks:
+                person_to_customer_hk[person_hk] = customer_hk_or_hks[0]
+        elif customer_hk_or_hks:
+            person_to_customer_hk[person_hk] = customer_hk_or_hks
+    policy_to_person_hk = dict(ctx.get("policy_to_person_map", {}))
+    if not policy_to_person_hk:
+        for person_hk, assigned_policy_hks in ctx.get("policy_person_map", {}).items():
+            for assigned_policy_hk in assigned_policy_hks:
+                policy_to_person_hk[assigned_policy_hk] = person_hk
+    policy_to_customer_hk = {
+        policy_hk: person_to_customer_hk.get(policy_to_person_hk.get(policy_hk))
+        for policy_hk in policy_hks
+    }
+    customer_to_policy_hks: dict[str, list[str]] = {}
+    for policy_hk, customer_hk in policy_to_customer_hk.items():
+        if customer_hk:
+            customer_to_policy_hks.setdefault(customer_hk, []).append(policy_hk)
+    active_policy_hks = [
+        policy_hk
+        for policy_hk, row in policy_sat_by_hk.items()
+        if row.get("Policy Status") == "ACTIVE"
+    ]
+    active_customer_hks = [
+        customer_hk
+        for customer_hk, row in customer_sat_by_hk.items()
+        if row.get("Customer Status") in BASE_CUSTOMER_STATUSES
+    ]
 
     broker_examples = _read_example("DimBroker.csv")
     broker_count = min(int(settings["broker_count"]), len(broker_examples) or int(settings["broker_count"]))
@@ -358,11 +414,8 @@ def _add_enhanced_entities(tables: dict[str, list[dict]], ctx: dict, cfg: dict |
                 link_date,
             ))
 
-    channel_examples = _read_example("DimChannel.csv")
-    channel_count = min(int(settings["channel_count"]), len(channel_examples) or int(settings["channel_count"]))
-    for idx in range(channel_count):
-        sample = _sample(channel_examples, idx)
-        channel_id = sample.get("ChannelID") or f"CHN{idx + 1:03d}"
+    for idx, channel_name in enumerate(BASE_POLICY_CHANNELS, start=1):
+        channel_id = f"CHN{idx:03d}"
         channel_hk = md5_hasher(channel_id)
         tables["hub_channel"].append({
             "channel_hash_key": channel_hk,
@@ -373,29 +426,46 @@ def _add_enhanced_entities(tables: dict[str, list[dict]], ctx: dict, cfg: dict |
         tables["sat_channel"].append({
             "channel_hash_key": channel_hk,
             "load_date": sat_date,
-            "channel_name": sample.get("ChannelName", ""),
-            "channel_type": sample.get("ChannelType", ""),
+            "channel_name": channel_name,
+            "channel_type": CHANNEL_TYPE_BY_NAME.get(channel_name, ""),
         })
 
-    channel_hks = [row["channel_hash_key"] for row in tables["hub_channel"]]
-    for idx, policy_hk in enumerate(policy_hks):
-        if channel_hks:
+    channel_hk_by_name = {
+        row["channel_name"]: row["channel_hash_key"] for row in tables["sat_channel"]
+    }
+    for policy_hk in policy_hks:
+        sales_channel = policy_sat_by_hk.get(policy_hk, {}).get("Sales Channel", "")
+        channel_hk = channel_hk_by_name.get(sales_channel)
+        if channel_hk:
             tables["link_policy_channel"].append(_link_row(
                 "link_policy_channel",
                 "channel_hash_key",
-                channel_hks[idx % len(channel_hks)],
+                channel_hk,
                 "policy_hash_key",
                 policy_hk,
                 link_date,
             ))
 
     claim_examples = _read_example("DimClaim.csv")
-    claim_count = min(len(policy_hks), max(1, int(len(policy_hks) * float(settings["claim_policy_rate"])))) if policy_hks else 0
-    selected_policies = rng.sample(policy_hks, claim_count) if claim_count else []
+    claim_pool = active_policy_hks or policy_hks
+    claim_count = min(len(claim_pool), max(1, int(len(claim_pool) * float(settings["claim_policy_rate"])))) if claim_pool else 0
+    selected_policies = rng.sample(claim_pool, claim_count) if claim_count else []
     for idx, policy_hk in enumerate(selected_policies):
         sample = _sample(claim_examples, idx)
         claim_id = f"ENH_CLM_{idx + 1:07d}"
         claim_hk = md5_hasher(claim_id)
+        policy_row = policy_sat_by_hk.get(policy_hk, {})
+        product_code = policy_to_product_code.get(policy_hk, "")
+        policy_start = _date_obj(policy_row.get("Policy Start Date"))
+        policy_end = _date_obj(policy_row.get("Policy End Date"))
+        reported = _date_obj(sample.get("ClaimReportedDate")) or policy_start
+        if policy_start and reported and reported < policy_start:
+            reported = policy_start
+        if policy_end and reported and reported > policy_end:
+            reported = policy_end
+        settlement = _date_obj(sample.get("ClaimSettlementDate"))
+        if reported and settlement and settlement < reported:
+            settlement = reported
         tables["hub_claim"].append({
             "claim_hash_key": claim_hk,
             "load_date": hub_date,
@@ -409,11 +479,11 @@ def _add_enhanced_entities(tables: dict[str, list[dict]], ctx: dict, cfg: dict |
             "claim_type": sample.get("ClaimType", ""),
             "claim_status": sample.get("ClaimStatus", ""),
             "claim_reason": sample.get("ClaimReason", ""),
-            "claim_channel": sample.get("ClaimChannel", ""),
+            "claim_channel": policy_row.get("Sales Channel", ""),
             "claim_handler": sample.get("ClaimHandler", ""),
-            "claim_reported_date": _date(sample.get("ClaimReportedDate")),
-            "claim_settlement_date": _date(sample.get("ClaimSettlementDate")),
-            "claim_product": sample.get("Product", ""),
+            "claim_reported_date": reported.isoformat() if reported else "",
+            "claim_settlement_date": settlement.isoformat() if settlement else "",
+            "claim_product": claim_product_for_code(product_code),
             "is_claim_suspicious": sample.get("SuspiciousFlag", ""),
             "is_claim_fraud": sample.get("FraudFlag", ""),
             "claim_fraud_status": sample.get("FraudStatus", ""),
@@ -454,13 +524,32 @@ def _add_enhanced_entities(tables: dict[str, list[dict]], ctx: dict, cfg: dict |
 
     complaint_examples = _read_example("FactComplaints.csv") or _read_example("DimComplaints.csv")
     category_examples = _read_example("DimInsCategory.csv")
-    complaint_count = min(len(customer_hks), max(1, int(len(customer_hks) * float(settings["complaint_customer_rate"])))) if customer_hks else 0
-    selected_customers = rng.sample(customer_hks, complaint_count) if complaint_count else []
+    complaint_pool = active_customer_hks or customer_hks
+    complaint_count = min(len(complaint_pool), max(1, int(len(complaint_pool) * float(settings["complaint_customer_rate"])))) if complaint_pool else 0
+    selected_customers = rng.sample(complaint_pool, complaint_count) if complaint_count else []
     for idx, customer_hk in enumerate(selected_customers):
         sample = _sample(complaint_examples, idx)
         category = _sample(category_examples, idx)
         complaint_id = sample.get("Complaint ID") or f"CMP{idx + 1:07d}"
         complaint_hk = md5_hasher(complaint_id)
+        customer_row = customer_sat_by_hk.get(customer_hk, {})
+        customer_since = _date_obj(customer_row.get("Customer Since"))
+        linked_policy_hks = customer_to_policy_hks.get(customer_hk, [])
+        preferred_policy_hk = next((hk for hk in linked_policy_hks if hk in active_policy_hks), None)
+        if not preferred_policy_hk and linked_policy_hks:
+            preferred_policy_hk = linked_policy_hks[0]
+        policy_row = policy_sat_by_hk.get(preferred_policy_hk, {})
+        product_code = policy_to_product_code.get(preferred_policy_hk, "")
+        complaint_date = _date_obj(sample.get("Complaint Date")) or customer_since
+        if customer_since and complaint_date and complaint_date < customer_since:
+            complaint_date = customer_since
+        acknowledgement_date = _date_obj(sample.get("Acknowledgement Date"))
+        if complaint_date and acknowledgement_date and acknowledgement_date < complaint_date:
+            acknowledgement_date = complaint_date
+        resolved_date = _date_obj(sample.get("Resolved Date"))
+        min_resolved = acknowledgement_date or complaint_date
+        if min_resolved and resolved_date and resolved_date < min_resolved:
+            resolved_date = min_resolved
         tables["hub_complaints"].append({
             "complaints_hash_key": complaint_hk,
             "load_date": hub_date,
@@ -470,15 +559,15 @@ def _add_enhanced_entities(tables: dict[str, list[dict]], ctx: dict, cfg: dict |
         tables["sat_complaints"].append({
             "complaints_hash_key": complaint_hk,
             "load_date": sat_date,
-            "complaint_date": _date(sample.get("Complaint Date")),
-            "complaint_acknowledgement_date": _date(sample.get("Acknowledgement Date")),
-            "complaint_resolved_date": _date(sample.get("Resolved Date")),
+            "complaint_date": complaint_date.isoformat() if complaint_date else "",
+            "complaint_acknowledgement_date": acknowledgement_date.isoformat() if acknowledgement_date else "",
+            "complaint_resolved_date": resolved_date.isoformat() if resolved_date else "",
             "complaint_upheld_status": sample.get("Upheld Status", ""),
             "is_financial_ombudsman_service_referral": sample.get("FOS Referral", ""),
             "complaint_driver": sample.get("Complaint Driver", ""),
-            "complaint_channel": sample.get("Complaint Channel", ""),
+            "complaint_channel": policy_row.get("Sales Channel", ""),
             "compensation_amount": _int(sample.get("Compensation Amount")),
-            "insurance_category": category.get("Insurance Category", ""),
+            "insurance_category": insurance_category_for_code(product_code) or category.get("Insurance Category", ""),
             "complaint_status": sample.get("Compaint Status", ""),
         })
         tables["link_complaints_customer"].append(_link_row(
@@ -491,8 +580,18 @@ def _add_enhanced_entities(tables: dict[str, list[dict]], ctx: dict, cfg: dict |
         ))
 
     override_examples = _read_example("DimOverride.csv")
-    override_count = min(len(policy_hks), max(1, int(len(policy_hks) * float(settings["override_policy_rate"])))) if policy_hks else 0
-    selected_override_policies = rng.sample(policy_hks, override_count) if override_count else []
+    override_pool = active_policy_hks or policy_hks
+    override_count = min(len(override_pool), max(1, int(len(override_pool) * float(settings["override_policy_rate"])))) if override_pool else 0
+    selected_override_policies = rng.sample(override_pool, override_count) if override_count else []
+    sat_policy_by_hk = {
+        row.get("policy_hash_key"): row for row in tables.get("sat_policy", []) if row.get("policy_hash_key")
+    }
+    original_override_commission = {
+        policy_hk: row.get("override_commission", "")
+        for policy_hk, row in sat_policy_by_hk.items()
+    }
+    for row in sat_policy_by_hk.values():
+        row["override_commission"] = ""
     for idx, policy_hk in enumerate(selected_override_policies):
         sample = _sample(override_examples, idx)
         base_override_id = (sample.get("over Ride ID ") or "OVR").strip()
@@ -509,6 +608,12 @@ def _add_enhanced_entities(tables: dict[str, list[dict]], ctx: dict, cfg: dict |
             "load_date": sat_date,
             "override_reason": sample.get("over ride reason", ""),
         })
+        if policy_hk in sat_policy_by_hk:
+            sat_policy_by_hk[policy_hk]["override_commission"] = (
+                original_override_commission.get(policy_hk)
+                or _int(sample.get("Override Comission"))
+                or "0"
+            )
         tables["link_override_policy"].append(_link_row(
             "link_override_policy",
             "override_hash_key",

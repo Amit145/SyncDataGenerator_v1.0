@@ -264,14 +264,6 @@ Supported notebook source schemas:
 - `kaggle`
 - `data_source`
 
-Bronze ingestion notebook assets:
-- `db_data/btd.ipynb`
-- `db_data/btdd.csv.csv`
-
-Purpose:
-- `btd.ipynb` ingests landed raw files into Delta tables using metadata from a Databricks control table
-- `btdd.csv.csv` is a sample/seed metadata format for that table
-
 ## Notes
 
 - `load_config()` resolves `config/scenario_v1.json` relative to the repo, so scripts can be run from different working directories.
