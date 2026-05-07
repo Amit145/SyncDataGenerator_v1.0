@@ -35,9 +35,10 @@ MUTATION_COLUMNS = {
     "sat_campaign.csv": ["campaign_status"],
     "sat_channel.csv": ["channel_type"],
     "sat_claim.csv": ["claim_status"],
-    "sat_complaints.csv": ["complaint_status"],
+    "sat_complaint.csv": ["complaint_status"],
     "sat_override.csv": ["override_reason"],
-    "sat_regulations.csv": ["regulation_compliance_status"],
+    "sat_regulation.csv": ["regulation_compliance_status"],
+    "sat_insured_object.csv": ["insured_object_current_status"],
 }
 
 

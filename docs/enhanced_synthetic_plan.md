@@ -34,15 +34,19 @@ The enhanced pipeline writes:
 The enhanced output contains the full enhanced Data Vault model:
 
 - all 52 base tables
-- plus 21 enhanced-only tables
-- total expected enhanced tables: `73`
+- plus 28 enhanced-only tables
+- total expected enhanced tables: `80`
 
 
 ## 2. Source Inputs
 
 Enhanced schema contract:
 
-- `enhanced_360/Enhanced_Customer360_DataVault_DDL.sql`
+- `enhanced_360/update/New_Enhanced Customer 360 Data Vault DDL.sql`
+
+Enhanced change mapping:
+
+- `enhanced_360/update/DV_Table_Column_Changes_Old_vs_New.xlsx`
 
 Enhanced sample/reference data:
 
@@ -75,15 +79,15 @@ Base DDL:
 
 Enhanced DDL:
 
-- `24` hubs
-- `25` links
-- `24` satellites
-- `73` tables total
+- `25` hubs
+- `30` links
+- `25` satellites
+- `80` tables total
 
 Enhanced-only additions:
 
-- `7` hubs
-- `7` links
+- `8` hubs
+- `13` links
 - `7` satellites
 
 Enhanced-only entity groups:
@@ -92,9 +96,10 @@ Enhanced-only entity groups:
 - `campaign`
 - `channel`
 - `claim`
-- `complaints`
+- `complaint`
+- `insured_object`
 - `override`
-- `regulations`
+- `regulation`
 
 
 ## 4. Output Locations
@@ -115,13 +120,20 @@ Enhanced records are generated from the same run context as base and must attach
 
 Enhanced entities are linked as follows:
 
-- `broker -> person` via `link_person_broker`
+- `broker -> person` via `link_broker_person`
+- `broker -> policy` via `link_policy_broker`
+- `broker -> quote` via `link_quote_broker`
 - `campaign -> person` via `link_person_campaign`
 - `channel -> policy` via `link_policy_channel`
-- `claim -> policy` via `link_policy_claim`
-- `complaints -> customer` via `link_complaints_customer`
-- `override -> policy` via `link_override_policy`
-- `regulations -> product` via `link_regulations_product`
+- `channel -> quote` via `link_quote_channel`
+- `claim -> policy` via `link_claim_policy`
+- `complaint -> policy` via `link_complaint_policy`
+- `complaint -> regulation` via `link_complaint_regulation`
+- `override -> policy` via `link_policy_override`
+- `policy -> quote` via `link_policy_quote`
+- `policy -> insured_object` via `link_policy_insured_object`
+- `insured_object -> home` via `link_insured_object_home`
+- `insured_object -> motor` via `link_insured_object_motor`
 
 Important implementation rule:
 
@@ -212,7 +224,8 @@ Rules:
 
 - `sat_product.type` must stay within the base product catalog
 - enhanced claim and complaint product/category logic must be derived from linked base policy/product context
-- enhanced regulations must link to valid generated products
+- enhanced regulations link to generated complaints through `link_complaint_regulation`
+- enhanced insured objects must be derived from valid generated motor/home policy assets
 
 Current product-family mapping used for enhanced validation/generation:
 
@@ -252,9 +265,10 @@ Practical behavior:
 - `campaign`: fixed reference pool
 - `channel`: controlled reference set aligned to base channels
 - `claim`: percentage of eligible policies
-- `complaints`: percentage of eligible customers
+- `complaint`: percentage of eligible policy/customers, linked to policy
 - `override`: percentage of eligible policies
-- `regulations`: fixed/capped reference pool
+- `regulation`: fixed/capped reference pool, linked to complaints when complaints exist
+- `insured_object`: derived from generated policy motor/home assets
 
 
 ## 9. Eligibility Rules
@@ -265,11 +279,12 @@ Implemented or intended eligibility behavior:
 
 - claims are generated from active policies
 - overrides are generated from active policies
-- complaints are generated from customers and aligned to customer policy context
-- broker links attach to persons involved in policy flow
+- complaints are generated from customers and linked to a policy from that customer's policy context
+- broker links attach to AGENT-channel policy persons and their related policies/quotes
 - campaign links attach to lead persons
-- channel links attach to policies
-- regulations link to products
+- channel links attach to policies and quotes
+- regulations link to complaints
+- insured objects are generated from policy-linked home and motor assets
 
 
 ## 10. Base Rule Inheritance
@@ -301,9 +316,11 @@ Enhanced verification re-checks a subset of those base business rules directly o
 Rules:
 
 - every policy-channel link must reference a valid policy and a valid channel
+- every quote-channel link must reference a valid quote and a valid channel
 - each policy should have a single enhanced channel link
 - enhanced `sat_channel.channel_name` must match linked base `sat_policy.sales_channel`
-- if `sales_channel = AGENT`, the related policy-holder person must have a broker reference in `link_person_broker`
+- if `sales_channel = AGENT`, the related policy-holder person must have a broker reference in `link_broker_person`
+- AGENT policy brokers should also be represented through `link_policy_broker` and `link_quote_broker`
 
 ### 11.2 Claims
 
@@ -321,14 +338,14 @@ Rules:
 
 Rules:
 
-- every complaint must link to an existing customer
-- only customers can complain
+- every complaint must link to an existing policy
+- the linked policy must resolve back to an existing customer
 - `complaint_date >= customer_since`
 - `complaint_acknowledgement_date >= complaint_date` when present
 - `complaint_resolved_date >= complaint_acknowledgement_date` when acknowledgement exists
 - otherwise `complaint_resolved_date >= complaint_date`
-- complaint channel should align with one of the linked customer policy channels
-- complaint insurance category should align with the customer policy product portfolio
+- complaint channel should align with the linked policy channel
+- complaint insurance category should align with the linked policy product category
 
 ### 11.4 Overrides
 
@@ -343,18 +360,23 @@ Rules:
 
 Rules:
 
-- every regulation link must point to an existing product
+- every regulation row must point to an existing regulation hub
+- regulation-to-complaint links must point to existing regulation and complaint hubs
 - `regulation_date_raised <= regulation_deadline_date`
 - `regulation_date_raised <= regulation_date_closed` when close date exists
 
-### 11.6 Broker and Campaign
+### 11.6 Broker, Campaign, and Insured Object
 
 Rules:
 
 - broker links must reference valid person and broker hubs
 - broker references are required for persons behind AGENT-channel policies
+- broker-policy and broker-quote links must reference valid generated objects
 - campaign links must reference valid person and campaign hubs
 - campaigns are generated from lead-side context
+- campaign marketing metrics are populated from `FactQuote.csv` reference values
+- insured objects must reference valid policy, home, or motor objects
+- insured object dates should follow the linked policy start/end dates
 
 
 ## 12. Sample Data Usage Rules
@@ -401,9 +423,10 @@ Enhanced satellites included in mutation support:
 - `sat_campaign.csv`
 - `sat_channel.csv`
 - `sat_claim.csv`
-- `sat_complaints.csv`
+- `sat_complaint.csv`
+- `sat_insured_object.csv`
 - `sat_override.csv`
-- `sat_regulations.csv`
+- `sat_regulation.csv`
 
 
 ## 14. Verification
@@ -434,16 +457,16 @@ It performs three layers of checking.
 - policy-channel alignment
 - AGENT policy to broker alignment
 - claim policy/date/channel/product alignment
-- complaint customer/date/channel/category alignment
+- complaint policy/customer/date/channel/category alignment
 - override policy/reason/commission alignment
 - regulation date ordering
 
 Expected successful verification summary:
 
-- `73` enhanced tables found
-- `24` hubs
-- `25` links
-- `24` satellites
+- `80` enhanced tables found
+- `25` hubs
+- `30` links
+- `25` satellites
 - structural checks pass
 - shared-domain checks pass
 - enhanced business checks pass
@@ -512,15 +535,15 @@ python .\misc\verify_all_silver.py
 
 Latest verified enhanced run during implementation:
 
-- `20260430140901`
+- reduced local verification run with `500` generated people against the update DDL
 
 Verified outcomes:
 
 - base generation passed
-- base integrity passed
 - enhanced synthetic generation passed
 - enhanced verification passed
-- enhanced SCD2 was generated
+- all `80` enhanced tables were generated
+- schema, primary-key, foreign-key, enum, timeline, and enhanced business checks passed
 
 
 ## 18. Operational Notes

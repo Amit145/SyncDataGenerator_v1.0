@@ -155,7 +155,7 @@ def verify_base_enum_alignment(frames: dict[str, pd.DataFrame]) -> int:
     for table_name, column_name in (
         ("sat_channel", "channel_name"),
         ("sat_claim", "claim_channel"),
-        ("sat_complaints", "complaint_channel"),
+        ("sat_complaint", "complaint_channel"),
         ("sat_policy", "sales_channel"),
     ):
         df = frames.get(table_name)
@@ -214,21 +214,21 @@ def verify_enhanced_business_rules(frames: dict[str, pd.DataFrame]) -> int:
     errors = 0
     sat_policy = frames.get("sat_policy", pd.DataFrame())
     sat_claim = frames.get("sat_claim", pd.DataFrame())
-    sat_complaints = frames.get("sat_complaints", pd.DataFrame())
+    sat_complaint = frames.get("sat_complaint", pd.DataFrame())
     sat_override = frames.get("sat_override", pd.DataFrame())
-    sat_regulations = frames.get("sat_regulations", pd.DataFrame())
+    sat_regulation = frames.get("sat_regulation", pd.DataFrame())
     sat_channel = frames.get("sat_channel", pd.DataFrame())
     sat_customer = frames.get("sat_customer", pd.DataFrame())
     sat_product = frames.get("sat_product", pd.DataFrame())
-    link_policy_claim = frames.get("link_policy_claim", pd.DataFrame())
-    link_complaints_customer = frames.get("link_complaints_customer", pd.DataFrame())
-    link_override_policy = frames.get("link_override_policy", pd.DataFrame())
+    link_claim_policy = frames.get("link_claim_policy", pd.DataFrame())
+    link_complaint_policy = frames.get("link_complaint_policy", pd.DataFrame())
+    link_complaint_regulation = frames.get("link_complaint_regulation", pd.DataFrame())
+    link_policy_override = frames.get("link_policy_override", pd.DataFrame())
     link_policy_channel = frames.get("link_policy_channel", pd.DataFrame())
-    link_regulations_product = frames.get("link_regulations_product", pd.DataFrame())
     link_policy_product = frames.get("link_policy_product", pd.DataFrame())
     link_policy_customer = frames.get("link_policy_customer", pd.DataFrame())
     link_customer_person = frames.get("link_customer_person", pd.DataFrame())
-    link_person_broker = frames.get("link_person_broker", pd.DataFrame())
+    link_broker_person = frames.get("link_broker_person", pd.DataFrame())
 
     policy_cols = {"policy_hash_key", "policy_status", "policy_start_date", "policy_end_date", "sales_channel", "override_commission"}
     if not sat_policy.empty and policy_cols.issubset(set(sat_policy.columns)):
@@ -263,10 +263,10 @@ def verify_enhanced_business_rules(frames: dict[str, pd.DataFrame]) -> int:
         ][["policy_hash_key"]].drop_duplicates()
         if not agent_policies.empty:
             person_broker_pairs = set()
-            if not link_person_broker.empty and {"person_hash_key", "broker_hash_key"}.issubset(link_person_broker.columns):
+            if not link_broker_person.empty and {"person_hash_key", "broker_hash_key"}.issubset(link_broker_person.columns):
                 person_broker_pairs = {
                     (str(person_hk), str(broker_hk))
-                    for person_hk, broker_hk in link_person_broker[["person_hash_key", "broker_hash_key"]].itertuples(index=False, name=None)
+                    for person_hk, broker_hk in link_broker_person[["person_hash_key", "broker_hash_key"]].itertuples(index=False, name=None)
                     if str(person_hk).strip() and str(broker_hk).strip()
                 }
             broker_people = {pair[0] for pair in person_broker_pairs}
@@ -292,7 +292,7 @@ def verify_enhanced_business_rules(frames: dict[str, pd.DataFrame]) -> int:
                 print("BROKER CHECK FAILED: AGENT policies exist but no person-broker links were generated")
                 errors += 1
 
-    if not link_policy_claim.empty and not sat_claim.empty and not policy_lookup.empty:
+    if not link_claim_policy.empty and not sat_claim.empty and not policy_lookup.empty:
         claim_product_by_policy = {}
         if not link_policy_product.empty and not product_lookup.empty:
             merged_products = (
@@ -303,7 +303,7 @@ def verify_enhanced_business_rules(frames: dict[str, pd.DataFrame]) -> int:
                 claim_product_by_policy[str(policy_hk)] = claim_product_for_code(str(product_code))
 
         merged = (
-            link_policy_claim[["policy_hash_key", "claim_hash_key"]]
+            link_claim_policy[["policy_hash_key", "claim_hash_key"]]
             .merge(sat_policy[["policy_hash_key", "policy_status", "policy_start_date", "policy_end_date", "sales_channel"]], on="policy_hash_key", how="left")
             .merge(sat_claim[["claim_hash_key", "claim_reported_date", "claim_settlement_date", "claim_product", "claim_channel"]], on="claim_hash_key", how="left")
         )
@@ -343,28 +343,26 @@ def verify_enhanced_business_rules(frames: dict[str, pd.DataFrame]) -> int:
             print("CLAIM CHECK FAILED: claim_channel does not match linked policy sales_channel")
             errors += 1
 
-    if not link_complaints_customer.empty and not sat_complaints.empty and not customer_lookup.empty:
-        customer_policy_categories: dict[str, set[str]] = {}
-        customer_policy_channels: dict[str, set[str]] = {}
+    if not link_complaint_policy.empty and not sat_complaint.empty and not policy_lookup.empty:
+        policy_categories: dict[str, str] = {}
+        policy_channels: dict[str, str] = {}
         if not link_policy_customer.empty and not link_policy_product.empty and not sat_policy.empty and not sat_product.empty:
             policy_products = (
-                link_policy_customer[["customer_hash_key", "policy_hash_key"]]
-                .merge(link_policy_product[["policy_hash_key", "product_hash_key"]], on="policy_hash_key", how="left")
+                link_policy_product[["policy_hash_key", "product_hash_key"]]
                 .merge(sat_product[["product_hash_key", "type"]], on="product_hash_key", how="left")
                 .merge(sat_policy[["policy_hash_key", "sales_channel"]], on="policy_hash_key", how="left")
             )
-            for customer_hk, product_code, sales_channel in policy_products[["customer_hash_key", "type", "sales_channel"]].itertuples(index=False, name=None):
-                customer_key = str(customer_hk)
+            for policy_hk, product_code, sales_channel in policy_products[["policy_hash_key", "type", "sales_channel"]].itertuples(index=False, name=None):
+                policy_key = str(policy_hk)
                 if pd.notna(product_code):
-                    customer_policy_categories.setdefault(customer_key, set()).add(
-                        insurance_category_for_code(str(product_code))
-                    )
+                    policy_categories[policy_key] = insurance_category_for_code(str(product_code))
                 if pd.notna(sales_channel):
-                    customer_policy_channels.setdefault(customer_key, set()).add(str(sales_channel))
+                    policy_channels[policy_key] = str(sales_channel)
 
         merged = (
-            link_complaints_customer[["complaints_hash_key", "customer_hash_key"]]
-            .merge(sat_complaints[["complaints_hash_key", "complaint_date", "complaint_acknowledgement_date", "complaint_resolved_date", "complaint_channel", "insurance_category"]], on="complaints_hash_key", how="left")
+            link_complaint_policy[["complaint_hash_key", "policy_hash_key"]]
+            .merge(sat_complaint[["complaint_hash_key", "complaint_date", "complaint_acknowledgement_date", "complaint_resolved_date", "complaint_channel", "insurance_category"]], on="complaint_hash_key", how="left")
+            .merge(link_policy_customer[["policy_hash_key", "customer_hash_key"]], on="policy_hash_key", how="left")
             .merge(sat_customer[["customer_hash_key", "customer_since"]], on="customer_hash_key", how="left")
         )
         complaint_date = parse_date(merged["complaint_date"])
@@ -383,13 +381,13 @@ def verify_enhanced_business_rules(frames: dict[str, pd.DataFrame]) -> int:
             errors += 1
         invalid_category = 0
         invalid_channel = 0
-        for customer_hk, insurance_category, complaint_channel in merged[["customer_hash_key", "insurance_category", "complaint_channel"]].itertuples(index=False, name=None):
-            customer_key = str(customer_hk)
-            allowed_categories = customer_policy_categories.get(customer_key, set())
-            allowed_channels = customer_policy_channels.get(customer_key, set())
-            if allowed_categories and str(insurance_category).strip() not in allowed_categories:
+        for policy_hk, insurance_category, complaint_channel in merged[["policy_hash_key", "insurance_category", "complaint_channel"]].itertuples(index=False, name=None):
+            policy_key = str(policy_hk)
+            allowed_category = policy_categories.get(policy_key)
+            allowed_channel = policy_channels.get(policy_key)
+            if allowed_category and str(insurance_category).strip() != allowed_category:
                 invalid_category += 1
-            if allowed_channels and str(complaint_channel).strip() not in allowed_channels:
+            if allowed_channel and str(complaint_channel).strip() != allowed_channel:
                 invalid_channel += 1
         if invalid_category:
             print(f"COMPLAINT CHECK FAILED: insurance_category not in customer policy portfolio rows={invalid_category}")
@@ -398,9 +396,9 @@ def verify_enhanced_business_rules(frames: dict[str, pd.DataFrame]) -> int:
             print(f"COMPLAINT CHECK FAILED: complaint_channel not in customer policy channels rows={invalid_channel}")
             errors += 1
 
-    if not link_override_policy.empty and not sat_override.empty and not policy_lookup.empty:
+    if not link_policy_override.empty and not sat_override.empty and not policy_lookup.empty:
         merged = (
-            link_override_policy[["override_hash_key", "policy_hash_key"]]
+            link_policy_override[["override_hash_key", "policy_hash_key"]]
             .merge(sat_override[["override_hash_key", "override_reason"]], on="override_hash_key", how="left")
             .merge(sat_policy[["policy_hash_key", "policy_status", "override_commission"]], on="policy_hash_key", how="left")
         )
@@ -416,9 +414,9 @@ def verify_enhanced_business_rules(frames: dict[str, pd.DataFrame]) -> int:
             print("OVERRIDE CHECK FAILED: blank override_commission on linked policy override")
             errors += 1
 
-    if not link_regulations_product.empty and not sat_regulations.empty:
-        regs = sat_regulations[[
-            "regulations_hash_key",
+    if not sat_regulation.empty:
+        regs = sat_regulation[[
+            "regulation_hash_key",
             "regulation_date_raised",
             "regulation_deadline_date",
             "regulation_date_closed",

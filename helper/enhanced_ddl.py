@@ -4,7 +4,12 @@ import re
 from pathlib import Path
 
 
-ENHANCED_DDL_PATH = Path(__file__).resolve().parents[1] / "enhanced_360" / "Enhanced_Customer360_DataVault_DDL.sql"
+ENHANCED_DDL_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "enhanced_360"
+    / "update"
+    / "New_Enhanced Customer 360 Data Vault DDL.sql"
+)
 
 
 def parse_enhanced_ddl(path: str | Path = ENHANCED_DDL_PATH) -> dict:
