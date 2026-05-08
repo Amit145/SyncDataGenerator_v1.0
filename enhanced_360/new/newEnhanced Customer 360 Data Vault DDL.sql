@@ -10,6 +10,17 @@ CREATE TABLE hub_account
 ALTER TABLE hub_account
 	ADD CONSTRAINT xpkhub_account PRIMARY KEY (account_hash_key);
 
+CREATE TABLE hub_address
+(
+	address_hash_key STRING NOT NULL,
+	load_date TIMESTAMP,
+	record_source STRING,
+	address_id STRING
+);
+
+ALTER TABLE hub_address
+	ADD CONSTRAINT xpkhub_address PRIMARY KEY (address_hash_key);
+
 CREATE TABLE hub_broker
 (
 	broker_hash_key STRING NOT NULL,
@@ -19,7 +30,7 @@ CREATE TABLE hub_broker
 );
 
 ALTER TABLE hub_broker
-	ADD CONSTRAINT xpkhub_lead PRIMARY KEY (broker_hash_key);
+	ADD CONSTRAINT xpkhub_broker PRIMARY KEY (broker_hash_key);
 
 CREATE TABLE hub_campaign
 (
@@ -30,7 +41,7 @@ CREATE TABLE hub_campaign
 );
 
 ALTER TABLE hub_campaign
-	ADD CONSTRAINT xpkhub_lead PRIMARY KEY (campaign_hash_key);
+	ADD CONSTRAINT xpkhub_campaign PRIMARY KEY (campaign_hash_key);
 
 CREATE TABLE hub_channel
 (
@@ -41,7 +52,7 @@ CREATE TABLE hub_channel
 );
 
 ALTER TABLE hub_channel
-	ADD CONSTRAINT xpkhub_lead PRIMARY KEY (channel_hash_key);
+	ADD CONSTRAINT xpkhub_channel PRIMARY KEY (channel_hash_key);
 
 CREATE TABLE hub_claim
 (
@@ -52,7 +63,7 @@ CREATE TABLE hub_claim
 );
 
 ALTER TABLE hub_claim
-	ADD CONSTRAINT xpkhub_lead PRIMARY KEY (claim_hash_key);
+	ADD CONSTRAINT xpkhub_claim PRIMARY KEY (claim_hash_key);
 
 CREATE TABLE hub_complaint
 (
@@ -63,7 +74,7 @@ CREATE TABLE hub_complaint
 );
 
 ALTER TABLE hub_complaint
-	ADD CONSTRAINT xpkhub_lead PRIMARY KEY (complaint_hash_key);
+	ADD CONSTRAINT xpkhub_complaint PRIMARY KEY (complaint_hash_key);
 
 CREATE TABLE hub_consent
 (
@@ -103,22 +114,11 @@ CREATE TABLE hub_home
 	home_hash_key STRING NOT NULL,
 	load_date TIMESTAMP,
 	record_source STRING,
-	home_id STRING
+	insured_object_home_id STRING
 );
 
 ALTER TABLE hub_home
 	ADD CONSTRAINT xpkhub_home PRIMARY KEY (home_hash_key);
-
-CREATE TABLE hub_home_address
-(
-	home_address_hash_key STRING NOT NULL,
-	load_date TIMESTAMP,
-	record_source STRING,
-	home_address_id STRING
-);
-
-ALTER TABLE hub_home_address
-	ADD CONSTRAINT xpkhub_home_address PRIMARY KEY (home_address_hash_key);
 
 CREATE TABLE hub_identities
 (
@@ -140,7 +140,7 @@ CREATE TABLE hub_insured_object
 );
 
 ALTER TABLE hub_insured_object
-	ADD CONSTRAINT xpkhub_consent PRIMARY KEY (insured_object_hash_key);
+	ADD CONSTRAINT xpkhub_insured_object PRIMARY KEY (insured_object_hash_key);
 
 CREATE TABLE hub_lead
 (
@@ -191,7 +191,7 @@ CREATE TABLE hub_motor
 	motor_hash_key STRING NOT NULL,
 	load_date TIMESTAMP,
 	record_source STRING,
-	motor_id STRING
+	insured_object_motor_id STRING
 );
 
 ALTER TABLE hub_motor
@@ -217,7 +217,7 @@ CREATE TABLE hub_override
 );
 
 ALTER TABLE hub_override
-	ADD CONSTRAINT xpkhub_lead PRIMARY KEY (override_hash_key);
+	ADD CONSTRAINT xpkhub_override PRIMARY KEY (override_hash_key);
 
 CREATE TABLE hub_person
 (
@@ -272,31 +272,31 @@ CREATE TABLE hub_regulation
 );
 
 ALTER TABLE hub_regulation
-	ADD CONSTRAINT xpkhub_lead PRIMARY KEY (regulation_hash_key);
+	ADD CONSTRAINT xpkhub_regulation PRIMARY KEY (regulation_hash_key);
 
 CREATE TABLE link_broker_person
 (
 	broker_person_hash_key STRING NOT NULL,
 	load_date TIMESTAMP,
 	record_source STRING,
-	person_hash_key STRING NOT NULL,
-	broker_hash_key STRING NOT NULL
+	broker_hash_key STRING NOT NULL,
+	person_hash_key STRING NOT NULL
 );
 
 ALTER TABLE link_broker_person
-	ADD CONSTRAINT xpklink_person_contact PRIMARY KEY (broker_person_hash_key);
+	ADD CONSTRAINT xpklink_broker_person PRIMARY KEY (broker_person_hash_key);
 
 CREATE TABLE link_claim_policy
 (
 	claim_policy_hash_key STRING NOT NULL,
 	load_date TIMESTAMP,
 	record_source STRING,
-	policy_hash_key STRING NOT NULL,
-	claim_hash_key STRING NOT NULL
+	claim_hash_key STRING NOT NULL,
+	policy_hash_key STRING NOT NULL
 );
 
 ALTER TABLE link_claim_policy
-	ADD CONSTRAINT xpklink_person_contact PRIMARY KEY (claim_policy_hash_key);
+	ADD CONSTRAINT xpklink_claim_policy PRIMARY KEY (claim_policy_hash_key);
 
 CREATE TABLE link_complaint_policy
 (
@@ -308,7 +308,7 @@ CREATE TABLE link_complaint_policy
 );
 
 ALTER TABLE link_complaint_policy
-	ADD CONSTRAINT xpklink_person_contact PRIMARY KEY (complaint_policy_hash_key);
+	ADD CONSTRAINT xpklink_complaint_policy PRIMARY KEY (complaint_policy_hash_key);
 
 CREATE TABLE link_complaint_regulation
 (
@@ -320,7 +320,7 @@ CREATE TABLE link_complaint_regulation
 );
 
 ALTER TABLE link_complaint_regulation
-	ADD CONSTRAINT xpklink_person_contact PRIMARY KEY (complaint_regulation_hash_key);
+	ADD CONSTRAINT xpklink_complaint_regulation PRIMARY KEY (complaint_regulation_hash_key);
 
 CREATE TABLE link_customer_lead
 (
@@ -356,11 +356,11 @@ CREATE TABLE link_insured_object_home
 );
 
 ALTER TABLE link_insured_object_home
-	ADD CONSTRAINT xpklink_person_account PRIMARY KEY (insured_object_home_hash_key);
+	ADD CONSTRAINT xpklink_insured_object_home PRIMARY KEY (insured_object_home_hash_key);
 
 CREATE TABLE link_insured_object_motor
 (
-	insured_object_home_hash_key STRING NOT NULL,
+	insured_object_motor_hash_key STRING NOT NULL,
 	record_source STRING,
 	load_date TIMESTAMP,
 	insured_object_hash_key STRING NOT NULL,
@@ -368,31 +368,43 @@ CREATE TABLE link_insured_object_motor
 );
 
 ALTER TABLE link_insured_object_motor
-	ADD CONSTRAINT xpklink_person_account PRIMARY KEY (insured_object_home_hash_key);
+	ADD CONSTRAINT xpklink_insured_object_motor PRIMARY KEY (insured_object_motor_hash_key);
 
 CREATE TABLE link_person_account
 (
 	person_account_hash_key STRING NOT NULL,
 	record_source STRING,
-	account_hash_key STRING,
 	load_date TIMESTAMP,
-	person_hash_key STRING
+	person_hash_key STRING,
+	account_hash_key STRING
 );
 
 ALTER TABLE link_person_account
 	ADD CONSTRAINT xpklink_person_account PRIMARY KEY (person_account_hash_key);
 
+CREATE TABLE link_person_address
+(
+	person_address_hash_key STRING NOT NULL,
+	load_date TIMESTAMP,
+	record_source STRING,
+	person_hash_key STRING,
+	address_hash_key STRING
+);
+
+ALTER TABLE link_person_address
+	ADD CONSTRAINT xpklink_person_address PRIMARY KEY (person_address_hash_key);
+
 CREATE TABLE link_person_campaign
 (
 	person_campaign_hash_key STRING NOT NULL,
-	load_date TIMESTAMP,
-	record_source STRING,
+	person_hash_key STRING NOT NULL,
 	campaign_hash_key STRING NOT NULL,
-	person_hash_key STRING NOT NULL
+	load_date TIMESTAMP,
+	record_source STRING
 );
 
 ALTER TABLE link_person_campaign
-	ADD CONSTRAINT xpklink_person_contact PRIMARY KEY (person_campaign_hash_key);
+	ADD CONSTRAINT xpklink_person_campaign PRIMARY KEY (person_campaign_hash_key);
 
 CREATE TABLE link_person_consent
 (
@@ -417,18 +429,6 @@ CREATE TABLE link_person_contact
 
 ALTER TABLE link_person_contact
 	ADD CONSTRAINT xpklink_person_contact PRIMARY KEY (person_contact_hash_key);
-
-CREATE TABLE link_person_home_address
-(
-	person_home_address_hash_key STRING NOT NULL,
-	load_date TIMESTAMP,
-	record_source STRING,
-	person_hash_key STRING,
-	home_address_hash_key STRING
-);
-
-ALTER TABLE link_person_home_address
-	ADD CONSTRAINT xpklink_person_home_address PRIMARY KEY (person_home_address_hash_key);
 
 CREATE TABLE link_person_identities
 (
@@ -507,24 +507,24 @@ CREATE TABLE link_policy_broker
 	policy_broker_hash_key STRING NOT NULL,
 	load_date TIMESTAMP,
 	record_source STRING,
-	broker_hash_key STRING NOT NULL,
-	policy_hash_key STRING NOT NULL
+	policy_hash_key STRING NOT NULL,
+	broker_hash_key STRING NOT NULL
 );
 
 ALTER TABLE link_policy_broker
-	ADD CONSTRAINT xpklink_person_contact PRIMARY KEY (policy_broker_hash_key);
+	ADD CONSTRAINT xpklink_policy_broker PRIMARY KEY (policy_broker_hash_key);
 
 CREATE TABLE link_policy_channel
 (
 	policy_channel_hash_key STRING NOT NULL,
-	load_date TIMESTAMP,
-	record_source STRING,
+	policy_hash_key STRING NOT NULL,
 	channel_hash_key STRING NOT NULL,
-	policy_hash_key STRING NOT NULL
+	load_date TIMESTAMP,
+	record_source STRING
 );
 
 ALTER TABLE link_policy_channel
-	ADD CONSTRAINT xpklink_person_contact PRIMARY KEY (policy_channel_hash_key);
+	ADD CONSTRAINT xpklink_policy_channel PRIMARY KEY (policy_channel_hash_key);
 
 CREATE TABLE link_policy_customer
 (
@@ -543,24 +543,24 @@ CREATE TABLE link_policy_insured_object
 	policy_insured_object_hash_key STRING NOT NULL,
 	record_source STRING,
 	load_date TIMESTAMP,
-	insured_object_hash_key STRING NOT NULL,
-	policy_hash_key STRING NOT NULL
+	policy_hash_key STRING NOT NULL,
+	insured_object_hash_key STRING NOT NULL
 );
 
 ALTER TABLE link_policy_insured_object
-	ADD CONSTRAINT xpklink_person_account PRIMARY KEY (policy_insured_object_hash_key);
+	ADD CONSTRAINT xpklink_policy_insured_object PRIMARY KEY (policy_insured_object_hash_key);
 
 CREATE TABLE link_policy_override
 (
 	policy_override_hash_key STRING NOT NULL,
 	load_date TIMESTAMP,
 	record_source STRING,
-	override_hash_key STRING NOT NULL,
-	policy_hash_key STRING NOT NULL
+	policy_hash_key STRING NOT NULL,
+	override_hash_key STRING NOT NULL
 );
 
 ALTER TABLE link_policy_override
-	ADD CONSTRAINT xpklink_person_contact PRIMARY KEY (policy_override_hash_key);
+	ADD CONSTRAINT xpklink_policy_override PRIMARY KEY (policy_override_hash_key);
 
 CREATE TABLE link_policy_product
 (
@@ -579,12 +579,12 @@ CREATE TABLE link_policy_quote
 	policy_quote_hash_key STRING NOT NULL,
 	load_date TIMESTAMP,
 	record_source STRING,
-	quote_hash_key STRING NOT NULL,
-	policy_hash_key STRING NOT NULL
+	policy_hash_key STRING NOT NULL,
+	quote_hash_key STRING NOT NULL
 );
 
 ALTER TABLE link_policy_quote
-	ADD CONSTRAINT xpklink_person_contact PRIMARY KEY (policy_quote_hash_key);
+	ADD CONSTRAINT xpklink_policy_quote PRIMARY KEY (policy_quote_hash_key);
 
 CREATE TABLE link_quote_broker
 (
@@ -608,7 +608,7 @@ CREATE TABLE link_quote_channel
 );
 
 ALTER TABLE link_quote_channel
-	ADD CONSTRAINT xpklink_person_contact PRIMARY KEY (quote_channel_hash_key);
+	ADD CONSTRAINT xpklink_quote_channel PRIMARY KEY (quote_channel_hash_key);
 
 CREATE TABLE link_quote_person
 (
@@ -649,25 +649,40 @@ CREATE TABLE sat_account
 ALTER TABLE sat_account
 	ADD CONSTRAINT xpksat_account PRIMARY KEY (account_hash_key, load_date);
 
+CREATE TABLE sat_address
+(
+	address_hash_key STRING NOT NULL,
+	load_date TIMESTAMP NOT NULL,
+	street STRING,
+	postcode STRING,
+	city STRING,
+	state STRING,
+	country STRING,
+	type VARCHAR(20)
+);
+
+ALTER TABLE sat_address
+	ADD CONSTRAINT xpksat_address PRIMARY KEY (address_hash_key, load_date);
+
 CREATE TABLE sat_broker
 (
-	load_date TIMESTAMP NOT NULL,
 	broker_hash_key STRING NOT NULL,
+	load_date TIMESTAMP NOT NULL,
 	agent_name STRING,
 	agent_type STRING,
+	agent_status STRING,
 	agent_license_number STRING,
 	agent_net_promoter_score DOUBLE,
-	agent_commission_percentage DOUBLE,
-	agent_status STRING
+	agent_commission_percentage DOUBLE
 );
 
 ALTER TABLE sat_broker
-	ADD CONSTRAINT xpksat_lead PRIMARY KEY (broker_hash_key, load_date);
+	ADD CONSTRAINT xpksat_broker PRIMARY KEY (broker_hash_key, load_date);
 
 CREATE TABLE sat_campaign
 (
-	load_date TIMESTAMP NOT NULL,
 	campaign_hash_key STRING NOT NULL,
+	load_date TIMESTAMP NOT NULL,
 	campaign_name STRING,
 	campaign_type STRING,
 	campaign_start_date TIMESTAMP,
@@ -681,7 +696,7 @@ CREATE TABLE sat_campaign
 	campaign_conversion_goal STRING,
 	number_of_impressions INT,
 	number_of_clicks INT,
-	number_of_is_active INT,
+	is_active STRING,
 	number_of_visits INT,
 	number_of_policy_purchases INT,
 	number_of_emails_sent INT,
@@ -706,23 +721,23 @@ CREATE TABLE sat_campaign
 );
 
 ALTER TABLE sat_campaign
-	ADD CONSTRAINT xpksat_lead PRIMARY KEY (campaign_hash_key, load_date);
+	ADD CONSTRAINT xpksat_campaign PRIMARY KEY (campaign_hash_key, load_date);
 
 CREATE TABLE sat_channel
 (
-	load_date TIMESTAMP NOT NULL,
 	channel_hash_key STRING NOT NULL,
+	load_date TIMESTAMP NOT NULL,
 	channel_name STRING,
 	channel_type STRING
 );
 
 ALTER TABLE sat_channel
-	ADD CONSTRAINT xpksat_lead PRIMARY KEY (channel_hash_key, load_date);
+	ADD CONSTRAINT xpksat_channel PRIMARY KEY (channel_hash_key, load_date);
 
 CREATE TABLE sat_claim
 (
-	load_date TIMESTAMP NOT NULL,
 	claim_hash_key STRING NOT NULL,
+	load_date TIMESTAMP NOT NULL,
 	claim_number STRING,
 	claim_type STRING,
 	claim_status STRING,
@@ -775,12 +790,12 @@ CREATE TABLE sat_claim
 );
 
 ALTER TABLE sat_claim
-	ADD CONSTRAINT xpksat_lead PRIMARY KEY (claim_hash_key, load_date);
+	ADD CONSTRAINT xpksat_claim PRIMARY KEY (claim_hash_key, load_date);
 
 CREATE TABLE sat_complaint
 (
-	load_date TIMESTAMP NOT NULL,
 	complaint_hash_key STRING NOT NULL,
+	load_date TIMESTAMP NOT NULL,
 	complaint_date TIMESTAMP,
 	complaint_acknowledgement_date TIMESTAMP,
 	complaint_resolved_date TIMESTAMP,
@@ -794,7 +809,7 @@ CREATE TABLE sat_complaint
 );
 
 ALTER TABLE sat_complaint
-	ADD CONSTRAINT xpksat_lead PRIMARY KEY (complaint_hash_key, load_date);
+	ADD CONSTRAINT xpksat_complaint PRIMARY KEY (complaint_hash_key, load_date);
 
 CREATE TABLE sat_consent
 (
@@ -809,8 +824,8 @@ ALTER TABLE sat_consent
 
 CREATE TABLE sat_contact
 (
-	load_date TIMESTAMP NOT NULL,
 	contact_hash_key STRING NOT NULL,
+	load_date TIMESTAMP NOT NULL,
 	personal_email STRING,
 	work_email STRING,
 	work_phone STRING,
@@ -822,8 +837,8 @@ ALTER TABLE sat_contact
 
 CREATE TABLE sat_customer
 (
-	load_date TIMESTAMP NOT NULL,
 	customer_hash_key STRING NOT NULL,
+	load_date TIMESTAMP NOT NULL,
 	customer_number INT,
 	customer_status STRING,
 	customer_status_reason STRING,
@@ -856,20 +871,6 @@ CREATE TABLE sat_home
 ALTER TABLE sat_home
 	ADD CONSTRAINT xpksat_home PRIMARY KEY (home_hash_key, load_date);
 
-CREATE TABLE sat_home_address
-(
-	home_address_hash_key STRING NOT NULL,
-	load_date TIMESTAMP NOT NULL,
-	street STRING,
-	postcode STRING,
-	city STRING,
-	state STRING,
-	country STRING
-);
-
-ALTER TABLE sat_home_address
-	ADD CONSTRAINT xpksat_home_address PRIMARY KEY (home_address_hash_key, load_date);
-
 CREATE TABLE sat_identities
 (
 	identities_hash_key STRING NOT NULL,
@@ -888,15 +889,15 @@ CREATE TABLE sat_insured_object
 	insured_object_type STRING,
 	insured_object_sub_type STRING,
 	insured_object_description STRING,
-	insured_object_current_status STRING,
 	insured_value INTEGER,
 	currency_code STRING,
 	insured_object_start_date TIMESTAMP,
-	insured_object_end_date TIMESTAMP
+	insured_object_end_date TIMESTAMP,
+	insured_object_current_status STRING
 );
 
 ALTER TABLE sat_insured_object
-	ADD CONSTRAINT xpksat_consent PRIMARY KEY (insured_object_hash_key, load_date);
+	ADD CONSTRAINT xpksat_insured_object PRIMARY KEY (insured_object_hash_key, load_date);
 
 CREATE TABLE sat_lead
 (
@@ -948,10 +949,10 @@ CREATE TABLE sat_marketing_preference
 	sms STRING,
 	email STRING,
 	email_subscriptions STRING,
-	commercial_email STRING,
-	postal_mail STRING,
 	call VARCHAR(20),
-	any VARCHAR(20)
+	any VARCHAR(20),
+	commercial_email STRING,
+	postal_mail STRING
 );
 
 ALTER TABLE sat_marketing_preference
@@ -985,12 +986,13 @@ ALTER TABLE sat_motor
 
 CREATE TABLE sat_natural_person
 (
-	load_date TIMESTAMP NOT NULL,
 	natural_person_hash_key STRING NOT NULL,
+	load_date TIMESTAMP NOT NULL,
 	first_name STRING,
 	last_name STRING,
 	full_name STRING,
 	courtesy_title STRING,
+	role STRING,
 	occupation STRING,
 	birth_date date,
 	birth_year INT,
@@ -999,8 +1001,7 @@ CREATE TABLE sat_natural_person
 	marital_status STRING,
 	assesed_disability_degree STRING,
 	preferred_language STRING,
-	job_title STRING,
-	role STRING
+	job_title STRING
 );
 
 ALTER TABLE sat_natural_person
@@ -1008,13 +1009,13 @@ ALTER TABLE sat_natural_person
 
 CREATE TABLE sat_override
 (
-	load_date TIMESTAMP NOT NULL,
 	override_hash_key STRING NOT NULL,
+	load_date TIMESTAMP NOT NULL,
 	override_reason STRING
 );
 
 ALTER TABLE sat_override
-	ADD CONSTRAINT xpksat_lead PRIMARY KEY (override_hash_key, load_date);
+	ADD CONSTRAINT xpksat_override PRIMARY KEY (override_hash_key, load_date);
 
 CREATE TABLE sat_person
 (
@@ -1054,6 +1055,7 @@ CREATE TABLE sat_policy
 	sales_channel STRING,
 	quote_id STRING,
 	policy_type STRING,
+	policy_issue_date TIMESTAMP,
 	is_policy_renewal STRING,
 	policy_cancellation_reason STRING,
 	policy_sum_insured INT,
@@ -1080,8 +1082,7 @@ CREATE TABLE sat_policy
 	record_type STRING,
 	discount INT,
 	override_commission INT,
-	partial_recovery_percentage INT,
-	policy_issue_date TIMESTAMP
+	partial_recovery_percentage INT
 );
 
 ALTER TABLE sat_policy
@@ -1089,8 +1090,8 @@ ALTER TABLE sat_policy
 
 CREATE TABLE sat_product
 (
-	product_hash_key STRING NOT NULL,
 	load_date TIMESTAMP NOT NULL,
+	product_hash_key STRING NOT NULL,
 	type STRING,
 	product_variant STRING,
 	product_name STRING,
@@ -1128,8 +1129,8 @@ ALTER TABLE sat_quote
 
 CREATE TABLE sat_regulation
 (
-	load_date TIMESTAMP NOT NULL,
 	regulation_hash_key STRING NOT NULL,
+	load_date TIMESTAMP NOT NULL,
 	regulation_number STRING,
 	regulation_name STRING,
 	regulation_department STRING,
@@ -1144,7 +1145,7 @@ CREATE TABLE sat_regulation
 );
 
 ALTER TABLE sat_regulation
-	ADD CONSTRAINT xpksat_lead PRIMARY KEY (regulation_hash_key, load_date);
+	ADD CONSTRAINT xpksat_regulation PRIMARY KEY (regulation_hash_key, load_date);
 
 ALTER TABLE link_broker_person
 	ADD CONSTRAINT R_63 FOREIGN KEY (person_hash_key) REFERENCES hub_person (person_hash_key);
@@ -1200,6 +1201,12 @@ ALTER TABLE link_person_account
 ALTER TABLE link_person_account
 	ADD CONSTRAINT xif3_link_person_account FOREIGN KEY (person_hash_key) REFERENCES hub_person (person_hash_key);
 
+ALTER TABLE link_person_address
+	ADD CONSTRAINT xif1_link_person_address FOREIGN KEY (person_hash_key) REFERENCES hub_person (person_hash_key);
+
+ALTER TABLE link_person_address
+	ADD CONSTRAINT xif2_link_person_address FOREIGN KEY (address_hash_key) REFERENCES hub_address (address_hash_key);
+
 ALTER TABLE link_person_campaign
 	ADD CONSTRAINT R_67 FOREIGN KEY (campaign_hash_key) REFERENCES hub_campaign (campaign_hash_key);
 
@@ -1217,12 +1224,6 @@ ALTER TABLE link_person_contact
 
 ALTER TABLE link_person_contact
 	ADD CONSTRAINT xif2_link_person_contact FOREIGN KEY (contact_hash_key) REFERENCES hub_contact (contact_hash_key);
-
-ALTER TABLE link_person_home_address
-	ADD CONSTRAINT xif1_link_person_home_address FOREIGN KEY (person_hash_key) REFERENCES hub_person (person_hash_key);
-
-ALTER TABLE link_person_home_address
-	ADD CONSTRAINT xif2_link_person_home_address FOREIGN KEY (home_address_hash_key) REFERENCES hub_home_address (home_address_hash_key);
 
 ALTER TABLE link_person_identities
 	ADD CONSTRAINT xif1_link_person_identities FOREIGN KEY (person_hash_key) REFERENCES hub_person (person_hash_key);
@@ -1329,6 +1330,9 @@ ALTER TABLE link_quote_product
 ALTER TABLE sat_account
 	ADD CONSTRAINT xif1_sat_account FOREIGN KEY (account_hash_key) REFERENCES hub_account (account_hash_key);
 
+ALTER TABLE sat_address
+	ADD CONSTRAINT xif1_sat_address FOREIGN KEY (address_hash_key) REFERENCES hub_address (address_hash_key);
+
 ALTER TABLE sat_broker
 	ADD CONSTRAINT R_55 FOREIGN KEY (broker_hash_key) REFERENCES hub_broker (broker_hash_key);
 
@@ -1356,14 +1360,11 @@ ALTER TABLE sat_customer
 ALTER TABLE sat_home
 	ADD CONSTRAINT xif1_sat_home FOREIGN KEY (home_hash_key) REFERENCES hub_home (home_hash_key);
 
-ALTER TABLE sat_home_address
-	ADD CONSTRAINT xif1_sat_home_address FOREIGN KEY (home_address_hash_key) REFERENCES hub_home_address (home_address_hash_key);
-
 ALTER TABLE sat_identities
 	ADD CONSTRAINT xif1_sat_identities FOREIGN KEY (identities_hash_key) REFERENCES hub_identities (identities_hash_key);
 
 ALTER TABLE sat_insured_object
-	ADD CONSTRAINT xif1_sat_consent FOREIGN KEY (insured_object_hash_key) REFERENCES hub_insured_object (insured_object_hash_key);
+	ADD CONSTRAINT R_38 FOREIGN KEY (insured_object_hash_key) REFERENCES hub_insured_object (insured_object_hash_key);
 
 ALTER TABLE sat_lead
 	ADD CONSTRAINT xif1_sat_lead FOREIGN KEY (lead_hash_key) REFERENCES hub_lead (lead_hash_key);

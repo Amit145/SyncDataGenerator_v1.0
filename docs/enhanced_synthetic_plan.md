@@ -42,11 +42,11 @@ The enhanced output contains the full enhanced Data Vault model:
 
 Enhanced schema contract:
 
-- `enhanced_360/update/New_Enhanced Customer 360 Data Vault DDL.sql`
+- `enhanced_360/new/newEnhanced Customer 360 Data Vault DDL.sql`
 
 Enhanced change mapping:
 
-- `enhanced_360/update/DV_Table_Column_Changes_Old_vs_New.xlsx`
+- `enhanced_360/new/newEnhanced_Customer360_S2T_Mapping_DV&3NF_to_Dimensional_Model.xlsx`
 
 Enhanced sample/reference data:
 
@@ -83,6 +83,9 @@ Enhanced DDL:
 - `30` links
 - `25` satellites
 - `80` tables total
+- `588` columns including Data Vault metadata
+- `453` columns excluding common metadata columns
+- `313` descriptive/business attributes excluding common metadata and hash keys
 
 Enhanced-only additions:
 
@@ -134,6 +137,7 @@ Enhanced entities are linked as follows:
 - `policy -> insured_object` via `link_policy_insured_object`
 - `insured_object -> home` via `link_insured_object_home`
 - `insured_object -> motor` via `link_insured_object_motor`
+- base person address output is exposed in enhanced as `hub_address`, `link_person_address`, and `sat_address`
 
 Important implementation rule:
 
@@ -154,7 +158,45 @@ Base context used by enhanced generation includes:
 - `sat_quote`
 
 
-## 6. Shared Domain Rules
+## 6. Enhanced Lifecycle Flow
+
+Enhanced generation follows the same lifecycle spine created by base generation:
+
+```text
+Person
+-> Lead
+-> Quote
+-> Policy
+-> Customer and Account
+-> Motor/Home asset
+-> Insured Object
+-> Claim, Complaint, Override, Broker, Campaign, Regulation
+```
+
+How enhanced tables attach to the lifecycle:
+
+- campaigns link to lead persons through `link_person_campaign`
+- channels link to policies and quotes through `link_policy_channel` and `link_quote_channel`
+- brokers link to AGENT-channel persons, policies, and quotes
+- insured objects are derived from actual policy-linked motor/home assets
+- claims link to active policies where possible
+- complaints link to policies from the customer's policy context
+- regulations can link to generated complaints
+- overrides link to active policies where possible
+
+Date and timestamp lifecycle:
+
+- policy dates are produced by the base policy generator and reused by enhanced
+- renewal remains a `sat_policy` attribute, not a separate renewal-policy row
+- insured object start/end timestamps follow linked policy start/end timestamps
+- insured object value is a positive integer derived from linked enhanced policy sum insured, with object-type fallback values when policy sum insured is unavailable
+- claim reported and settlement timestamps are clamped inside the linked policy period
+- complaint timestamps occur after customer since and remain ordered through acknowledgement and resolution
+- regulation raised timestamps must be before or equal to deadline and close timestamps
+- all enhanced DDL `TIMESTAMP` columns must be generated with time components
+
+
+## 7. Shared Domain Rules
 
 Enhanced must reuse the same core domain vocabulary as base wherever the business concept already exists in base.
 
@@ -202,7 +244,7 @@ Current canonical channel set:
 Enhanced is not allowed to drift from that base set unless the shared constant source is changed intentionally.
 
 
-## 7. Product Rules
+## 8. Product Rules
 
 Enhanced uses the same product catalog as base.
 
@@ -236,7 +278,7 @@ Current product-family mapping used for enhanced validation/generation:
 - cyber -> `Cyber`
 
 
-## 8. Count Rules
+## 9. Count Rules
 
 Base config creates the synthetic universe. Enhanced counts are derived from that universe.
 
@@ -271,7 +313,7 @@ Practical behavior:
 - `insured_object`: derived from generated policy motor/home assets
 
 
-## 9. Eligibility Rules
+## 10. Eligibility Rules
 
 Enhanced records should not attach everywhere randomly.
 
@@ -287,7 +329,7 @@ Implemented or intended eligibility behavior:
 - insured objects are generated from policy-linked home and motor assets
 
 
-## 10. Base Rule Inheritance
+## 11. Base Rule Inheritance
 
 Enhanced does not replace base rules. It inherits them for the base 52 tables inside enhanced output.
 
@@ -309,7 +351,7 @@ Base validation layers that still matter conceptually:
 Enhanced verification re-checks a subset of those base business rules directly on enhanced output.
 
 
-## 11. Enhanced Business Rules
+## 12. Enhanced Business Rules
 
 ### 11.1 Policy and Channel
 
@@ -331,6 +373,9 @@ Rules:
 - `claim_reported_date >= policy_start_date`
 - `claim_reported_date <= policy_end_date` when policy end exists
 - `claim_settlement_date >= claim_reported_date` when settlement exists
+- claim reported, settlement, litigation, and recovery date fields must be timestamp values with time components
+- no-recovery claims use `1900-01-01T00:00:00` for `first_recovery_date` and `last_recovery_date`
+- recovery claims use lifecycle-safe recovery timestamps, and recovery numeric fields default to `0` when source values are absent
 - `claim_channel` must match linked policy sales channel
 - `claim_product` must match the linked policy product family
 
@@ -344,10 +389,26 @@ Rules:
 - `complaint_acknowledgement_date >= complaint_date` when present
 - `complaint_resolved_date >= complaint_acknowledgement_date` when acknowledgement exists
 - otherwise `complaint_resolved_date >= complaint_date`
+- complaint date, acknowledgement date, and resolved date must be timestamp values with time components
 - complaint channel should align with the linked policy channel
 - complaint insurance category should align with the linked policy product category
 
 ### 11.4 Overrides
+
+### 11.4 Customer Enrichment
+
+Rules:
+
+- `sat_customer.customer_satisfaction` is a DDL `STRING`
+- numeric `CustomerSatisfaction` source scores are mapped to labels:
+  - `9-10` -> `VERY_SATISFIED`
+  - `7-8` -> `SATISFIED`
+  - `5-6` -> `NEUTRAL`
+  - `<5` -> `DISSATISFIED`
+  - missing or invalid -> `UNKNOWN`
+- this avoids Databricks CSV inference treating the column as an integer
+
+### 11.5 Overrides
 
 Rules:
 
@@ -356,7 +417,7 @@ Rules:
 - `override_reason` must be populated
 - linked base policy `override_commission` must be populated when an override exists
 
-### 11.5 Regulations
+### 11.6 Regulations
 
 Rules:
 
@@ -364,8 +425,12 @@ Rules:
 - regulation-to-complaint links must point to existing regulation and complaint hubs
 - `regulation_date_raised <= regulation_deadline_date`
 - `regulation_date_raised <= regulation_date_closed` when close date exists
+- regulation date fields must be timestamp values with time components
+- DDL `STRING` boolean/flag columns must be string `Y` or `N`, not numeric `1` or `0` and not boolean-looking `TRUE` or `FALSE`
+- DDL numeric columns are normalized before output: blank `INT`-style fields become `0`, and blank floating/decimal fields become `0.0`
+- enhanced verification checks numeric columns from the DDL so all numeric fields remain populated and parseable
 
-### 11.6 Broker, Campaign, and Insured Object
+### 11.7 Broker, Campaign, and Insured Object
 
 Rules:
 
@@ -375,11 +440,18 @@ Rules:
 - campaign links must reference valid person and campaign hubs
 - campaigns are generated from lead-side context
 - campaign marketing metrics are populated from `FactQuote.csv` reference values
+- `sat_campaign.is_active` is generated as `Y` or `N`, not as a numeric count
+- `sat_campaign.campaign_start_date` and `sat_campaign.campaign_end_date` are timestamp values with time components
 - insured objects must reference valid policy, home, or motor objects
 - insured object dates should follow the linked policy start/end dates
+- insured object start and end dates must be timestamp values with time components
+- `insured_value` must be populated as a positive integer
+- enhanced `hub_home` uses `insured_object_home_id` as its business ID column
+- enhanced `hub_motor` uses `insured_object_motor_id` as its business ID column
+- `link_insured_object_motor` uses `insured_object_motor_hash_key` as its primary key and `motor_hash_key` as its motor foreign key
 
 
-## 12. Sample Data Usage Rules
+## 13. Sample Data Usage Rules
 
 Enhanced sample files are used as seed/reference sources for:
 
@@ -402,7 +474,7 @@ Example:
 - instead, enhanced channel-related values are normalized back to the base channel set
 
 
-## 13. SCD2 Support
+## 14. SCD2 Support
 
 Enhanced supports SCD2 generation in parallel to base.
 
@@ -415,7 +487,14 @@ Implemented behavior:
 Enhanced SCD2 follows the same general pattern as base:
 
 - previous enhanced runs are used as history
+- `10%` of eligible historical rows are sampled per configured enhanced satellite file
 - changed satellite rows are emitted as new rows with the current run satellite load date
+- the 10% rate is per satellite, not across all enhanced tables as one combined total
+
+Examples:
+
+- `10,000` eligible historical rows in `sat_address.csv` produce about `1,000` enhanced SCD2 rows for that file
+- `100,000` eligible historical rows in one enhanced satellite produce about `10,000` enhanced SCD2 rows for that file
 
 Enhanced satellites included in mutation support:
 
@@ -429,7 +508,7 @@ Enhanced satellites included in mutation support:
 - `sat_regulation.csv`
 
 
-## 14. Verification
+## 15. Verification
 
 Enhanced verification is implemented in:
 
@@ -441,6 +520,8 @@ It performs three layers of checking.
 
 - all expected enhanced files exist
 - columns match enhanced DDL
+- DDL `TIMESTAMP` columns contain parseable timestamp values with time components
+- DDL numeric columns are populated and parse as the declared numeric type
 - primary keys are unique and nonblank
 - foreign keys match referenced parent tables
 
@@ -472,7 +553,7 @@ Expected successful verification summary:
 - enhanced business checks pass
 
 
-## 15. Current Implementation Files
+## 16. Current Implementation Files
 
 Main enhanced files:
 
@@ -493,7 +574,7 @@ Base/shared files that influence enhanced behavior:
 - `verify_csv.py`
 
 
-## 16. Run And Verify
+## 17. Run And Verify
 
 Run the full generation flow:
 
@@ -501,6 +582,15 @@ Run the full generation flow:
 $env:PYTHONUTF8='1'
 python .\main.py
 ```
+
+Run enhanced output only:
+
+```powershell
+$env:PYTHONUTF8='1'
+python .\main.py --enhanced-only
+```
+
+Enhanced-only mode still builds the base generation context in memory, then writes only `data/synthetic/enhanced/<run_id>` and enhanced SCD2 when prior enhanced history exists. It skips base CSV output, raw/source outputs, silver output, base validation, and base SCD2.
 
 This writes:
 
@@ -531,22 +621,26 @@ python .\misc\verify_all_silver.py
 ```
 
 
-## 17. Latest Verified State
+## 18. Latest Verified State
 
 Latest verified enhanced run during implementation:
 
-- reduced local verification run with `500` generated people against the update DDL
+- full local generation and verification against the active `enhanced_360/new` DDL
+- enhanced-only verification run `data/synthetic/enhanced/20260508103525`
 
 Verified outcomes:
 
 - base generation passed
 - enhanced synthetic generation passed
+- base SCD2 generation passed with the `10%` per-satellite rule
+- enhanced SCD2 generation passed with the `10%` per-satellite rule
 - enhanced verification passed
 - all `80` enhanced tables were generated
 - schema, primary-key, foreign-key, enum, timeline, and enhanced business checks passed
+- DDL-driven timestamp checks passed for all enhanced `TIMESTAMP` columns
 
 
-## 18. Operational Notes
+## 19. Operational Notes
 
 - `main.py` still prints Unicode log symbols, so on this Windows console `PYTHONUTF8=1` is recommended
 - enhanced verification is intentionally stricter than the original structural-only version

@@ -22,6 +22,7 @@ from helper.key_factory import md5_hasher
 ROOT = Path(__file__).resolve().parents[1]
 ENHANCED_EXAMPLE_DIR = ROOT / "enhanced_360" / "data_example"
 RS = "CRM"
+RECOVERY_SENTINEL_TIMESTAMP = "1900-01-01T00:00:00"
 
 
 def _norm_name(value: str) -> str:
@@ -36,6 +37,14 @@ def _norm_row(row: dict) -> dict:
 
 def _ordered(row: dict, columns: list[str]) -> dict:
     return {column: row.get(column, "") for column in columns}
+
+
+def _rename_keys(row: dict, rename_map: dict[str, str]) -> dict:
+    renamed = dict(row)
+    for old_key, new_key in rename_map.items():
+        if old_key in renamed:
+            renamed[new_key] = renamed.pop(old_key)
+    return renamed
 
 
 def _read_example(file_name: str) -> list[dict]:
@@ -67,6 +76,23 @@ def _date(value: str) -> str:
         return value
 
 
+def _timestamp(value: str, default_time: str = "00:00:00") -> str:
+    date_value = _date(value)
+    if not date_value:
+        return ""
+    try:
+        parsed = datetime.fromisoformat(str(value).strip()[:19])
+        return parsed.replace(microsecond=0).isoformat()
+    except ValueError:
+        return f"{date_value}T{default_time}"
+
+
+def _timestamp_from_date(value: date | None, default_time: str = "00:00:00") -> str:
+    if not value:
+        return ""
+    return f"{value.isoformat()}T{default_time}"
+
+
 def _date_obj(value) -> date | None:
     text = _date(value)
     if not text:
@@ -95,6 +121,47 @@ def _float(value, default="") -> str:
         return default
 
 
+def _yn(value, default="N") -> str:
+    if value in (None, ""):
+        return default
+    text = str(value).strip().upper()
+    if text in {"Y", "YES", "TRUE", "T"}:
+        return "Y"
+    if text in {"N", "NO", "FALSE", "F"}:
+        return "N"
+    try:
+        return "Y" if float(text.replace(",", "")) > 0 else "N"
+    except ValueError:
+        return default
+
+
+def _insured_value(policy_row: dict, product_code: str, asset_kind: str) -> str:
+    policy_sum_insured = _int(policy_row.get("policy_sum_insured"), default="")
+    if policy_sum_insured:
+        return policy_sum_insured
+
+    product_text = str(product_code).upper()
+    if asset_kind == "motor":
+        return "75000" if "COMMERCIAL" in product_text else "35000"
+    if asset_kind == "home":
+        return "750000" if "COMMERCIAL" in product_text or "PROPERTY" in product_text else "300000"
+    return "100000"
+
+
+def _customer_satisfaction_label(value) -> str:
+    score = _int(value, default="")
+    if not score:
+        return "UNKNOWN"
+    score_int = int(score)
+    if score_int >= 9:
+        return "VERY_SATISFIED"
+    if score_int >= 7:
+        return "SATISFIED"
+    if score_int >= 5:
+        return "NEUTRAL"
+    return "DISSATISFIED"
+
+
 def _link_row(table_name: str, left_col: str, left_hk: str, right_col: str, right_hk: str, load_date: str) -> dict:
     pk = f"{table_name.removeprefix('link_')}_hash_key"
     return {
@@ -116,6 +183,59 @@ def _link_row_with_pk(pk: str, left_col: str, left_hk: str, right_col: str, righ
     }
 
 
+STRING_BOOLEAN_COLUMNS = {
+    "sat_campaign": {"is_active"},
+    "sat_claim": {
+        "is_claim_suspicious",
+        "is_claim_fraud",
+        "is_litigation",
+        "is_recovery_opportunity",
+        "is_recovery_happened",
+    },
+    "sat_complaint": {"is_financial_ombudsman_service_referral"},
+    "sat_home": {"is_existing_home_customer"},
+    "sat_motor": {"is_existing_motor_customer"},
+    "sat_person": {"is_lead"},
+    "sat_policy": {"fraud_flag", "is_policy_renewal"},
+    "sat_regulation": {"is_regulation_on_time"},
+}
+
+
+def _normalize_string_boolean_columns(tables: dict[str, list[dict]]) -> None:
+    for table_name, columns in STRING_BOOLEAN_COLUMNS.items():
+        for row in tables.get(table_name, []):
+            for column in columns:
+                if column in row:
+                    row[column] = _yn(row.get(column))
+
+
+def _normalize_blank_numeric_columns(tables: dict[str, list[dict]], column_types: dict[str, dict[str, str]]) -> None:
+    numeric_defaults = {
+        "INT": "0",
+        "INTEGER": "0",
+        "BIGINT": "0",
+        "SMALLINT": "0",
+        "TINYINT": "0",
+        "DOUBLE": "0.0",
+        "FLOAT": "0.0",
+        "DECIMAL": "0.0",
+        "NUMERIC": "0.0",
+    }
+    for table_name, rows in tables.items():
+        table_types = column_types.get(table_name, {})
+        numeric_columns = {
+            column_name: numeric_defaults[column_type]
+            for column_name, column_type in table_types.items()
+            if column_type in numeric_defaults
+        }
+        if not numeric_columns:
+            continue
+        for row in rows:
+            for column_name, default_value in numeric_columns.items():
+                if row.get(column_name) in (None, ""):
+                    row[column_name] = default_value
+
+
 def _id_from_hub(row: dict, id_col: str) -> str:
     return str(row.get(id_col, "") or row.get(id_col.replace("_id", "_number"), "") or "")
 
@@ -124,6 +244,38 @@ def _build_base_tables(ctx: dict) -> dict[str, list[dict]]:
     links = dict(ctx.get("links", {}))
     if ctx.get("link_quote_product"):
         links["Link_Quote_Product"] = ctx["link_quote_product"]
+
+    hub_address_rows = [
+        _rename_keys(_norm_row(row), {
+            "home_address_hash_key": "address_hash_key",
+            "home_address_id": "address_id",
+        })
+        for row in ctx.get("hub_addr_rows", [])
+    ]
+    sat_address_rows = [
+        {
+            **_rename_keys(_norm_row(row), {
+                "home_address_hash_key": "address_hash_key",
+            }),
+            "type": "HOME",
+        }
+        for row in ctx.get("sat_adr", [])
+    ]
+    link_person_address_rows = [
+        _rename_keys(_norm_row(row), {
+            "person_home_address_hash_key": "person_address_hash_key",
+            "home_address_hash_key": "address_hash_key",
+        })
+        for row in links.pop("Link_Person_Home_Address", [])
+    ]
+    hub_home_rows = [
+        _rename_keys(_norm_row(row), {"home_id": "insured_object_home_id"})
+        for row in ctx.get("hub_home_rows", [])
+    ]
+    hub_motor_rows = [
+        _rename_keys(_norm_row(row), {"motor_id": "insured_object_motor_id"})
+        for row in ctx.get("hub_mot_rows", [])
+    ]
 
     sources = {
         "hub_person": ctx.get("hub_person_rows", []),
@@ -140,9 +292,9 @@ def _build_base_tables(ctx: dict) -> dict[str, list[dict]]:
         "hub_marketing_engagement": ctx.get("hub_men_rows", []),
         "hub_quote": ctx.get("hub_quo_rows", []),
         "hub_policy": ctx.get("hub_pol_rows", []),
-        "hub_motor": ctx.get("hub_mot_rows", []),
-        "hub_home": ctx.get("hub_home_rows", []),
-        "hub_home_address": ctx.get("hub_addr_rows", []),
+        "hub_motor": hub_motor_rows,
+        "hub_home": hub_home_rows,
+        "hub_address": hub_address_rows,
         "sat_natural_person": ctx.get("sat_nat", []),
         "sat_legal_person": ctx.get("sat_leg", []),
         "sat_person": ctx.get("sat_per", []),
@@ -158,14 +310,21 @@ def _build_base_tables(ctx: dict) -> dict[str, list[dict]]:
         "sat_policy": ctx.get("sat_pol", []),
         "sat_motor": ctx.get("sat_mot", []),
         "sat_home": ctx.get("sat_hom", []),
-        "sat_home_address": ctx.get("sat_adr", []),
+        "sat_address": sat_address_rows,
         "sat_product": ctx.get("sat_product_rows", []),
+        "link_person_address": link_person_address_rows,
     }
 
     for link_name, rows in links.items():
         sources[_norm_name(link_name)] = rows
 
-    return {table_name: [_norm_row(row) for row in rows] for table_name, rows in sources.items()}
+    return {
+        table_name: [
+            row if all(str(key).islower() for key in row.keys()) else _norm_row(row)
+            for row in rows
+        ]
+        for table_name, rows in sources.items()
+    }
 
 
 def _augment_base_satellites(tables: dict[str, list[dict]]) -> None:
@@ -179,7 +338,7 @@ def _augment_base_satellites(tables: dict[str, list[dict]]) -> None:
         sample = _sample(customers, idx)
         row.update({
             "income_band": sample.get("IncomeBand", ""),
-            "customer_satisfaction": sample.get("CustomerSatisfaction", ""),
+            "customer_satisfaction": _customer_satisfaction_label(sample.get("CustomerSatisfaction")),
             "customer_age_band": sample.get("AgeBand", ""),
             "net_promotor_code_segment": sample.get("NPS Segment", ""),
         })
@@ -212,12 +371,12 @@ def _augment_base_satellites(tables: dict[str, list[dict]]) -> None:
             "investment_income": _int(fact.get("InvestmentIncome")),
             "underwriting_cycle_time_in_days": _int(fact.get("UnderwritingCycleTime(days)")),
             "underwriting_expenses": _int(fact.get("UnderwritingExpenses")),
-            "transaction_date": _date(fact.get("TransactionDate")),
+            "transaction_date": _timestamp(fact.get("TransactionDate")),
             "record_type": fact.get("RecordType", ""),
             "discount": _int(fact.get("Discount ")),
             "override_commission": _int(fact.get("Override Comission")),
             "partial_recovery_percentage": _int(fact.get("Partial Recovery%")),
-            "policy_issue_date": _date(fact.get("InceptionDate")),
+            "policy_issue_date": _timestamp(fact.get("InceptionDate")),
         })
 
     for idx, row in enumerate(tables.get("sat_product", [])):
@@ -225,7 +384,7 @@ def _augment_base_satellites(tables: dict[str, list[dict]]) -> None:
         row.update({
             "product_variant": sample.get("ProductVariant", ""),
             "product_name": sample.get("ProductName", ""),
-            "product_launch_date": _date(sample.get("ProductLaunchDate")),
+            "product_launch_date": _timestamp(sample.get("ProductLaunchDate")),
             "product_status": sample.get("ProductStatus", ""),
             "product_line_of_business_code": sample.get("LOBCode", ""),
             "underwriting_group": sample.get("UnderwritingGroup", ""),
@@ -236,7 +395,7 @@ def _augment_base_satellites(tables: dict[str, list[dict]]) -> None:
         sample = _sample(quotes, idx)
         row.update({
             "quoted_premium": _int(sample.get("QuotedPremium")),
-            "quote_date": _date(sample.get("quote_date")),
+            "quote_date": _timestamp(sample.get("quote_date")),
             "quote_month_name": sample.get("Month name", ""),
             "risk_score": _int(sample.get("RiskScore")),
             "policy_complexity": sample.get("PolicyComplexity", ""),
@@ -399,8 +558,8 @@ def _add_enhanced_entities(tables: dict[str, list[dict]], ctx: dict, cfg: dict |
             "load_date": sat_date,
             "campaign_name": sample.get("campaign_name", ""),
             "campaign_type": sample.get("Campaign_Type", ""),
-            "campaign_start_date": _date(sample.get("start_date")),
-            "campaign_end_date": _date(sample.get("end_date")),
+            "campaign_start_date": _timestamp(sample.get("start_date"), "00:00:00"),
+            "campaign_end_date": _timestamp(sample.get("end_date"), "23:59:59"),
             "campaign_status": sample.get("Status", ""),
             "campaign_budget": _int(sample.get("Budget")),
             "campaign_target_audience": sample.get("Target_Audience", ""),
@@ -410,7 +569,7 @@ def _add_enhanced_entities(tables: dict[str, list[dict]], ctx: dict, cfg: dict |
             "campaign_conversion_goal": sample.get("Conversion_Goal", ""),
             "number_of_impressions": _int(quote_sample.get("Impressions")),
             "number_of_clicks": _int(quote_sample.get("Clicks")),
-            "number_of_is_active": _int(quote_sample.get("Active")),
+            "is_active": _yn(quote_sample.get("Active")),
             "number_of_visits": _int(quote_sample.get("Visits")),
             "number_of_policy_purchases": _int(quote_sample.get("PolicyPurchases")),
             "number_of_emails_sent": _int(quote_sample.get("EmailsSent")),
@@ -505,10 +664,17 @@ def _add_enhanced_entities(tables: dict[str, list[dict]], ctx: dict, cfg: dict |
                 link_date,
             ))
 
+    enhanced_policy_by_hk = {
+        row.get("policy_hash_key"): row
+        for row in tables.get("sat_policy", [])
+        if row.get("policy_hash_key")
+    }
+
     insured_idx = 0
     for policy_hk in policy_hks:
         product_code = policy_to_product_code.get(policy_hk, "")
         policy_row = policy_sat_by_hk.get(policy_hk, {})
+        enhanced_policy_row = enhanced_policy_by_hk.get(policy_hk, {})
         asset_pairs = []
         motor_hk = ctx.get("policy_to_motor", {}).get(policy_hk)
         home_hk = ctx.get("policy_to_home", {}).get(policy_hk)
@@ -535,10 +701,10 @@ def _add_enhanced_entities(tables: dict[str, list[dict]], ctx: dict, cfg: dict |
                 "insured_object_sub_type": product_code,
                 "insured_object_description": f"{object_type} asset for policy",
                 "insured_object_current_status": policy_row.get("Policy Status", ""),
-                "insured_value": policy_row.get("Policy Sum Insured", "") or policy_row.get("policy_sum_insured", ""),
+                "insured_value": _insured_value(enhanced_policy_row, product_code, asset_kind),
                 "currency_code": "GBP",
-                "insured_object_start_date": _date(policy_row.get("Policy Start Date")),
-                "insured_object_end_date": _date(policy_row.get("Policy End Date")),
+                "insured_object_start_date": _timestamp(policy_row.get("Policy Start Date")),
+                "insured_object_end_date": _timestamp(policy_row.get("Policy End Date")),
             })
             tables["link_policy_insured_object"].append(_link_row(
                 "link_policy_insured_object",
@@ -550,7 +716,7 @@ def _add_enhanced_entities(tables: dict[str, list[dict]], ctx: dict, cfg: dict |
             ))
             if asset_kind == "motor":
                 tables["link_insured_object_motor"].append(_link_row_with_pk(
-                    "insured_object_home_hash_key",
+                    "insured_object_motor_hash_key",
                     "insured_object_hash_key",
                     insured_object_hk,
                     "motor_hash_key",
@@ -588,6 +754,21 @@ def _add_enhanced_entities(tables: dict[str, list[dict]], ctx: dict, cfg: dict |
         settlement = _date_obj(sample.get("ClaimSettlementDate"))
         if reported and settlement and settlement < reported:
             settlement = reported
+        recovery_happened = _yn(sample.get("Recovery_Happened"))
+        first_recovery = _date_obj(sample.get("First_Recovery_Date"))
+        last_recovery = _date_obj(sample.get("Last_Recovery_Date"))
+        if recovery_happened == "Y":
+            first_recovery = first_recovery or reported or settlement
+            if reported and first_recovery and first_recovery < reported:
+                first_recovery = reported
+            last_recovery = last_recovery or first_recovery or settlement
+            if first_recovery and last_recovery and last_recovery < first_recovery:
+                last_recovery = first_recovery
+            first_recovery_ts = _timestamp_from_date(first_recovery, "00:00:00")
+            last_recovery_ts = _timestamp_from_date(last_recovery, "23:59:59")
+        else:
+            first_recovery_ts = RECOVERY_SENTINEL_TIMESTAMP
+            last_recovery_ts = RECOVERY_SENTINEL_TIMESTAMP
         tables["hub_claim"].append({
             "claim_hash_key": claim_hk,
             "load_date": hub_date,
@@ -603,8 +784,8 @@ def _add_enhanced_entities(tables: dict[str, list[dict]], ctx: dict, cfg: dict |
             "claim_reason": sample.get("ClaimReason", ""),
             "claim_channel": policy_row.get("Sales Channel", ""),
             "claim_handler": sample.get("ClaimHandler", ""),
-            "claim_reported_date": reported.isoformat() if reported else "",
-            "claim_settlement_date": settlement.isoformat() if settlement else "",
+            "claim_reported_date": _timestamp_from_date(reported, "00:00:00"),
+            "claim_settlement_date": _timestamp_from_date(settlement, "23:59:59"),
             "claim_product": claim_product_for_code(product_code),
             "is_claim_suspicious": sample.get("SuspiciousFlag", ""),
             "is_claim_fraud": sample.get("FraudFlag", ""),
@@ -613,20 +794,20 @@ def _add_enhanced_entities(tables: dict[str, list[dict]], ctx: dict, cfg: dict |
             "claim_fraud_detection_method": sample.get("FraudDetectionMethod", ""),
             "is_litigation": sample.get("LitigationIndicator", ""),
             "litigation_reason": sample.get("LitigationReason", ""),
-            "litigation_start_date": _date(sample.get("LitigationStartDate")),
-            "litigation_end_date": _date(sample.get("LitigationEndDate")),
+            "litigation_start_date": _timestamp(sample.get("LitigationStartDate"), "00:00:00"),
+            "litigation_end_date": _timestamp(sample.get("LitigationEndDate"), "23:59:59"),
             "litigation_outcome": sample.get("LitigationOutcome", ""),
             "litigation_duration_days": _int(sample.get("LitigationDurationDays")),
             "claim_fraud_detection_time_in_days": _int(sample.get("FraudDetectionTime_Days")),
             "is_recovery_opportunity": sample.get("RecoveryOpportunityFlag", ""),
-            "recovery_priority_score": _int(sample.get("RecoveryPriorityScore")),
+            "recovery_priority_score": _int(sample.get("RecoveryPriorityScore"), default="0"),
             "recovery_category": sample.get("RecoveryCategory", ""),
             "recovery_source": sample.get("RecoverySource", ""),
-            "first_recovery_date": _date(sample.get("First_Recovery_Date")),
-            "last_recovery_date": _date(sample.get("Last_Recovery_Date")),
-            "is_recovery_happened": sample.get("Recovery_Happened", ""),
-            "days_to_first_recovery": _int(sample.get("Days_to_First_Recovery")),
-            "days_to_last_recovery": _int(sample.get("Days_to_Last_Recovery")),
+            "first_recovery_date": first_recovery_ts,
+            "last_recovery_date": last_recovery_ts,
+            "is_recovery_happened": recovery_happened,
+            "days_to_first_recovery": _int(sample.get("Days_to_First_Recovery"), default="0"),
+            "days_to_last_recovery": _int(sample.get("Days_to_Last_Recovery"), default="0"),
             "avg_days_to_close_claim": _int(sample.get("Avg. Days CloseClaim")),
             "claim_fraud_outcome": sample.get("Fraud_Outcome", ""),
             "recovery_type": sample.get("Recovery type", ""),
@@ -694,9 +875,9 @@ def _add_enhanced_entities(tables: dict[str, list[dict]], ctx: dict, cfg: dict |
         tables["sat_complaint"].append({
             "complaint_hash_key": complaint_hk,
             "load_date": sat_date,
-            "complaint_date": complaint_date.isoformat() if complaint_date else "",
-            "complaint_acknowledgement_date": acknowledgement_date.isoformat() if acknowledgement_date else "",
-            "complaint_resolved_date": resolved_date.isoformat() if resolved_date else "",
+            "complaint_date": _timestamp_from_date(complaint_date, "00:00:00"),
+            "complaint_acknowledgement_date": _timestamp_from_date(acknowledgement_date, "12:00:00"),
+            "complaint_resolved_date": _timestamp_from_date(resolved_date, "23:59:59"),
             "complaint_upheld_status": sample.get("Upheld Status", ""),
             "is_financial_ombudsman_service_referral": sample.get("FOS Referral", ""),
             "complaint_driver": sample.get("Complaint Driver", ""),
@@ -786,11 +967,11 @@ def _add_enhanced_entities(tables: dict[str, list[dict]], ctx: dict, cfg: dict |
             "regulation_region": sample.get("Region", ""),
             "regulation_risk_level": sample.get("RiskLevel", ""),
             "regulation_compliance_status": sample.get("ComplianceStatus", ""),
-            "regulation_date_raised": _date(sample.get("DateRaised")),
-            "regulation_date_closed": _date(sample.get("DateClosed")),
+            "regulation_date_raised": _timestamp(sample.get("DateRaised"), "00:00:00"),
+            "regulation_date_closed": _timestamp(sample.get("DateClosed"), "23:59:59"),
             "regulation_owner": sample.get("Owner", ""),
-            "regulation_deadline_date": _date(sample.get("Deadline_Date")),
-            "is_regulation_on_time": sample.get("On_Time_Flag", ""),
+            "regulation_deadline_date": _timestamp(sample.get("Deadline_Date"), "23:59:59"),
+            "is_regulation_on_time": _yn(sample.get("On_Time_Flag")),
         })
         if complaint_hks:
             tables["link_complaint_regulation"].append(_link_row(
@@ -812,6 +993,8 @@ def build_enhanced_synthetic(ctx: dict, output_dir: str, cfg: dict | None = None
 
     _augment_base_satellites(tables)
     _add_enhanced_entities(tables, ctx, cfg)
+    _normalize_string_boolean_columns(tables)
+    _normalize_blank_numeric_columns(tables, ddl["column_types"])
 
     os.makedirs(output_dir, exist_ok=True)
     for table_name, columns in schemas.items():

@@ -12,9 +12,9 @@ The project is Python-based. The main executable script is:
 
 - `main.py`
 
-The current enhanced Customer 360 model uses the update DDL:
+The current enhanced Customer 360 model uses the active `new` DDL:
 
-- `enhanced_360/update/New_Enhanced Customer 360 Data Vault DDL.sql`
+- `enhanced_360/new/newEnhanced Customer 360 Data Vault DDL.sql`
 
 Do not assume the older root enhanced DDL is active. The old file:
 
@@ -24,12 +24,15 @@ is only a historical/reference baseline unless the user explicitly says otherwis
 
 ## Current Enhanced Contract
 
-Enhanced synthetic output must follow the update DDL:
+Enhanced synthetic output must follow the active `new` DDL:
 
 - `80` tables total
 - `25` hubs
 - `30` links
 - `25` satellites
+- `588` total DDL columns including Data Vault metadata
+- `453` DDL columns excluding common metadata columns
+- `313` descriptive/business attributes excluding common metadata and hash keys
 
 Enhanced output path:
 
@@ -41,7 +44,7 @@ Enhanced SCD2 output path:
 
 Enhanced change mapping workbook:
 
-- `enhanced_360/update/DV_Table_Column_Changes_Old_vs_New.xlsx`
+- `enhanced_360/new/newEnhanced_Customer360_S2T_Mapping_DV&3NF_to_Dimensional_Model.xlsx`
 
 Enhanced sample/reference data:
 
@@ -55,6 +58,15 @@ Normal full generation:
 $env:PYTHONUTF8='1'
 python .\main.py
 ```
+
+Enhanced-only generation:
+
+```powershell
+$env:PYTHONUTF8='1'
+python .\main.py --enhanced-only
+```
+
+`--enhanced-only` still builds base context in memory, then writes only enhanced synthetic output and enhanced SCD2 when prior enhanced history exists. It skips base CSV output, raw/source outputs, silver output, base validation, and base SCD2.
 
 Verify latest enhanced output:
 
@@ -192,6 +204,36 @@ Base rules:
 - historical business dates are capped to satellite load date where applicable
 - policy start/end/renewal dates must be coherent
 
+## End-to-End Lifecycle
+
+The data should be understood as one lifecycle spine with enhanced entities attached to it:
+
+```text
+Person
+-> Lead
+-> Quote
+-> Policy
+-> Customer and Account
+-> Product-linked Motor/Home asset
+-> Enhanced Insured Object
+-> Enhanced Claim, Complaint, Override, Broker, Campaign, Regulation
+```
+
+Lifecycle rules:
+
+- quote records come from lead persons
+- policies come from converted quotes
+- policy products inherit quote products
+- policy holders become customers and accounts
+- renewal is represented as fields on `sat_policy`, not as a new policy term row
+- campaign rows link to lead persons and enrich the lead journey
+- insured objects are derived from policy-linked motor/home assets
+- insured object value is a positive integer derived from linked enhanced policy sum insured, with object-type fallback values when policy sum insured is unavailable
+- claims are generated from active policies where possible and stay inside the linked policy period
+- complaints are generated from customer policy context and occur after `customer_since`
+- regulations can link to complaints and must have ordered raised/deadline/closed timestamps
+- enhanced DDL `TIMESTAMP` columns must include time components and are checked generically by `misc/verify_enhanced_synthetic.py`
+
 ## Enhanced Model Rules
 
 Enhanced generation starts from `base_context`.
@@ -247,6 +289,14 @@ Enhanced-specific links:
 - `link_policy_insured_object`
 - `link_insured_object_home`
 - `link_insured_object_motor`
+- `link_person_address`
+
+Enhanced address and asset ID rules:
+
+- base person home-address context is mapped to `hub_address`, `link_person_address`, and `sat_address`
+- `hub_home` uses `insured_object_home_id`, not `home_id`
+- `hub_motor` uses `insured_object_motor_id`, not `motor_id`
+- `link_insured_object_motor` uses `insured_object_motor_hash_key` as its primary key and `motor_hash_key` as its motor foreign key
 
 ## Enhanced Business Rules
 
@@ -268,6 +318,8 @@ Campaign:
 
 - campaigns use `DimCampaign.csv`
 - campaign metrics use `FactQuote.csv`
+- `sat_campaign.is_active` must be `Y` or `N`; do not generate `number_of_is_active`
+- `sat_campaign.campaign_start_date` and `sat_campaign.campaign_end_date` must include timestamp time components
 - campaigns link to lead persons
 
 Claims:
@@ -275,6 +327,9 @@ Claims:
 - claims use `DimClaim.csv` and `FactPolicy.csv`
 - claims prefer active policies
 - claim dates must fit policy dates
+- claim reported, settlement, litigation, and recovery date fields must include timestamp time components
+- no-recovery claims use `1900-01-01T00:00:00` for first/last recovery timestamps
+- recovery claims use lifecycle-safe recovery timestamps; blank recovery numeric fields are emitted as `0`
 - claim channel follows linked policy sales channel
 - claim product follows linked policy product family
 - claim financial fields live on `sat_claim`, not `sat_policy`
@@ -286,7 +341,19 @@ Complaints:
 - complaint policy resolves to customer through `link_policy_customer`
 - complaint date must be on or after `customer_since`
 - acknowledgement/resolution dates must be ordered
+- complaint date, acknowledgement date, and resolved date must include timestamp time components
 - complaint channel/category must match linked policy context
+
+Customer enrichment:
+
+- `sat_customer.customer_satisfaction` is a DDL `STRING`
+- map numeric `CustomerSatisfaction` source scores to labels:
+  - `9-10` -> `VERY_SATISFIED`
+  - `7-8` -> `SATISFIED`
+  - `5-6` -> `NEUTRAL`
+  - `<5` -> `DISSATISFIED`
+  - missing or invalid -> `UNKNOWN`
+- do not emit bare numeric values for this column
 
 Overrides:
 
@@ -300,11 +367,17 @@ Regulations:
 - regulations use `DimRegulations.csv`
 - regulations link to complaints through `link_complaint_regulation`
 - regulation raised date must be before or equal to deadline and close date
+- regulation date fields must include timestamp time components
+- DDL `STRING` boolean/flag columns must be generated as string `Y` or `N`, not numeric `1` or `0` and not boolean-looking `TRUE` or `FALSE`
+- DDL numeric columns are normalized centrally before CSV output: blank `INT`-style fields become `0`, and blank floating/decimal fields become `0.0`
+- enhanced verification checks numeric population and parseability from the DDL
 
 Insured object:
 
 - insured objects are derived from policy-linked motor/home assets
 - insured object links must reference valid policy, home, and motor objects
+- insured object start and end dates must include timestamp time components
+- `sat_insured_object.insured_value` must be populated as a positive integer
 
 ## Active Enhanced DDL Details
 
@@ -322,8 +395,8 @@ The active enhanced DDL has no `sat_quote.agent_id`.
 
 If a future user says the Excel mapping and DDL are inconsistent, compare:
 
-- `enhanced_360/update/New_Enhanced Customer 360 Data Vault DDL.sql`
-- `enhanced_360/update/DV_Table_Column_Changes_Old_vs_New.xlsx`
+- `enhanced_360/new/newEnhanced Customer 360 Data Vault DDL.sql`
+- `enhanced_360/new/newEnhanced_Customer360_S2T_Mapping_DV&3NF_to_Dimensional_Model.xlsx`
 
 ## Enhanced Verification Rules
 
@@ -331,6 +404,8 @@ If a future user says the Excel mapping and DDL are inconsistent, compare:
 
 - expected files exist
 - columns match active enhanced DDL
+- DDL `TIMESTAMP` columns contain parseable timestamp values with time components
+- DDL numeric columns are populated and parse as the declared numeric type
 - primary keys are unique and nonblank
 - foreign keys point to parent records
 - base enums remain valid
@@ -354,11 +429,17 @@ It:
 - scans previous synthetic runs
 - excludes the current run
 - keeps latest historical row per satellite hash key
-- samples a small percentage of rows
+- samples `10%` of eligible rows per configured satellite file
 - mutates configured columns
 - writes changed satellite rows to `data/scd2/base/<run_id>` or `data/scd2/enhanced/<run_id>`
 
 It does not emit all new entities as full CDC.
+
+Count examples:
+
+- `10,000` eligible historical rows in one satellite produce about `1,000` SCD2 rows for that satellite
+- `100,000` eligible historical rows in one satellite produce about `10,000` SCD2 rows for that satellite
+- the 10% rate is per satellite, not across all base or enhanced tables as one combined total
 
 Use:
 
@@ -389,8 +470,10 @@ Do not:
 - assume old enhanced table names are active
 - reintroduce `hub_complaints`, `sat_complaints`, `hub_regulations`, or `sat_regulations`
 - reintroduce `link_person_broker`, `link_policy_claim`, `link_override_policy`, `link_complaints_customer`, or `link_regulations_product`
+- reintroduce enhanced `hub_home_address`, `link_person_home_address`, or `sat_home_address`
 - put claim financial fields back on `sat_policy`
 - put campaign metrics back on `sat_quote`
+- reintroduce `sat_campaign.number_of_is_active`
 - add `sat_quote.agent_id`
 - use literal channel value `BROKER` without updating shared enums and validators
 - delete the old root enhanced DDL unless explicitly instructed
@@ -400,8 +483,8 @@ Do not:
 
 Add or remove enhanced table/column:
 
-- DDL: `enhanced_360/update/New_Enhanced Customer 360 Data Vault DDL.sql`
-- Mapping: `enhanced_360/update/DV_Table_Column_Changes_Old_vs_New.xlsx`
+- DDL: `enhanced_360/new/newEnhanced Customer 360 Data Vault DDL.sql`
+- Mapping: `enhanced_360/new/newEnhanced_Customer360_S2T_Mapping_DV&3NF_to_Dimensional_Model.xlsx`
 - Parser usually does not need changes unless SQL shape changes: `helper/enhanced_ddl.py`
 - Generator: `generators/enhanced_synthetic_generator.py`
 - Verifier: `misc/verify_enhanced_synthetic.py`
@@ -432,15 +515,18 @@ Change cardinality:
 
 ## Current Known Good State
 
-A full run produced:
+A recent full run produced base/enhanced/current SCD2 outputs, and a later enhanced-only run verified the latest enhanced timestamp rules.
 
-- `data/synthetic/enhanced/20260507094311`
-- `data/synthetic/enhanced/20260507094557`
-- `data/scd2/enhanced/20260507094557`
+- `data/synthetic/base/20260507192109`
+- `data/synthetic/enhanced/20260507192109`
+- `data/scd2/base/20260507192109`
+- `data/scd2/enhanced/20260507192109`
+- `data/synthetic/enhanced/20260508103525`
+- `data/scd2/enhanced/20260508103525`
 
 The latest enhanced verification passed for:
 
-- `data/synthetic/enhanced/20260507094557`
+- `data/synthetic/enhanced/20260508103525`
 
 The latest enhanced output had:
 
@@ -449,4 +535,8 @@ The latest enhanced output had:
 - `30` links
 - `25` satellites
 
-Enhanced SCD2 existed for the second run and contained historical sampled satellite deltas.
+Base SCD2 existed for the second run and matched the `10%` per-satellite rule.
+
+Enhanced SCD2 existed for the second run and contained historical sampled satellite deltas using the same `10%` per-satellite rule.
+
+The latest enhanced-only verification also confirmed DDL-driven timestamp checks for claim, complaint, regulation, insured object, campaign, policy issue/transaction, product launch, and quote date columns.

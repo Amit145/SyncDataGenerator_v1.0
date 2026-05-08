@@ -34,8 +34,8 @@ The generator builds a run in this order:
 8. output writing
 9. validation
 10. normalized synthetic export
-11. SCD2-style delta generation
-12. optional SCD2 update generation
+11. enhanced synthetic generation
+12. SCD2-style delta generation when prior history exists
 13. optional SCD2 comparison reporting
 
 
@@ -729,15 +729,22 @@ Files involved:
 
 - `helper/scd2_generator.py`
 - `enums/sat_enums.py`
+- `misc/compare_all_scd2.py`
 - `update_scd2_records.py`
 - `compare_scd2_updates.py`
 
 Rules:
 
-- SCD2 generator mutates a small percentage of rows from prior normalized satellite files
+- SCD2 generator mutates `10%` of eligible rows per configured satellite file from prior normalized satellite files
 - mutation candidates are controlled by a per-file column map
 - enum-backed columns mutate using `SAT_ENUMS`
 - email and phone mutate through fallback logic when not enum-backed
+
+Count examples:
+
+- `100,000` eligible historical rows in one satellite produce about `10,000` SCD2 rows for that satellite
+- `10,000` eligible historical rows in one satellite produce about `1,000` SCD2 rows for that satellite
+- the 10% rate is applied per satellite, not across all base or enhanced tables as one combined total
 
 Examples:
 
@@ -751,13 +758,13 @@ Important note:
 - the SCD2 generator is only partially driven by `SAT_ENUMS`
 - it uses `SAT_ENUMS` for columns it is configured to mutate
 
-### Existing helper
+### Main synthetic SCD2 helper
 
 `helper/scd2_generator.py` creates delta-style SCD2 satellite rows from historical normalized satellite runs.
 
 Current implemented behavior:
 
-- input history is the normalized `synthetic_data` root
+- input history is `data/synthetic/base` or `data/synthetic/enhanced`
 - the current run is excluded from the historical candidate pool
 - all previous normalized runs are scanned
 - for each `sat_*.csv`:
@@ -770,16 +777,15 @@ Current implemented behavior:
 This means the helper no longer depends only on the immediately previous run.
 It now produces the current run delta from the latest historical version across all prior runs.
 
-### New standalone updater
+### Optional standalone updater
 
 `update_scd2_records.py` is a separate utility and does not modify the existing helper.
 
 It:
 
-- reads an existing `scd2_sat/<run_id>` folder
+- reads an existing `data/scd2/base/<run_id>` folder unless another input folder is supplied
 - mutates existing SCD2 rows using the same style of mutation rules
-- writes the result to:
-  - `scd2_updated/<run_id>`
+- writes the result to `data/scd2/updated/<run_id>` unless another output folder is supplied
 
 Behavior:
 
@@ -787,12 +793,12 @@ Behavior:
 - can optionally accept a replacement `sat-date`
 - uses the same enum/fallback mutation model as the helper
 
-### New standalone comparison tool
+### Optional standalone comparison tool
 
 `compare_scd2_updates.py` compares:
 
-- `scd2_sat/<run_id>`
-- `scd2_updated/<run_id>`
+- `data/scd2/base/<run_id>`
+- `data/scd2/updated/<run_id>`
 
 and reports:
 
@@ -804,21 +810,24 @@ and reports:
 
 ## 19. Output Locations
 
-Primary outputs:
+Primary base output:
 
-- `output/<run_id>`
+- `data/output/<run_id>`
 
-Normalized export:
+Normalized synthetic exports:
 
-- `synthetic_data/<run_id>`
+- `data/synthetic/base/<run_id>`
+- `data/synthetic/enhanced/<run_id>`
 
-SCD2-style delta output:
+SCD2-style delta outputs:
 
-- `scd2_sat/<current_run_id>`
+- `data/scd2/base/<run_id>`
+- `data/scd2/enhanced/<run_id>`
+- `data/scd2/raw/<source>/<run_id>`
 
-Updated SCD2 output:
+Optional updated SCD2 output:
 
-- `scd2_updated/<run_id>`
+- `data/scd2/updated/<run_id>`
 
 
 ## 20. Operational Notes
@@ -910,8 +919,17 @@ After generating a run:
 
 ```bash
 python main.py
-python verify_csv.py synthetic_data/<run_id>
+python misc/verify_enhanced_synthetic.py
 ```
+
+To generate only enhanced synthetic output:
+
+```bash
+python main.py --enhanced-only
+python misc/verify_enhanced_synthetic.py
+```
+
+Enhanced-only mode still builds the base context in memory. It skips base CSV output, raw/source outputs, silver output, base validation, and base SCD2.
 
 If you want to validate a default folder without passing a path:
 
@@ -919,16 +937,22 @@ If you want to validate a default folder without passing a path:
 python verify_csv.py
 ```
 
-To update existing SCD2 rows into a new folder:
+To compare all current SCD2 outputs:
 
 ```bash
-python update_scd2_records.py --input scd2_sat/<run_id>
+python misc/compare_all_scd2.py
 ```
 
-To compare original and updated SCD2 rows:
+To update existing base SCD2 rows into a separate optional folder:
 
 ```bash
-python compare_scd2_updates.py --original scd2_sat/<run_id> --updated scd2_updated/<run_id>
+python update_scd2_records.py --input data/scd2/base/<run_id>
+```
+
+To compare original and optionally updated SCD2 rows:
+
+```bash
+python compare_scd2_updates.py --original data/scd2/base/<run_id> --updated data/scd2/updated/<run_id>
 ```
 
 Important note about standard pipeline behavior:
@@ -953,5 +977,7 @@ Important note about standard pipeline behavior:
 - `enums/sat_enums.py`
 - `validators/integrity_checker.py`
 - `verify_csv.py`
+- `misc/verify_enhanced_synthetic.py`
+- `misc/compare_all_scd2.py`
 - `update_scd2_records.py`
 - `compare_scd2_updates.py`

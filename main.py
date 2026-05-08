@@ -1,6 +1,7 @@
 import random
 import os
 import csv
+import argparse
 from datetime import datetime, timedelta
 
 from config.runConfig import (
@@ -76,6 +77,15 @@ from enums.product_catalog import (
 )
 
 start_time = datetime.now()
+
+parser = argparse.ArgumentParser()
+parser.add_argument(
+    "--enhanced-only",
+    action="store_true",
+    help="Generate only enhanced synthetic output. Base context is still built in memory.",
+)
+args = parser.parse_args()
+enhanced_only = args.enhanced_only
 
 # ---------------- Inputs ----------------
 BUSINESS_START_DATE = "2020-01-01"
@@ -471,33 +481,35 @@ for motor_hk in motor_hks:
     motor_to_addr.setdefault(motor_hk, fallback_addr)
 
 sat_mot = sat_motor(motor_hks, SAT_DATE, motor_to_addr)
+sat_prod = sat_product(hub_prod_rows, SAT_DATE, product_code_by_hk)
 
 # =========================================================
 # 7) WRITE OUTPUTS
 # =========================================================
-write_csv(out, "Hub_Person.csv", hub_person_rows)
-write_csv(out, "Hub_Natural_Person.csv", hub_nat)
-write_csv(out, "Hub_Legal_Person.csv", hub_leg)
+if not enhanced_only:
+    write_csv(out, "Hub_Person.csv", hub_person_rows)
+    write_csv(out, "Hub_Natural_Person.csv", hub_nat)
+    write_csv(out, "Hub_Legal_Person.csv", hub_leg)
 
-write_csv(out, "Hub_Product.csv", hub_prod_rows)
-write_csv(out, "Hub_Lead.csv", hub_lead_rows)
-write_csv(out, "Hub_Customer.csv", hub_cust_rows)
+    write_csv(out, "Hub_Product.csv", hub_prod_rows)
+    write_csv(out, "Hub_Lead.csv", hub_lead_rows)
+    write_csv(out, "Hub_Customer.csv", hub_cust_rows)
 
-write_csv(out, "Hub_Identities.csv", hub_id_rows)
-write_csv(out, "Hub_Contact.csv", hub_con_rows)
-write_csv(out, "Hub_Consent.csv", hub_cns_rows)
-write_csv(out, "Hub_Account.csv", hub_acc_rows)
-write_csv(out, "Hub_Marketing_Preference.csv", hub_mpr_rows)
-write_csv(out, "Hub_Marketing_Engagement.csv", hub_men_rows)
+    write_csv(out, "Hub_Identities.csv", hub_id_rows)
+    write_csv(out, "Hub_Contact.csv", hub_con_rows)
+    write_csv(out, "Hub_Consent.csv", hub_cns_rows)
+    write_csv(out, "Hub_Account.csv", hub_acc_rows)
+    write_csv(out, "Hub_Marketing_Preference.csv", hub_mpr_rows)
+    write_csv(out, "Hub_Marketing_Engagement.csv", hub_men_rows)
 
-write_csv(out, "Hub_Quote.csv", hub_quo_rows)
-write_csv(out, "Hub_Policy.csv", hub_pol_rows)
+    write_csv(out, "Hub_Quote.csv", hub_quo_rows)
+    write_csv(out, "Hub_Policy.csv", hub_pol_rows)
 
-write_csv(out, "Hub_Motor.csv", hub_mot_rows)
-write_csv(out, "Hub_Home.csv", hub_home_rows)
-write_csv(out, "Hub_Home_Address.csv", hub_addr_rows)
+    write_csv(out, "Hub_Motor.csv", hub_mot_rows)
+    write_csv(out, "Hub_Home.csv", hub_home_rows)
+    write_csv(out, "Hub_Home_Address.csv", hub_addr_rows)
 
-write_csv(out, "Link_Quote_Product.csv", link_quote_product)
+    write_csv(out, "Link_Quote_Product.csv", link_quote_product)
 
 EXPECTED_LINKS = [
     "Link_Person_Natural_Person",
@@ -525,28 +537,29 @@ for table in EXPECTED_LINKS:
     for item in rows:
         item["Load Date"] = LINK_DATE
         rows_with_load_date.append(item)
-    write_csv(out, f"{table}.csv", rows_with_load_date)
+    if not enhanced_only:
+        write_csv(out, f"{table}.csv", rows_with_load_date)
 
-write_csv(out, "Sat_Natural_Person.csv", sat_nat)
-write_csv(out, "Sat_Legal_Person.csv", sat_leg)
-write_csv(out, "Sat_Person.csv", sat_per)
-write_csv(out, "Sat_Lead.csv", sat_lea)
-write_csv(out, "Sat_Customer.csv", sat_cus)
+if not enhanced_only:
+    write_csv(out, "Sat_Natural_Person.csv", sat_nat)
+    write_csv(out, "Sat_Legal_Person.csv", sat_leg)
+    write_csv(out, "Sat_Person.csv", sat_per)
+    write_csv(out, "Sat_Lead.csv", sat_lea)
+    write_csv(out, "Sat_Customer.csv", sat_cus)
 
-write_csv(out, "Sat_Identities.csv", sat_eci)
-write_csv(out, "Sat_Contact.csv", sat_con)
-write_csv(out, "Sat_Consent.csv", sat_cns)
-write_csv(out, "Sat_Account.csv", sat_acc)
-write_csv(out, "Sat_Marketing_Preference.csv", sat_mpr)
-write_csv(out, "Sat_Marketing_Engagement.csv", sat_men)
+    write_csv(out, "Sat_Identities.csv", sat_eci)
+    write_csv(out, "Sat_Contact.csv", sat_con)
+    write_csv(out, "Sat_Consent.csv", sat_cns)
+    write_csv(out, "Sat_Account.csv", sat_acc)
+    write_csv(out, "Sat_Marketing_Preference.csv", sat_mpr)
+    write_csv(out, "Sat_Marketing_Engagement.csv", sat_men)
 
-write_csv(out, "Sat_Quote.csv", sat_quo)
-write_csv(out, "Sat_Policy.csv", sat_pol)
-write_csv(out, "Sat_Motor.csv", sat_mot)
-write_csv(out, "Sat_Home.csv", sat_hom)
-write_csv(out, "Sat_Home_Address.csv", sat_adr)
-sat_prod = sat_product(hub_prod_rows, SAT_DATE, product_code_by_hk)
-write_csv(out, "Sat_Product.csv", sat_prod)
+    write_csv(out, "Sat_Quote.csv", sat_quo)
+    write_csv(out, "Sat_Policy.csv", sat_pol)
+    write_csv(out, "Sat_Motor.csv", sat_mot)
+    write_csv(out, "Sat_Home.csv", sat_hom)
+    write_csv(out, "Sat_Home_Address.csv", sat_adr)
+    write_csv(out, "Sat_Product.csv", sat_prod)
 
 extract_ts = (hub_dt - timedelta(days=7)).isoformat()
 base_context = {
@@ -614,68 +627,69 @@ base_context = {
     "sat_product_rows": sat_prod,
     "extract_ts": extract_ts,
 }
-raw_out = write_raw_crm_batch(RAW_BASE, folder_run_id, base_context)
-generated_crm_canonical = map_crm_raw_to_canonical(folder_run_id, raw_out)
+if not enhanced_only:
+    raw_out = write_raw_crm_batch(RAW_BASE, folder_run_id, base_context)
+    generated_crm_canonical = map_crm_raw_to_canonical(folder_run_id, raw_out)
 
-api_source_ctx = build_source_context(
-    cfg,
-    f"{run_id}_api",
-    HUB_DATE,
-    LINK_DATE,
-    SAT_DATE,
-    BUSINESS_START_DATE,
-    as_of_date=AS_OF_DATE,
-    seed_override=seed + 101,
-)
-raw_api_out = write_raw_api_batch(
-    RAW_BASE,
-    folder_run_id,
-    api_source_ctx,
-)
-claims_source_ctx = build_source_context(
-    cfg,
-    f"{run_id}_claims",
-    HUB_DATE,
-    LINK_DATE,
-    SAT_DATE,
-    BUSINESS_START_DATE,
-    as_of_date=AS_OF_DATE,
-    seed_override=seed + 303,
-)
-raw_claims_out = write_raw_claims_batch(
-    RAW_BASE,
-    folder_run_id,
-    claims_source_ctx,
-)
-data_source_ctx = build_source_context(
-    cfg,
-    f"{run_id}_icrm",
-    HUB_DATE,
-    LINK_DATE,
-    SAT_DATE,
-    BUSINESS_START_DATE,
-    as_of_date=AS_OF_DATE,
-    seed_override=seed + 202,
-)
-generated_data_source_raw = generate_data_source_raw(folder_run_id, ctx=data_source_ctx)
-generated_data_source_canonical = map_data_source_to_canonical(folder_run_id, generated_data_source_raw)
-generated_kaggle_raw = generate_kaggle_raw_batches()
-generated_kaggle_raw_dirs = [path for _, path in generated_kaggle_raw]
-generated_raw_scd2 = generate_raw_scd2(folder_run_id, crm_raw_dir=raw_out, api_raw_dir=raw_api_out, kaggle_raw_dirs=generated_kaggle_raw_dirs)
-generated_new_outputs_src = generate_new_outputs_src(
-    run_id=folder_run_id,
-    cfg=cfg,
-    base_context=base_context,
-    base_run_id=run_id,
-    hub_date=HUB_DATE,
-    link_date=LINK_DATE,
-    sat_date=SAT_DATE,
-    business_start_date=BUSINESS_START_DATE,
-    as_of_date=AS_OF_DATE,
-)
-generated_new_outputs_src_scd2 = generate_new_outputs_src_scd2(folder_run_id, generated_new_outputs_src)
-synthetic_data_api = os.path.join(SYNTHETIC_DATA_API, folder_run_id)
-build_api_silver(raw_api_out, synthetic_data_api)
+    api_source_ctx = build_source_context(
+        cfg,
+        f"{run_id}_api",
+        HUB_DATE,
+        LINK_DATE,
+        SAT_DATE,
+        BUSINESS_START_DATE,
+        as_of_date=AS_OF_DATE,
+        seed_override=seed + 101,
+    )
+    raw_api_out = write_raw_api_batch(
+        RAW_BASE,
+        folder_run_id,
+        api_source_ctx,
+    )
+    claims_source_ctx = build_source_context(
+        cfg,
+        f"{run_id}_claims",
+        HUB_DATE,
+        LINK_DATE,
+        SAT_DATE,
+        BUSINESS_START_DATE,
+        as_of_date=AS_OF_DATE,
+        seed_override=seed + 303,
+    )
+    raw_claims_out = write_raw_claims_batch(
+        RAW_BASE,
+        folder_run_id,
+        claims_source_ctx,
+    )
+    data_source_ctx = build_source_context(
+        cfg,
+        f"{run_id}_icrm",
+        HUB_DATE,
+        LINK_DATE,
+        SAT_DATE,
+        BUSINESS_START_DATE,
+        as_of_date=AS_OF_DATE,
+        seed_override=seed + 202,
+    )
+    generated_data_source_raw = generate_data_source_raw(folder_run_id, ctx=data_source_ctx)
+    generated_data_source_canonical = map_data_source_to_canonical(folder_run_id, generated_data_source_raw)
+    generated_kaggle_raw = generate_kaggle_raw_batches()
+    generated_kaggle_raw_dirs = [path for _, path in generated_kaggle_raw]
+    generated_raw_scd2 = generate_raw_scd2(folder_run_id, crm_raw_dir=raw_out, api_raw_dir=raw_api_out, kaggle_raw_dirs=generated_kaggle_raw_dirs)
+    generated_new_outputs_src = generate_new_outputs_src(
+        run_id=folder_run_id,
+        cfg=cfg,
+        base_context=base_context,
+        base_run_id=run_id,
+        hub_date=HUB_DATE,
+        link_date=LINK_DATE,
+        sat_date=SAT_DATE,
+        business_start_date=BUSINESS_START_DATE,
+        as_of_date=AS_OF_DATE,
+    )
+    generated_new_outputs_src_scd2 = generate_new_outputs_src_scd2(folder_run_id, generated_new_outputs_src)
+    synthetic_data_api = os.path.join(SYNTHETIC_DATA_API, folder_run_id)
+    build_api_silver(raw_api_out, synthetic_data_api)
 enhanced_synthetic = os.path.join(SYNTHETIC_ENHANCED_ROOT, folder_run_id)
 build_enhanced_synthetic(base_context, enhanced_synthetic, cfg=cfg)
 previous_enhanced_run = previous_subdir(SYNTHETIC_ENHANCED_ROOT, exclude_name=folder_run_id)
@@ -698,39 +712,41 @@ assert_unique(hub_pol_rows, "Policy Hash Key")
 assert_unique(hub_quo_rows, "Quote Hash Key")
 
 print("Basic PK validation OK")
-print("DONE:", out)
-print("RAW CRM:", raw_out)
-print("RAW CRM CANONICAL:", generated_crm_canonical)
-print("RAW API:", raw_api_out)
-print("RAW CLAIMS:", raw_claims_out)
-for domain_name in sorted(generated_data_source_raw):
-    print(f"RAW DATA_SOURCE {domain_name.upper()}:", generated_data_source_raw[domain_name])
-print("RAW DATA_SOURCE CANONICAL:", generated_data_source_canonical)
-for _, kaggle_raw_out in generated_kaggle_raw:
-    print("RAW KAGGLE:", kaggle_raw_out)
-for source_name in sorted(generated_new_outputs_src):
-    print(f"NEW OUTPUT SRC {source_name.upper()}:", generated_new_outputs_src[source_name]["data_dir"])
-for raw_scd2_summary in generated_raw_scd2:
-    print("RAW SCD2:", raw_scd2_summary["output_dir"])
-for scd2_summary in generated_new_outputs_src_scd2:
-    print(f"NEW OUTPUT SRC SCD2 {scd2_summary['source_label'].upper()}:", scd2_summary["output_dir"])
-print("SILVER API:", synthetic_data_api)
+if not enhanced_only:
+    print("DONE:", out)
+    print("RAW CRM:", raw_out)
+    print("RAW CRM CANONICAL:", generated_crm_canonical)
+    print("RAW API:", raw_api_out)
+    print("RAW CLAIMS:", raw_claims_out)
+    for domain_name in sorted(generated_data_source_raw):
+        print(f"RAW DATA_SOURCE {domain_name.upper()}:", generated_data_source_raw[domain_name])
+    print("RAW DATA_SOURCE CANONICAL:", generated_data_source_canonical)
+    for _, kaggle_raw_out in generated_kaggle_raw:
+        print("RAW KAGGLE:", kaggle_raw_out)
+    for source_name in sorted(generated_new_outputs_src):
+        print(f"NEW OUTPUT SRC {source_name.upper()}:", generated_new_outputs_src[source_name]["data_dir"])
+    for raw_scd2_summary in generated_raw_scd2:
+        print("RAW SCD2:", raw_scd2_summary["output_dir"])
+    for scd2_summary in generated_new_outputs_src_scd2:
+        print(f"NEW OUTPUT SRC SCD2 {scd2_summary['source_label'].upper()}:", scd2_summary["output_dir"])
+    print("SILVER API:", synthetic_data_api)
 print("SYNTHETIC ENHANCED:", enhanced_synthetic)
 if previous_enhanced_run:
     print("SCD2 ENHANCED:", enhanced_scd2_output)
 
-are_files_checked = check_file_and_cols(DDL_JSON_PATH, OUTPUT_BASE)
-if are_files_checked:
-    is_valid_integrity = validate_integrity(OUTPUT_BASE)
-    if is_valid_integrity:
-        print("Data is valid and maintains Referential Integrity. Data can be loaded")
-        synthetic_data = os.path.join(SYNTHETIC_DATA, folder_run_id)
-        normalize_csv(out, synthetic_data)
+if not enhanced_only:
+    are_files_checked = check_file_and_cols(DDL_JSON_PATH, OUTPUT_BASE)
+    if are_files_checked:
+        is_valid_integrity = validate_integrity(OUTPUT_BASE)
+        if is_valid_integrity:
+            print("Data is valid and maintains Referential Integrity. Data can be loaded")
+            synthetic_data = os.path.join(SYNTHETIC_DATA, folder_run_id)
+            normalize_csv(out, synthetic_data)
 
-        if prev_run_path:
-            scd2_input = SYNTHETIC_DATA
-            scd2_output = os.path.join(SATELLITE_PATH, folder_run_id)
-            create_scd_data(scd2_input, scd2_output, SAT_DATE, exclude_run_name=folder_run_id)
+            if prev_run_path:
+                scd2_input = SYNTHETIC_DATA
+                scd2_output = os.path.join(SATELLITE_PATH, folder_run_id)
+                create_scd_data(scd2_input, scd2_output, SAT_DATE, exclude_run_name=folder_run_id)
 
 end_time = datetime.now()
 print("Total time taken:", end_time - start_time)

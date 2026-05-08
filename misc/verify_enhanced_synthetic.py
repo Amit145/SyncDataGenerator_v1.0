@@ -21,6 +21,8 @@ from helper.enhanced_rules import (
 )
 from enums.sat_enums import SAT_ENUMS
 
+RECOVERY_SENTINEL_TIMESTAMP = pd.Timestamp("1900-01-01T00:00:00")
+
 
 def latest_subdir(base_dir: str) -> str | None:
     if not os.path.exists(base_dir):
@@ -55,8 +57,10 @@ def parse_date(series: pd.Series) -> pd.Series:
 def count_invalid_enum(df: pd.DataFrame, column: str, allowed_values) -> tuple[int, list[str]]:
     if column not in df.columns or not allowed_values:
         return 0, []
+    allowed_normalized = {str(item).strip().upper() for item in allowed_values}
     normalized = df[column].fillna("").astype(str).str.strip()
-    mask = (normalized != "") & (~normalized.isin(allowed_values))
+    compare_values = normalized.str.upper()
+    mask = (normalized != "") & (~compare_values.isin(allowed_normalized))
     invalid_values = sorted(normalized[mask].unique().tolist())
     return int(mask.sum()), invalid_values[:5]
 
@@ -70,6 +74,68 @@ def build_link_map(df: pd.DataFrame, left_col: str, right_col: str) -> dict[str,
             continue
         mapping.setdefault(str(left), []).append(str(right))
     return mapping
+
+
+def verify_timestamp_columns(frames: dict[str, pd.DataFrame], ddl: dict) -> int:
+    errors = 0
+    timestamp_columns: dict[str, list[str]] = {}
+    for table_name, column_defs in ddl.get("column_types", {}).items():
+        cols = [
+            column_name
+            for column_name, column_type in column_defs.items()
+            if str(column_type).upper() == "TIMESTAMP"
+        ]
+        if cols:
+            timestamp_columns[table_name] = cols
+
+    for table_name, columns in timestamp_columns.items():
+        df = frames.get(table_name)
+        if df is None or df.empty:
+            continue
+        for column_name in columns:
+            if column_name not in df.columns:
+                continue
+            values = df[column_name].fillna("").astype(str).str.strip()
+            populated = values[values != ""]
+            if populated.empty:
+                continue
+            parsed = pd.to_datetime(populated, errors="coerce")
+            invalid_count = int(parsed.isna().sum())
+            missing_time_count = int((~populated.str.contains(r"[T ]\d{2}:\d{2}:\d{2}", regex=True)).sum())
+            if invalid_count or missing_time_count:
+                print(
+                    f"TIMESTAMP CHECK FAILED: {table_name}.{column_name} "
+                    f"invalid_rows={invalid_count} missing_time_rows={missing_time_count}"
+                )
+                errors += 1
+    return errors
+
+
+def verify_numeric_columns(frames: dict[str, pd.DataFrame], ddl: dict) -> int:
+    errors = 0
+    numeric_types = {"INT", "INTEGER", "BIGINT", "SMALLINT", "TINYINT", "DOUBLE", "FLOAT", "DECIMAL", "NUMERIC"}
+    integer_types = {"INT", "INTEGER", "BIGINT", "SMALLINT", "TINYINT"}
+    for table_name, column_defs in ddl.get("column_types", {}).items():
+        df = frames.get(table_name)
+        if df is None or df.empty:
+            continue
+        for column_name, column_type in column_defs.items():
+            if column_type not in numeric_types or column_name not in df.columns:
+                continue
+            values = df[column_name].fillna("").astype(str).str.strip()
+            blank_count = int(values.eq("").sum())
+            numeric_values = pd.to_numeric(values, errors="coerce")
+            invalid_count = int(numeric_values.isna().sum())
+            fractional_count = 0
+            if column_type in integer_types:
+                fractional_count = int((numeric_values.dropna() % 1 != 0).sum())
+            if blank_count or invalid_count or fractional_count:
+                print(
+                    f"NUMERIC CHECK FAILED: {table_name}.{column_name} type={column_type} "
+                    f"blank_rows={blank_count} invalid_rows={invalid_count} fractional_rows={fractional_count}"
+                )
+                errors += 1
+    return errors
 
 
 def verify_base_enum_alignment(frames: dict[str, pd.DataFrame]) -> int:
@@ -152,6 +218,19 @@ def verify_base_enum_alignment(frames: dict[str, pd.DataFrame]) -> int:
                 f"ENUM CHECK FAILED: sat_product.type invalid_rows={invalid_count} sample={sample_values}"
             )
             errors += 1
+    sat_customer = frames.get("sat_customer")
+    if sat_customer is not None and not sat_customer.empty and "customer_satisfaction" in sat_customer.columns:
+        invalid_count, sample_values = count_invalid_enum(
+            sat_customer,
+            "customer_satisfaction",
+            {"VERY_SATISFIED", "SATISFIED", "NEUTRAL", "DISSATISFIED", "UNKNOWN"},
+        )
+        if invalid_count:
+            print(
+                f"ENUM CHECK FAILED: sat_customer.customer_satisfaction "
+                f"invalid_rows={invalid_count} sample={sample_values}"
+            )
+            errors += 1
     for table_name, column_name in (
         ("sat_channel", "channel_name"),
         ("sat_claim", "claim_channel"),
@@ -166,8 +245,38 @@ def verify_base_enum_alignment(frames: dict[str, pd.DataFrame]) -> int:
             print(
                 f"ENUM CHECK FAILED: {table_name}.{column_name} invalid_rows={invalid_count} "
                 f"sample={sample_values}"
-            )
+                )
             errors += 1
+    string_boolean_columns = {
+        "sat_campaign": {"is_active"},
+        "sat_claim": {
+            "is_claim_suspicious",
+            "is_claim_fraud",
+            "is_litigation",
+            "is_recovery_opportunity",
+            "is_recovery_happened",
+        },
+        "sat_complaint": {"is_financial_ombudsman_service_referral"},
+        "sat_home": {"is_existing_home_customer"},
+        "sat_motor": {"is_existing_motor_customer"},
+        "sat_person": {"is_lead"},
+        "sat_policy": {"fraud_flag", "is_policy_renewal"},
+        "sat_regulation": {"is_regulation_on_time"},
+    }
+    for table_name, columns in string_boolean_columns.items():
+        df = frames.get(table_name)
+        if df is None or df.empty:
+            continue
+        for column_name in columns:
+            if column_name not in df.columns:
+                continue
+            invalid_count, sample_values = count_invalid_enum(df, column_name, {"Y", "N"})
+            if invalid_count:
+                print(
+                    f"ENUM CHECK FAILED: {table_name}.{column_name} invalid_rows={invalid_count} "
+                    f"sample={sample_values}"
+                )
+                errors += 1
     return errors
 
 
@@ -305,7 +414,21 @@ def verify_enhanced_business_rules(frames: dict[str, pd.DataFrame]) -> int:
         merged = (
             link_claim_policy[["policy_hash_key", "claim_hash_key"]]
             .merge(sat_policy[["policy_hash_key", "policy_status", "policy_start_date", "policy_end_date", "sales_channel"]], on="policy_hash_key", how="left")
-            .merge(sat_claim[["claim_hash_key", "claim_reported_date", "claim_settlement_date", "claim_product", "claim_channel"]], on="claim_hash_key", how="left")
+            .merge(
+                sat_claim[[
+                    "claim_hash_key",
+                    "claim_reported_date",
+                    "claim_settlement_date",
+                    "claim_product",
+                    "claim_channel",
+                    "is_recovery_happened",
+                    "recovery_priority_score",
+                    "first_recovery_date",
+                    "last_recovery_date",
+                ]],
+                on="claim_hash_key",
+                how="left",
+            )
         )
         if (merged["policy_status"] != "ACTIVE").any():
             print("CLAIM CHECK FAILED: linked claim found on non-active policy")
@@ -341,6 +464,37 @@ def verify_enhanced_business_rules(frames: dict[str, pd.DataFrame]) -> int:
             != merged["sales_channel"].fillna("").astype(str).str.strip()
         ).any():
             print("CLAIM CHECK FAILED: claim_channel does not match linked policy sales_channel")
+            errors += 1
+        recovery_happened = merged["is_recovery_happened"].fillna("").astype(str).str.strip().str.upper()
+        recovery_priority = merged["recovery_priority_score"].fillna("").astype(str).str.strip()
+        priority_numeric = pd.to_numeric(recovery_priority, errors="coerce")
+        priority_bad = recovery_priority.eq("") | priority_numeric.isna()
+        if priority_bad.any():
+            print("CLAIM CHECK FAILED: recovery_priority_score must be populated integer")
+            errors += 1
+        first_recovery = parse_dt(merged["first_recovery_date"])
+        last_recovery = parse_dt(merged["last_recovery_date"])
+        missing_recovery_dates = first_recovery.isna() | last_recovery.isna()
+        if missing_recovery_dates.any():
+            print("CLAIM CHECK FAILED: first_recovery_date/last_recovery_date must be populated timestamps")
+            errors += 1
+        no_recovery = recovery_happened == "N"
+        has_recovery = recovery_happened == "Y"
+        no_recovery_bad = no_recovery & (
+            first_recovery.ne(RECOVERY_SENTINEL_TIMESTAMP)
+            | last_recovery.ne(RECOVERY_SENTINEL_TIMESTAMP)
+        )
+        if no_recovery_bad.any():
+            print("CLAIM CHECK FAILED: no-recovery claims must use 1900-01-01T00:00:00 recovery sentinel")
+            errors += 1
+        has_recovery_bad = has_recovery & (
+            first_recovery.eq(RECOVERY_SENTINEL_TIMESTAMP)
+            | last_recovery.eq(RECOVERY_SENTINEL_TIMESTAMP)
+            | (last_recovery < first_recovery)
+            | ((~reported.isna()) & (first_recovery < reported))
+        )
+        if has_recovery_bad.any():
+            print("CLAIM CHECK FAILED: recovery dates must follow claim lifecycle for recovery claims")
             errors += 1
 
     if not link_complaint_policy.empty and not sat_complaint.empty and not policy_lookup.empty:
@@ -414,7 +568,33 @@ def verify_enhanced_business_rules(frames: dict[str, pd.DataFrame]) -> int:
             print("OVERRIDE CHECK FAILED: blank override_commission on linked policy override")
             errors += 1
 
+    sat_insured_object = frames.get("sat_insured_object", pd.DataFrame())
+    if not sat_insured_object.empty and "insured_value" in sat_insured_object.columns:
+        insured_values = sat_insured_object["insured_value"].fillna("").astype(str).str.strip()
+        blank_count = int(insured_values.eq("").sum())
+        numeric_values = pd.to_numeric(insured_values, errors="coerce")
+        invalid_count = int((insured_values.ne("") & numeric_values.isna()).sum())
+        non_positive_count = int((numeric_values.fillna(0) <= 0).sum())
+        if blank_count or invalid_count or non_positive_count:
+            print(
+                "INSURED OBJECT CHECK FAILED: insured_value must be populated positive integer "
+                f"blank_rows={blank_count} invalid_rows={invalid_count} non_positive_rows={non_positive_count}"
+            )
+            errors += 1
+
     if not sat_regulation.empty:
+        if "is_regulation_on_time" in sat_regulation.columns:
+            invalid_count, sample_values = count_invalid_enum(
+                sat_regulation,
+                "is_regulation_on_time",
+                {"Y", "N"},
+            )
+            if invalid_count:
+                print(
+                    f"REGULATION CHECK FAILED: is_regulation_on_time invalid_rows={invalid_count} "
+                    f"sample={sample_values}"
+                )
+                errors += 1
         regs = sat_regulation[[
             "regulation_hash_key",
             "regulation_date_raised",
@@ -521,6 +701,8 @@ def verify_enhanced(base_path: str) -> bool:
         else:
             print(f"{child_table}->{parent_table}: FK ok")
 
+    errors += verify_timestamp_columns(frames, ddl)
+    errors += verify_numeric_columns(frames, ddl)
     errors += verify_base_enum_alignment(frames)
     errors += verify_base_timelines(frames)
     errors += verify_enhanced_business_rules(frames)

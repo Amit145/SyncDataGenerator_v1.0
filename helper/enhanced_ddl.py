@@ -7,8 +7,8 @@ from pathlib import Path
 ENHANCED_DDL_PATH = (
     Path(__file__).resolve().parents[1]
     / "enhanced_360"
-    / "update"
-    / "New_Enhanced Customer 360 Data Vault DDL.sql"
+    / "new"
+    / "newEnhanced Customer 360 Data Vault DDL.sql"
 )
 
 
@@ -17,6 +17,7 @@ def parse_enhanced_ddl(path: str | Path = ENHANCED_DDL_PATH) -> dict:
     text = ddl_path.read_text(encoding="utf-8")
 
     tables: dict[str, list[str]] = {}
+    column_types: dict[str, dict[str, str]] = {}
     for match in re.finditer(r"CREATE\s+TABLE\s+(\w+)\s*\((.*?)\);", text, flags=re.IGNORECASE | re.DOTALL):
         table_name = match.group(1).lower()
         body = match.group(2)
@@ -26,7 +27,9 @@ def parse_enhanced_ddl(path: str | Path = ENHANCED_DDL_PATH) -> dict:
             if not line or line.upper().startswith("CONSTRAINT"):
                 continue
             column_name = line.split()[0].strip('"').lower()
+            column_type = line.split()[1].strip().upper() if len(line.split()) > 1 else ""
             columns.append(column_name)
+            column_types.setdefault(table_name, {})[column_name] = column_type
         tables[table_name] = columns
 
     primary_keys: dict[str, list[str]] = {}
@@ -62,6 +65,7 @@ def parse_enhanced_ddl(path: str | Path = ENHANCED_DDL_PATH) -> dict:
 
     return {
         "tables": tables,
+        "column_types": column_types,
         "primary_keys": primary_keys,
         "foreign_keys": foreign_keys,
     }
