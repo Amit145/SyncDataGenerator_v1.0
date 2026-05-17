@@ -67,7 +67,7 @@ CANONICAL_RAW_SCHEMAS = {
         "_batch_id", "_extract_ts", "_source_system", "person_id", "customer_id",
         "policy_id", "quote_id", "product_id", "product_code", "cover_option",
         "declined_claims", "fraud_flag", "gross_revenue", "net_revenue",
-        "number_of_active_claim", "number_of_previous_claim", "policy_cicle",
+        "number_of_active_claim", "number_of_previous_claim", "policy_cycle",
         "policy_end_date", "policy_length", "policy_number", "policy_start_date",
         "policy_status", "renewal_amount_current_period",
         "renewal_amount_next_period", "renewal_date", "sales_channel",

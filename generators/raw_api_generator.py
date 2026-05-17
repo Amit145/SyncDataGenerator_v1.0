@@ -382,7 +382,7 @@ def write_raw_api_batch(base_folder, batch_id, ctx, source_dir_name="api", sourc
             "net_revenue": sat["Net Revenue"],
             "number_of_active_claim": sat["Number of Active Claim"],
             "number_of_previous_claim": sat["Number of Previous Claim"],
-            "policy_cicle": sat["Policy Cicle"],
+            "policy_cycle": sat["Policy Cycle"],
             "policy_end_date": sat["Policy End Date"],
             "policy_length": sat["Policy Length"],
             "policy_number": make_id(sat["Policy Number"]),

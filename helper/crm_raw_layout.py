@@ -120,7 +120,7 @@ CRM_RAW_COLUMN_MAP = {
     "fraud_flag": "fraud_ind",
     "number_of_active_claim": "active_claim_cnt",
     "number_of_previous_claim": "previous_claim_cnt",
-    "policy_cicle": "policy_cycle_no",
+    "policy_cycle": "policy_cycle_no",
     "policy_end_date": "policy_end_dt",
     "policy_length": "policy_term_months",
     "policy_number": "policy_no",

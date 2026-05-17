@@ -404,7 +404,7 @@ def map_claims_to_canonical(run_id: str, claims_raw_dir: str) -> str:
             "net_revenue": "",
             "number_of_active_claim": row.get("active_claim_cnt", ""),
             "number_of_previous_claim": row.get("previous_claim_cnt", ""),
-            "policy_cicle": "",
+            "policy_cycle": "",
             "policy_end_date": row.get("policy_end_dt", ""),
             "policy_length": "",
             "policy_number": row.get("claim_policy_ref", ""),

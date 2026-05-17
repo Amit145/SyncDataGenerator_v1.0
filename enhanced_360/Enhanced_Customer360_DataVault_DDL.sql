@@ -918,7 +918,7 @@ CREATE TABLE sat_policy
 	net_revenue DOUBLE,
 	number_of_active_claim INT,
 	number_of_previous_claim INT,
-	policy_cicle INT,
+	policy_cycle INT,
 	policy_end_date TIMESTAMP,
 	policy_length INT,
 	policy_number INT,

@@ -1055,7 +1055,7 @@ def sat_policy(
             "Net Revenue": net_revenue,
             "Number of Active Claim": active_claims,
             "Number of Previous Claim": previous_claims,
-            "Policy Cicle": random.randint(1, 5),
+            "Policy Cycle": random.randint(1, 5),
             "Policy End Date": policy_end.strftime("%Y-%m-%d %H:%M:%S"),
             "Policy Length": policy_length_months,
             "Policy Number": random.randint(1000000, 9999999),

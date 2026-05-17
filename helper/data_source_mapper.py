@@ -233,7 +233,7 @@ def map_data_source_to_canonical(run_id: str, source_dirs: dict[str, str]) -> st
                 "net_revenue": row.get("net_written_premium", ""),
                 "number_of_active_claim": row.get("open_claim_count", ""),
                 "number_of_previous_claim": row.get("historical_claim_count", ""),
-                "policy_cicle": row.get("policy_cycle_no", ""),
+                "policy_cycle": row.get("policy_cycle_no", ""),
                 "policy_end_date": row.get("policy_expiry_dt", ""),
                 "policy_length": row.get("term_months", ""),
                 "policy_number": row.get("source_policy_no", ""),
