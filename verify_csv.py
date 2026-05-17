@@ -3,6 +3,8 @@ import sys
 import calendar
 from decimal import Decimal, ROUND_HALF_UP
 import pandas as pd
+from pandas.errors import EmptyDataError
+from config.storage_paths import SILVER_REBUILT_ROOT, SILVER_API_ROOT, SILVER_KAGGLE_ROOT, SILVER_DATA_SOURCE_ROOT
 
 
 def read_csv_safe(base_path: str, file_name: str) -> pd.DataFrame:
@@ -11,7 +13,10 @@ def read_csv_safe(base_path: str, file_name: str) -> pd.DataFrame:
         print(f"missing file: {file_name}")
         return pd.DataFrame()
 
-    df = pd.read_csv(path)
+    try:
+        df = pd.read_csv(path)
+    except EmptyDataError:
+        return pd.DataFrame()
     df.columns = (
         df.columns.str.strip()
         .str.lower()
@@ -226,7 +231,7 @@ def main(base_path: str):
     for file_name, df in required_files.items():
         check_exists(df, file_name)
 
-    print("\n===== BASIC UNIQUENESS =====\n")
+    print(f"\n===== BASIC UNIQUENESS =====\n, {file_name}")
 
     assert_unique(hub_person, "person_hash_key", "hub_person")
     assert_unique(hub_nat, "natural_person_hash_key", "hub_natural_person")
@@ -809,9 +814,10 @@ def main(base_path: str):
         else:
             print("customer_rating_range valid")
 
+        rating_compare = customer_eval["customer_rating"].astype("Int64")
         bad_rating = customer_eval[
             customer_eval["customer_rating"].notna()
-            & (customer_eval["customer_rating"].astype(int) != customer_eval["expected_customer_rating"])
+            & (rating_compare != customer_eval["expected_customer_rating"])
         ]
         if not bad_rating.empty:
             print(f"customer_rating error: {len(bad_rating)} rows do not match rating rules")
@@ -1124,8 +1130,7 @@ def main(base_path: str):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        target_path = sys.argv[1]
-    else:
-        target_path = "synthetic_data/20260318_095608_42"
-    main(target_path)
+    dirs = [SILVER_REBUILT_ROOT,SILVER_API_ROOT,SILVER_KAGGLE_ROOT,SILVER_DATA_SOURCE_ROOT]
+    for target_path in dirs:
+        print(target_path)
+        main(target_path)

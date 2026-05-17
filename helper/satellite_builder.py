@@ -960,7 +960,7 @@ def sat_policy(
     rows = []
     biz_start = _as_date(business_start_date)
     load_dt = _coerce_datetime(load_date)
-    as_of_dt = _coerce_datetime(as_of_date) if as_of_date else datetime.now().replace(microsecond=0)
+    as_of_dt = _coerce_datetime(as_of_date) if as_of_date else load_dt
     as_of_dt = min(as_of_dt, load_dt)
 
     for hk in policy_hks:
@@ -1055,7 +1055,7 @@ def sat_policy(
             "Net Revenue": net_revenue,
             "Number of Active Claim": active_claims,
             "Number of Previous Claim": previous_claims,
-            "Policy Cicle": random.randint(1, 5),
+            "Policy Cycle": random.randint(1, 5),
             "Policy End Date": policy_end.strftime("%Y-%m-%d %H:%M:%S"),
             "Policy Length": policy_length_months,
             "Policy Number": random.randint(1000000, 9999999),

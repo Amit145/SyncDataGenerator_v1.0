@@ -1,305 +1,348 @@
-# SyncDataGenerator v1.0
-
-Synthetic Data Vault-style data generator for hubs, links, satellites, validations, and SCD2-style updates.
-
-This README is the root-level operational guide. The detailed technical rulebook is in:
-
-- `docs/end_to_end_generation_rules.md`
-
-
-## 1. What This Project Does
-
-The generator creates synthetic CSV data for a Data Vault-style model including:
-
-- hubs
-- links
-- satellites
-- normalized output copies
-- SCD2-style satellite changes
-- updated SCD2 change sets
-- comparison output between original and updated SCD2 rows
-
-Primary orchestration entry point:
-
-- `main.py`
-
-
-## 2. High-Level Flow
-
-Implemented business flow:
-
-`Person`
--> `Natural Person` or `Legal Person`
--> `Contact`, `Identities`, `Home Address`
--> `Lead`
--> `Consent`
--> `Marketing Preference`
--> `Marketing Engagement`
--> `Quote`
--> `Policy`
--> `Account`
--> `Customer`
--> `Motor` or `Home`
-
-Important behavior:
-
-- all persons get contact, identity, and person-level home address
-- only leads get consent, marketing, and quotes
-- only policy holders get customer and account
-- products and assets are assigned from policy/product meaning
-
-
-## 3. Main Files
-
-Core generation:
-
-- `main.py`
-- `helper/hub_builder.py`
-- `helper/link_builder.py`
-- `helper/satellite_builder.py`
-
-Generators:
-
-- `generators/person_generator.py`
-- `generators/lifecycle_generator.py`
-- `generators/supporting_generator.py`
-- `generators/product_generator.py`
-- `generators/transaction_generator.py`
-
-Validation:
-
-- `verify_csv.py`
-- `validators/integrity_checker.py`
-
-SCD2-related:
-
-- `helper/scd2_generator.py`
-- `update_scd2_records.py`
-- `compare_scd2_updates.py`
-
-Configuration:
-
-- `config/scenario_v1.json`
-- `config/cardinality.json`
-- `enums/product_catalog.py`
-- `enums/sat_enums.py`
-
-
-## 4. Product Catalog
-
-Product definitions and weights are centralized in:
-
-- `enums/product_catalog.py`
-
-Current categories:
-
-- `NATURAL`
-  - `PRD_MOTOR_PERSONAL`
-  - `PRD_HOME_PERSONAL`
-  - `PRD_HEALTH_PERSONAL`
-- `LEGAL`
-  - `PRD_COMMERCIAL_MOTOR`
-  - `PRD_PROPERTY_COMMERCIAL`
-
-`Hub_Product.Product Id` now uses the same generated business ID format as other hubs.
-
-Semantic product meaning is preserved in:
-
-- `Sat_Product.Type`
-
-
-## 5. Current Business Rules
-
-### Person and subtype
-
-- every person is exactly one of:
-  - natural
-  - legal
-
-### Lead and consent
-
-- `Sat_Person.Is Lead = Y` only if person has `Link_Person_Lead`
-- `Sat_Person.Operational Paperless Consent = Y` only if person has `Link_Person_Consent`
-
-### Quote rules
-
-- only leads can have quotes
-- every quote links to exactly one person
-- every quote links to exactly one product
-
-### Policy rules
-
-- policies are created from quotes
-- first policy tenure is `1 year`
-- `Policy Length = 12`
-- `Policy Start Date = latest lead converted date + 1 to 90 days`
-- `Policy End Date = Policy Start Date + 1 year` for non-cancelled policies
-- `Renewal Date = Policy End Date - 0 to 10 days`
-- `Renewal Amount Next Period = Renewal Amount Current Period * 1.01`
-- statuses used:
-  - `ACTIVE`
-  - `LAPSED`
-  - `CANCELLED`
-
-Status meaning:
-
-- `ACTIVE` if policy end is after policy load date
-- `LAPSED` if policy end is on/before policy load date
-- `CANCELLED` for early-cancelled policies
-
-### Account lifecycle rules
-
-Account statuses:
-
-- `OPEN`
-- `SUSPENDED`
-- `CLOSED`
-
-Lifecycle behavior:
-
-- account dates are kept on or before account load date
-- `OPEN` accounts keep access on/after last change
-- `SUSPENDED` and `CLOSED` keep access on/before last change
-- non-open account holders cannot have `ACTIVE` policies
-
-
-## 6. Load Dates and Business Dates
-
-Load dates:
-
-- hub, link, and satellite load dates include `HH:MM:SS`
-- sequencing is:
-  - `Hub Load Date < Link Load Date < Sat Load Date`
-
-Historical business dates are capped to satellite load date:
-
-- `Lead Converted Date <= Sat_Lead.Load Date`
-- `Policy Start Date <= Sat_Policy.Load Date`
-- `Customer Since <= Sat_Customer.Load Date`
-- `Legal Person Converted Date <= Sat_Legal_Person.Load Date`
-- `Date of Constitution <= Sat_Legal_Person.Load Date`
-- `Birth Date <= Sat_Natural_Person.Load Date`
-
-Dates that may be after load date:
-
-- `Policy End Date`
-- `Renewal Date`
-
-
-## 7. Timeline Rules
-
-Currently validated timelines:
-
-- `Lead Converted Date < Policy Start Date < Policy End Date`
-- lead-to-policy conversion window is `1 to 90 days`
-- policy renewal window is `0 to 10 days` before end date
-- non-cancelled policy duration is exactly `1 year`
-- renewal uplift is exactly `1%`
-
-
-## 8. Validation
-
-Primary validator:
-
-- `verify_csv.py`
-
-It checks:
-
-- required files exist
-- hub uniqueness
-- person subtype correctness
-- link cardinality rules
-- quote rules
-- policy rules
-- lead-dependent rules
-- policy-holder customer/account rules
-- product/asset sanity
-- `Sat_Person` flag consistency
-- load date sequence
-- historical business dates before load date
-- policy annual duration
-- renewal window
-- renewal uplift
-- policy status timeline
-- account lifecycle rules
-- account-to-policy lifecycle consistency
-
-
-## 9. Output Folders
-
-Generated raw output:
-
-- `output/<run_id>`
-
-Normalized output:
-
-- `synthetic_data/<run_id>`
-
-Generated SCD2-style delta output:
-
-- `scd2_sat/<run_id>`
-
-Updated SCD2 output:
-
-- `scd2_updated/<run_id>`
-
-
-## 10. Commands
-
-Generate a run:
-
-```bash
-python main.py
+# SyncDataGenerator
+
+This repo generates synthetic insurance data across multiple raw sources, maps selected sources into a common raw contract, builds vault-compatible silver tables, and creates SCD2 outputs.
+
+## Current Synthetic Model
+
+Implemented synthetic outputs:
+- base 360
+- enhanced 360
+- source-specific `new_outputs_src`
+
+Base output:
+- `data/output/<run_id>`
+- `data/synthetic/base/<run_id>`
+- `data/scd2/base/<run_id>`
+
+Enhanced output:
+- `data/synthetic/enhanced/<run_id>`
+- `data/scd2/enhanced/<run_id>`
+
+## Current Source Model
+
+Implemented sources:
+- `crm`
+- `api`
+- `kaggle`
+- `data_source`
+- `new_outputs_src/crm`
+- `new_outputs_src/adp`
+- `new_outputs_src/transunion`
+- `new_outputs_src/experian`
+
+Current behavior:
+- `crm` is generated from the main synthetic context.
+- `api` is generated from its own independent synthetic context.
+- `data_source` is generated from its own independent synthetic context.
+- `kaggle` is external-input-driven and uses files under `data/input/kaggle`.
+
+Important:
+- `crm`, `api`, and `data_source` use the same configured scenario size each.
+- They do not reuse the same raw business IDs.
+- `data_source` still has source-shaped `motor` and `home` extracts, so its file row counts differ from `crm` and `api`.
+
+## Main Commands
+
+Run the main base-load generation:
+
+```powershell
+$env:PYTHONUTF8='1'
+python .\main.py
 ```
 
-Validate a run:
+What `main.py` creates:
+- normalized vault-style output under `data/output/<run_id>`
+- normalized enhanced vault-style output under `data/synthetic/enhanced/<run_id>`
+- raw `crm`
+- raw `api`
+- raw `data_source` source-native extracts
+- raw `data_source` canonical raw
+- raw `kaggle` if Kaggle input data exists
+- `new_outputs_src` source-specific outputs
+- raw SCD2 for `crm`, `api`, and `kaggle` when a previous run exists
+- source-specific SCD2 under `data/new_outputs_src/<source>/scd2/<run_id>` when previous source batches exist
+- silver `api`
+- normalized synthetic base output
+- base SCD2 when a previous normalized run exists
+- enhanced SCD2 when a previous enhanced run exists
 
-```bash
-python verify_csv.py synthetic_data/<run_id>
+Transform all latest raw sources to silver:
+
+```powershell
+python .\misc\transform_all_raw_to_silver.py
 ```
 
-Validate default configured folder:
+This builds silver for:
+- `crm`
+- `api`
+- `kaggle`
+- `data_source`
 
-```bash
-python verify_csv.py
+Verify all latest silver folders:
+
+```powershell
+python .\misc\verify_all_silver.py
 ```
 
-Update existing SCD2 rows into a new folder:
+Run only `data_source` raw -> canonical raw -> silver:
 
-```bash
-python update_scd2_records.py --input scd2_sat/<run_id>
+```powershell
+python .\misc\data_source_to_silver.py
 ```
 
-Compare original and updated SCD2 rows:
+Skip `data_source` silver verification:
 
-```bash
-python compare_scd2_updates.py --original scd2_sat/<run_id> --updated scd2_updated/<run_id>
+```powershell
+python .\misc\data_source_to_silver.py --skip-verify
 ```
 
+Verify one silver folder directly:
 
-## 11. Configuration Files
+```powershell
+python .\verify_csv.py <silver_folder_path>
+```
 
-Main runtime config:
+## Config Inputs
 
+Primary scenario config:
 - `config/scenario_v1.json`
 
-Link cardinality config:
+Storage root definitions:
+- `config/storage_paths.py`
 
-- `config/cardinality.json`
+Kaggle mapping configs:
+- `config/kaggle_mappings/*.json`
 
-Product catalog:
+Kaggle input landing:
+- `data/input/kaggle/<dataset_name>/...`
 
-- `enums/product_catalog.py`
+## Output Folders
 
-Satellite enum values:
+Main normalized output:
+- `data/output/<run_id>`
 
-- `enums/sat_enums.py`
+Raw folders:
+- `data/raw/crm/<run_id>`
+- `data/raw/api/<run_id>`
+- `data/raw/kaggle/<dataset_name>/<run_id>`
+- `data/raw/data_source/motor/<run_id>`
+- `data/raw/data_source/home/<run_id>`
+- `data/raw/data_source_canonical/<run_id>`
+- `data/new_outputs_src/crm/data/<run_id>`
+- `data/new_outputs_src/adp/data/<run_id>`
+- `data/new_outputs_src/transunion/data/<run_id>`
+- `data/new_outputs_src/experian/data/<run_id>`
 
+Silver folders:
+- `data/silver/rebuild/<run_id>` for `crm`
+- `data/silver/api/<run_id>`
+- `data/silver/kaggle/<run_id>`
+- `data/silver/data_source/<run_id>`
 
-## 12. Notes
+Synthetic normalized base:
+- `data/synthetic/base/<run_id>`
+- `data/synthetic/enhanced/<run_id>`
 
-- customer creation is currently driven by policy-holder status
-- some lifecycle config exists beyond what is currently used in final customer generation
-- renewal is represented on the same policy row, not as a separate renewed policy term row
-- the technical source of truth for implemented rules is:
-  - `docs/end_to_end_generation_rules.md`
+SCD2 folders:
+- `data/scd2/base/<run_id>`
+- `data/scd2/enhanced/<run_id>`
+- `data/scd2/raw/crm/<run_id>`
+- `data/scd2/raw/api/<run_id>`
+- `data/scd2/raw/kaggle/<dataset_name>/<run_id>`
+- `data/new_outputs_src/<source>/scd2/<run_id>`
+
+## Raw Layer Logic
+
+### new_outputs_src
+
+Generated by:
+- `helper/new_outputs_src.py`
+
+Output shape:
+- `crm`: CRM-style CSV
+- `adp`: API-style JSONL
+- `transunion`: CRM-style CSV
+- `experian`: CRM-style CSV
+
+Behavior:
+- all four sources are generated per run
+- each source has its own `data/<run_id>` folder
+- each source can generate its own `scd2/<run_id>` on later runs
+- source markers are carried inside the records:
+  - `CRM`
+  - `ADP`
+  - `TRANSUNION`
+  - `EXPERIAN`
+
+### CRM raw
+
+Generated by:
+- `generators/raw_crm_generator.py`
+
+Output shape:
+- canonical CRM-style CSV files such as `crm_person.csv`, `crm_policy.csv`, `crm_motor.csv`
+
+### API raw
+
+Generated by:
+- `generators/raw_api_generator.py`
+
+Output shape:
+- source-native JSONL files such as `person.jsonl`, `policy.jsonl`
+
+Behavior:
+- generated from its own independent synthetic context
+- uses API-specific source IDs
+
+### Kaggle raw
+
+Generated by:
+- `generators/raw_kaggle_generator.py`
+
+Output shape:
+- canonical raw CSV files matching the common raw-to-silver contract
+
+Behavior:
+- driven by external dataset contents, not by scenario population
+
+### data_source raw
+
+Generated by:
+- `generators/raw_data_source_generator.py`
+
+Output shape:
+- source-native extract CSVs:
+  - `motor_party_extract.csv`
+  - `motor_policy_extract.csv`
+  - `motor_vehicle_extract.csv`
+  - `home_party_extract.csv`
+  - `home_policy_extract.csv`
+  - `home_property_extract.csv`
+
+Behavior:
+- generated from its own independent synthetic context
+- not derived from CRM raw in the active run paths
+
+### data_source canonical raw
+
+Generated by:
+- `helper/data_source_mapper.py`
+
+Purpose:
+- maps `data_source` source-native files into the common canonical raw schema used by the shared silver builder
+
+Output shape:
+- canonical CRM-style CSV files such as `crm_person.csv`, `crm_policy.csv`
+
+## Silver Logic
+
+Shared silver builder:
+- `misc/raw_to_silver_sample.py`
+
+API wrapper:
+- `helper/api_silver_builder.py`
+
+Current silver behavior:
+- one common vault-compatible silver transformation path
+- supports canonical CSV raw and API JSONL raw
+- carries source information into `record_source`
+
+Silver verification:
+- `verify_csv.py`
+
+## Run Flow
+
+### First run
+
+On the first run:
+- `main.py` generates normalized output and current raw outputs
+- `main.py` generates enhanced synthetic output
+- `main.py` generates `new_outputs_src`
+- `main.py` builds API silver
+- `main.py` maps `data_source` raw into canonical raw
+- `main.py` does not automatically build CRM, Kaggle, or `data_source` silver
+- raw SCD2 is skipped if there is no previous raw batch
+- base SCD2 is skipped if there is no previous normalized base batch
+- enhanced SCD2 is skipped if there is no previous enhanced batch
+
+Recommended sequence:
+
+```powershell
+$env:PYTHONUTF8='1'
+python .\main.py
+python .\misc\transform_all_raw_to_silver.py
+python .\misc\verify_all_silver.py
+```
+
+### Second run and later
+
+On later runs:
+- `main.py` generates a new `run_id`
+- `crm`, `api`, `data_source`, and optional `kaggle` raw are regenerated
+- `new_outputs_src` batches are regenerated
+- API silver is rebuilt for the current run in `main.py`
+- raw SCD2 is generated by diffing current vs previous raw batches for:
+  - `crm`
+  - `api`
+  - `kaggle`
+- source-specific SCD2 is generated for:
+  - `new_outputs_src/crm`
+  - `new_outputs_src/adp`
+  - `new_outputs_src/transunion`
+  - `new_outputs_src/experian`
+- base SCD2 is generated by diffing normalized base satellite outputs
+- enhanced SCD2 is generated by diffing prior enhanced synthetic runs
+
+Then run:
+
+```powershell
+python .\misc\transform_all_raw_to_silver.py
+python .\misc\verify_all_silver.py
+```
+
+## SCD2 Coverage
+
+Base SCD2:
+- generated by `helper/scd2_generator.py`
+- output under `data/scd2/base/<run_id>`
+
+Enhanced SCD2:
+- generated by `helper/scd2_generator.py`
+- output under `data/scd2/enhanced/<run_id>`
+
+Raw SCD2:
+- generated by `helper/raw_scd2_generator.py`
+- currently covers:
+  - `crm`
+  - `api`
+  - `kaggle`
+
+Current limitation:
+- raw SCD2 for `data_source` is not implemented
+
+Source-specific SCD2:
+- generated by `helper/new_outputs_src.py`
+- covers:
+  - `crm`
+  - `adp`
+  - `transunion`
+  - `experian`
+
+## Databricks Notebook Support
+
+Notebook silver transformation:
+- `notebook/bsnew.ipynb`
+
+Supported notebook source schemas:
+- `crm`
+- `api`
+- `kaggle`
+- `data_source`
+
+## Notes
+
+- `load_config()` resolves `config/scenario_v1.json` relative to the repo, so scripts can be run from different working directories.
+- `main.py` prints Unicode to console, so using `PYTHONUTF8=1` is recommended on Windows.
+- `data_source` and `kaggle` canonical raw no longer include `_dataset_name`.
+- `data_source` source-native raw now populates `_extract_ts`.
+- enhanced-specific rules and verification are documented in `docs/enhanced_synthetic_plan.md`.

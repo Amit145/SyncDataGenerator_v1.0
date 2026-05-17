@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 
 import pandas as pd
+from config.storage_paths import SCD2_BASE_ROOT, SCD2_UPDATED_ROOT
 
 
 def resolve_latest_run(base_dir: Path) -> Path:
@@ -142,12 +143,12 @@ def print_results(results):
 
 def main():
     parser = argparse.ArgumentParser(description="Compare original SCD2 rows with updated SCD2 rows.")
-    parser.add_argument("--original", dest="original_folder", help="Original SCD2 folder, e.g. scd2_sat/<run_id>")
-    parser.add_argument("--updated", dest="updated_folder", help="Updated SCD2 folder, e.g. scd2_updated/<run_id>")
+    parser.add_argument("--original", dest="original_folder", help="Original SCD2 folder, e.g. data/scd2/base/<run_id>")
+    parser.add_argument("--updated", dest="updated_folder", help="Updated SCD2 folder, e.g. data/scd2/updated/<run_id>")
     args = parser.parse_args()
 
-    original_folder = Path(args.original_folder) if args.original_folder else resolve_latest_run(Path("scd2_sat"))
-    updated_folder = Path(args.updated_folder) if args.updated_folder else Path("scd2_updated") / original_folder.name
+    original_folder = Path(args.original_folder) if args.original_folder else resolve_latest_run(Path(SCD2_BASE_ROOT))
+    updated_folder = Path(args.updated_folder) if args.updated_folder else Path(SCD2_UPDATED_ROOT) / original_folder.name
 
     results = compare_runs(str(original_folder), str(updated_folder))
     print_results(results)

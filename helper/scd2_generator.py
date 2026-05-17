@@ -11,7 +11,7 @@ from enums.sat_enums import SAT_ENUMS
 
 fake = Faker("en_GB")
 
-CHANGE_PERCENT = 0.001
+CHANGE_PERCENT = 0.10
 
 MUTATION_COLUMNS = {
     "sat_account.csv": ["account_status"],
@@ -19,7 +19,7 @@ MUTATION_COLUMNS = {
     "sat_contact.csv": ["personal_email"],
     "sat_customer.csv": ["customer_status_reason"],
     "sat_home.csv": [],
-    "sat_home_address.csv": ["street"],
+    "sat_address.csv": ["street"],
     "sat_identities.csv": [],
     "sat_lead.csv": ["preferred_contact_method"],
     "sat_legal_person.csv": [],
@@ -31,6 +31,14 @@ MUTATION_COLUMNS = {
     "sat_policy.csv": ["cover_option"],
     "sat_product.csv": [],
     "sat_quote.csv": ["renewal_amt_next_period"],
+    "sat_broker.csv": ["agent_net_promoter_score"],
+    "sat_campaign.csv": ["campaign_status"],
+    "sat_channel.csv": ["channel_type"],
+    "sat_claim.csv": ["claim_status"],
+    "sat_complaint.csv": ["complaint_status"],
+    "sat_override.csv": ["override_reason"],
+    "sat_regulation.csv": ["regulation_compliance_status"],
+    "sat_insured_object.csv": ["insured_object_current_status"],
 }
 
 
@@ -59,6 +67,31 @@ def _mutate_value(series: pd.Series, value, column_name: str, csv_file: Path):
         return pd.Timestamp.now()
 
     return value
+
+
+def _yn(value, default="N") -> str:
+    if pd.isna(value):
+        return default
+    text = str(value).strip().upper()
+    if text in {"Y", "YES", "TRUE", "T"}:
+        return "Y"
+    if text in {"N", "NO", "FALSE", "F"}:
+        return "N"
+    try:
+        return "Y" if float(text.replace(",", "")) > 0 else "N"
+    except ValueError:
+        return default
+
+
+def _normalize_schema(file_name: str, df: pd.DataFrame) -> pd.DataFrame:
+    if file_name != "sat_campaign.csv":
+        return df
+    if "number_of_is_active" not in df.columns:
+        return df
+
+    normalized = df.rename(columns={"number_of_is_active": "is_active"}).copy()
+    normalized["is_active"] = normalized["is_active"].map(_yn)
+    return normalized
 
 
 def _get_key_column(df: pd.DataFrame) -> str | None:
@@ -104,7 +137,8 @@ def _load_latest_versions_from_history(history_root: Path, exclude_run_name: str
         else:
             latest = combined.drop_duplicates(subset=[key_column], keep="last")
 
-        result[file_name] = latest.drop(columns=["__source_run__"], errors="ignore")
+        latest = latest.drop(columns=["__source_run__"], errors="ignore")
+        result[file_name] = _normalize_schema(file_name, latest)
 
     return result
 
@@ -112,7 +146,7 @@ def _load_latest_versions_from_history(history_root: Path, exclude_run_name: str
 def _load_input_frames(input_folder: Path, exclude_run_name: str | None = None) -> dict[str, pd.DataFrame]:
     if any(input_folder.glob("sat_*.csv")):
         return {
-            csv_file.name: pd.read_csv(csv_file)
+            csv_file.name: _normalize_schema(csv_file.name, pd.read_csv(csv_file))
             for csv_file in input_folder.glob("sat_*.csv")
         }
 

@@ -7,6 +7,10 @@ def get_run_id(seed: int):
     return f"{ts}_{seed}"
 
 
+def get_folder_run_id():
+    return datetime.now().strftime("%Y%m%d%H%M%S")
+
+
 def md5_hasher(value: str) -> str:
     return hashlib.md5(value.encode("utf-8")).hexdigest()
 

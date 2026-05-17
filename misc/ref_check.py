@@ -1,20 +1,25 @@
 import os
 import pandas as pd
+from config.runConfig import OUTPUT_BASE
 
-BASE = r"output"
+BASE = OUTPUT_BASE
 
 
 def latest_run():
     if not os.path.exists(BASE):
         return None
-    return max(
-        (os.path.join(BASE, d) for d in os.listdir(BASE) if os.path.isdir(os.path.join(BASE, d))),
-        key=os.path.getmtime
-    )
+    runs = [
+        os.path.join(BASE, d)
+        for d in os.listdir(BASE)
+        if os.path.isdir(os.path.join(BASE, d))
+    ]
+    if not runs:
+        return None
+    return max(runs, key=os.path.getmtime)
 
 def second_latest_run():
     runs = [
-        os.path.join('output', d) for d in os.listdir('output') if os.path.isdir(os.path.join('output',d))
+        os.path.join(BASE, d) for d in os.listdir(BASE) if os.path.isdir(os.path.join(BASE, d))
     ]
 
     if len(runs) < 2:
