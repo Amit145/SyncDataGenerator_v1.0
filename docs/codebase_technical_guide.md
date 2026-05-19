@@ -361,7 +361,10 @@ Policy and renewal:
 - non-cancelled policies are annual policies
 - renewal date is a field on `sat_policy`, not a separate renewal-policy row
 - renewal date is near policy end date and must not be after policy end date
+- renewal current/next amounts follow churn movement bands rather than a fixed uplift
 - account state can force a policy out of active status
+- policy cycle is standardized as `policy_cycle`; the legacy misspelled column name is not used
+- churn-available and proxy fields are generated once in base satellites and reused by CRM, API, data-source, canonical raw, silver, and enhanced outputs
 
 Campaign:
 

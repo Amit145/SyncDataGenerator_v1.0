@@ -226,6 +226,9 @@ Lifecycle rules:
 - policy products inherit quote products
 - policy holders become customers and accounts
 - renewal is represented as fields on `sat_policy`, not as a new policy term row
+- renewal current/next amounts follow churn movement bands, including decreases and higher uplifts
+- policy cycle is standardized as `policy_cycle`; do not emit the legacy misspelled column name
+- churn available/proxy fields from `new_rules/Data Req Churn NPS.xlsx` are enforced in base satellite generation before source-specific raw outputs are written
 - campaign rows link to lead persons and enrich the lead journey
 - insured objects are derived from policy-linked motor/home assets
 - insured object value is a positive integer derived from linked enhanced policy sum insured, with object-type fallback values when policy sum insured is unavailable

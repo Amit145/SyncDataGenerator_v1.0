@@ -343,9 +343,10 @@ Rules:
 
 The current generator enforces these policy rules:
 
-- first policy tenure is `1 year`
+- policy terms are annual; customer tenure is represented by `Policy Cycle`
 - `Policy Length = 12`
 - `Policy Start Date = latest Lead Converted Date + 1 to 90 days` when lead history exists
+- a controlled portion of lead conversions is sampled from older history so churn tenure covers `<1`, `1-2`, `3-5`, and `>5` completed-cycle bands
 - fallback policies without usable lead history still get a valid start date capped by policy satellite load date
 - non-cancelled policies have:
   - `Policy End Date = Policy Start Date + 1 year`
@@ -356,7 +357,7 @@ The current generator enforces these policy rules:
   - `ACTIVE` if `Policy End Date > policy satellite Load Date`
   - `LAPSED` if `Policy End Date <= policy satellite Load Date`
 - `Renewal Date = Policy End Date - 0 to 10 days`
-- `Renewal Amount Next Period = Renewal Amount Current Period * 1.01`
+- `Renewal Amount Next Period` is sampled from churn-rule renewal movement bands: decrease, `0-5%`, `5-10%`, and `>10%`
 
 Important clarification:
 
@@ -367,6 +368,8 @@ Important clarification:
   - `LAPSED`
   - `CANCELLED`
 - `EXPIRED` is not currently used
+- `Policy Cycle` is emitted as `policy_cycle` in raw, silver, metadata, and Vault DDL outputs
+- the legacy misspelled policy-cycle column name is not supported
 
 ### `Sat_Policy.Fraud Flag`
 
@@ -392,6 +395,27 @@ Dependency direction:
 - policy and account risk signals are generated first
 - `Fraud Flag` is then derived from those signals
 - customer segment and customer rating use the resulting fraud flag as a negative input
+
+### Churn feature source fields
+
+Available and proxy churn-rule fields from `new_rules/Data Req Churn NPS.xlsx` are generated at the base satellite layer so CRM, API, data-source, canonical raw, silver, and enhanced outputs inherit the same values.
+
+Current implemented fields:
+
+- renewal premium current and next amounts produce decreases, `0-5%`, `5-10%`, and `>10%` renewal movement bands
+- `Policy Cycle` is derived from policy start date to snapshot/load date as completed annual cycles
+- active, previous, and declined claim counts are generated from a total recent-claims distribution
+- current premium amount is banded through the generated renewal current amount
+- `Cover Option` uses add-on-count categories: `BASE_ONLY`, `ONE_ADD_ON`, `TWO_ADD_ONS`, `THREE_PLUS_ADD_ONS`
+- `Vehicle Model` is generated from standard, premium, and high-risk vehicle groups
+- marketing preference flags represent the email/SMS engagement proxy, from no opted-in channels through high engagement
+- `Call` in marketing preference represents the customer-service call-frequency proxy
+- `Birth Date` is generated with driver-experience proxy bands because no licence issue date is available
+
+Validation:
+
+- `verify_csv.py` checks the churn source-field logic, expected distribution bands, example-value bands, and business-rule direction implied by workbook columns G, H, I, and J
+- distribution validation requires representative row counts before enforcing full band coverage
 
 
 ## 12. Customer and Account Rules

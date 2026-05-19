@@ -159,6 +159,232 @@ def currency_round(value) -> Decimal | None:
     return Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
+def _print_rule_result(label: str, errors: list[str], sample=None):
+    if errors:
+        print(f"{label} error: {'; '.join(errors)}")
+        if sample is not None:
+            print("sample:", sample)
+        return False
+    print(f"{label} valid")
+    return True
+
+
+def _band_counts(values: pd.Series, band_fn) -> dict:
+    counts = {}
+    for value in values.dropna():
+        band = band_fn(value)
+        counts[band] = counts.get(band, 0) + 1
+    return counts
+
+
+def _require_band_coverage(label: str, counts: dict, required_bands: set, total_rows: int, min_rows: int = 100):
+    if total_rows < min_rows:
+        print(f"{label} distribution skipped: rows={total_rows}, need>={min_rows}")
+        return True
+    missing = sorted(required_bands - {band for band, count in counts.items() if count > 0})
+    if missing:
+        print(f"{label} distribution error: missing bands={missing}, counts={counts}")
+        return False
+    print(f"{label} distribution valid: {counts}")
+    return True
+
+
+def verify_churn_rule_fields(sat_policy: pd.DataFrame, sat_natural_person: pd.DataFrame, sat_mpr: pd.DataFrame, sat_motor: pd.DataFrame):
+    print("\n===== CHURN RULE FIELD VALIDATION =====\n")
+
+    if sat_policy.empty:
+        print("churn_policy_rules skipped: sat_policy empty")
+    else:
+        policy_cols = {
+            "policy_hash_key",
+            "policy_start_date",
+            "load_date",
+            "renewal_amount_current_period",
+            "renewal_amount_next_period",
+            "number_of_active_claim",
+            "number_of_previous_claim",
+            "declined_claims",
+            "policy_cycle",
+            "cover_option",
+        }
+        missing = policy_cols - set(sat_policy.columns)
+        if missing:
+            print(f"churn_policy_rules skipped: missing columns {sorted(missing)}")
+        else:
+            policy = sat_policy[list(policy_cols)].copy()
+            policy["policy_start_date"] = parse_dt(policy["policy_start_date"])
+            policy["load_date"] = parse_dt(policy["load_date"])
+            numeric_cols = [
+                "renewal_amount_current_period",
+                "renewal_amount_next_period",
+                "number_of_active_claim",
+                "number_of_previous_claim",
+                "declined_claims",
+                "policy_cycle",
+            ]
+            for col in numeric_cols:
+                policy[col] = pd.to_numeric(policy[col], errors="coerce")
+
+            current = policy["renewal_amount_current_period"]
+            next_premium = policy["renewal_amount_next_period"]
+            pct_change = ((next_premium - current) / current) * 100
+            delta = next_premium - current
+            premium_valid = current.notna() & next_premium.notna() & (current > 0) & (next_premium >= 0)
+            bad_premium = policy[~premium_valid]
+            _print_rule_result(
+                "churn_renewal_premium_logic",
+                [f"{len(bad_premium)} rows have invalid current/next premiums"] if not bad_premium.empty else [],
+                bad_premium[["policy_hash_key", "renewal_amount_current_period", "renewal_amount_next_period"]].head(10).to_dict("records") if not bad_premium.empty else None,
+            )
+            _require_band_coverage(
+                "churn_renewal_pct",
+                _band_counts(pct_change[premium_valid], lambda v: "<0%" if v < 0 else "0-5%" if v <= 5 else "5-10%" if v <= 10 else ">10%"),
+                {"<0%", "0-5%", "5-10%", ">10%"},
+                int(premium_valid.sum()),
+            )
+            _require_band_coverage(
+                "churn_renewal_abs",
+                _band_counts(delta[premium_valid], lambda v: "<=0" if v <= 0 else "1-50" if v <= 50 else "51-100" if v <= 100 else ">100"),
+                {"<=0", "1-50", "51-100", ">100"},
+                int(premium_valid.sum()),
+            )
+            _require_band_coverage(
+                "churn_current_premium",
+                _band_counts(current[current.notna()], lambda v: "LOW" if v <= 600 else "MEDIUM" if v <= 900 else "HIGH" if v <= 1200 else "VERY_HIGH"),
+                {"LOW", "MEDIUM", "HIGH", "VERY_HIGH"},
+                int(current.notna().sum()),
+            )
+
+            total_claims = (
+                policy["number_of_active_claim"].fillna(0)
+                + policy["number_of_previous_claim"].fillna(0)
+                + policy["declined_claims"].fillna(0)
+            )
+            bad_claims = policy[(total_claims < 0) | (total_claims > 5)]
+            _print_rule_result(
+                "churn_claim_count_logic",
+                [f"{len(bad_claims)} rows outside generated 0-5 claim range"] if not bad_claims.empty else [],
+                bad_claims[["policy_hash_key", "number_of_active_claim", "number_of_previous_claim", "declined_claims"]].head(10).to_dict("records") if not bad_claims.empty else None,
+            )
+            _require_band_coverage(
+                "churn_claim_count",
+                _band_counts(total_claims, lambda v: "3+" if v >= 3 else str(int(v))),
+                {"0", "1", "2", "3+"},
+                len(total_claims),
+            )
+
+            expected_cycle = pd.Series([
+                ((ld.date() - ps.date()).days // 365) if pd.notna(ld) and pd.notna(ps) else None
+                for ld, ps in zip(policy["load_date"], policy["policy_start_date"])
+            ], index=policy.index, dtype="float64")
+            cycle_valid = policy["policy_cycle"].eq(expected_cycle)
+            bad_cycle = policy[~cycle_valid.fillna(False)]
+            _print_rule_result(
+                "churn_policy_cycle_logic",
+                [f"{len(bad_cycle)} rows do not match completed annual cycles"] if not bad_cycle.empty else [],
+                bad_cycle[["policy_hash_key", "policy_start_date", "load_date", "policy_cycle"]].head(10).to_dict("records") if not bad_cycle.empty else None,
+            )
+            _require_band_coverage(
+                "churn_tenure",
+                _band_counts(policy["policy_cycle"], lambda v: "<1" if v < 1 else "1-2" if v <= 2 else "3-5" if v <= 5 else ">5"),
+                {"<1", "1-2", "3-5", ">5"},
+                len(policy),
+            )
+
+            cover_allowed = {"BASE_ONLY", "ONE_ADD_ON", "TWO_ADD_ONS", "THREE_PLUS_ADD_ONS"}
+            bad_cover = policy[~policy["cover_option"].isin(cover_allowed)]
+            _print_rule_result(
+                "churn_policy_addon_logic",
+                [f"{len(bad_cover)} rows have invalid cover_option values"] if not bad_cover.empty else [],
+                bad_cover[["policy_hash_key", "cover_option"]].head(10).to_dict("records") if not bad_cover.empty else None,
+            )
+            _require_band_coverage(
+                "churn_policy_addons",
+                _band_counts(policy["cover_option"], lambda v: str(v)),
+                cover_allowed,
+                len(policy),
+            )
+
+    if sat_mpr.empty:
+        print("churn_marketing_proxy_rules skipped: sat_marketing_preference empty")
+    else:
+        mpr_cols = {"sms", "email", "email_subscriptions", "call", "any", "commercial_email", "postal_mail"}
+        missing = mpr_cols - set(sat_mpr.columns)
+        if missing:
+            print(f"churn_marketing_proxy_rules skipped: missing columns {sorted(missing)}")
+        else:
+            channels = ["sms", "email", "email_subscriptions", "commercial_email", "postal_mail"]
+            yn_values = {"Y", "N"}
+            bad_flags = sat_mpr[~sat_mpr[list(mpr_cols)].isin(yn_values).all(axis=1)]
+            _print_rule_result(
+                "churn_marketing_proxy_flag_logic",
+                [f"{len(bad_flags)} rows have non Y/N marketing flags"] if not bad_flags.empty else [],
+                bad_flags[list(mpr_cols)].head(10).to_dict("records") if not bad_flags.empty else None,
+            )
+            channel_count = sat_mpr[channels].eq("Y").sum(axis=1)
+            _require_band_coverage(
+                "churn_email_sms_engagement_proxy",
+                _band_counts(channel_count, lambda v: "NONE" if v == 0 else "LOW" if v == 1 else "MEDIUM" if v <= 3 else "HIGH"),
+                {"NONE", "LOW", "MEDIUM", "HIGH"},
+                len(channel_count),
+            )
+            _require_band_coverage(
+                "churn_service_call_proxy",
+                _band_counts(sat_mpr["call"], lambda v: str(v)),
+                {"Y", "N"},
+                len(sat_mpr),
+            )
+
+    if sat_natural_person.empty:
+        print("churn_driver_experience_proxy skipped: sat_natural_person empty")
+    elif {"birth_date", "load_date"}.issubset(sat_natural_person.columns):
+        natural = sat_natural_person[["natural_person_hash_key", "birth_date", "load_date"]].copy()
+        natural["birth_date"] = parse_dt(natural["birth_date"])
+        natural["load_date"] = parse_dt(natural["load_date"])
+        age_years = [
+            (ld.date().year - bd.date().year - ((ld.date().month, ld.date().day) < (bd.date().month, bd.date().day)))
+            if pd.notna(ld) and pd.notna(bd) else None
+            for ld, bd in zip(natural["load_date"], natural["birth_date"])
+        ]
+        driver_exp = pd.Series(age_years, index=natural.index, dtype="float64") - 17
+        bad_driver_proxy = natural[(driver_exp < 0) | driver_exp.isna()]
+        _print_rule_result(
+            "churn_driver_experience_proxy_logic",
+            [f"{len(bad_driver_proxy)} rows have invalid birth_date/load_date proxy"] if not bad_driver_proxy.empty else [],
+            bad_driver_proxy.head(10).to_dict("records") if not bad_driver_proxy.empty else None,
+        )
+        _require_band_coverage(
+            "churn_driver_experience_proxy",
+            _band_counts(driver_exp, lambda v: "<2y" if v < 2 else "2-5y" if v <= 5 else "6-10y" if v <= 10 else ">10y"),
+            {"<2y", "2-5y", "6-10y", ">10y"},
+            int(driver_exp.notna().sum()),
+        )
+    else:
+        print("churn_driver_experience_proxy skipped: missing birth_date/load_date")
+
+    if sat_motor.empty:
+        print("churn_vehicle_model_rules skipped: sat_motor empty")
+    elif "vehicle_model" in sat_motor.columns:
+        standard = {"Focus", "Corsa", "Corolla"}
+        premium = {"Qashqai", "3 Series", "A3"}
+        high_risk = {"Sport Bike", "Superbike", "High Performance SUV"}
+        allowed = standard | premium | high_risk
+        bad_vehicle = sat_motor[~sat_motor["vehicle_model"].isin(allowed)]
+        _print_rule_result(
+            "churn_vehicle_model_logic",
+            [f"{len(bad_vehicle)} rows have unmapped vehicle_model values"] if not bad_vehicle.empty else [],
+            bad_vehicle[["vehicle_model"]].head(10).to_dict("records") if not bad_vehicle.empty else None,
+        )
+        _require_band_coverage(
+            "churn_vehicle_segment",
+            _band_counts(sat_motor["vehicle_model"], lambda v: "STANDARD" if v in standard else "PREMIUM" if v in premium else "HIGH_RISK" if v in high_risk else "UNKNOWN"),
+            {"STANDARD", "PREMIUM", "HIGH_RISK"},
+            len(sat_motor),
+        )
+    else:
+        print("churn_vehicle_model_rules skipped: missing vehicle_model")
+
+
 def main(base_path: str):
     # ---------- READ FILES ----------
     hub_person = read_csv_safe(base_path, "hub_person.csv")
@@ -187,6 +413,8 @@ def main(base_path: str):
     sat_customer = read_csv_safe(base_path, "sat_customer.csv")
     sat_legal_person = read_csv_safe(base_path, "sat_legal_person.csv")
     sat_natural_person = read_csv_safe(base_path, "sat_natural_person.csv")
+    sat_mpr = read_csv_safe(base_path, "sat_marketing_preference.csv")
+    sat_motor = read_csv_safe(base_path, "sat_motor.csv")
 
     l_p_nat = read_csv_safe(base_path, "link_person_natural_person.csv")
     l_p_leg = read_csv_safe(base_path, "link_person_legal_person.csv")
@@ -1023,32 +1251,23 @@ def main(base_path: str):
                 else:
                     print("policy_renewal_window valid")
 
-                expected_next = policy_person_dates["renewal_amount_current_period"].apply(
-                    lambda value: currency_round(Decimal(str(value)) * Decimal("1.01")) if not pd.isna(value) else None
-                )
-                actual_next = policy_person_dates["renewal_amount_next_period"].apply(currency_round)
-                uplift_delta = [
-                    (abs(actual - expected) if actual is not None and expected is not None else None)
-                    for actual, expected in zip(actual_next, expected_next)
+                current_premium = pd.to_numeric(policy_person_dates["renewal_amount_current_period"], errors="coerce")
+                next_premium = pd.to_numeric(policy_person_dates["renewal_amount_next_period"], errors="coerce")
+                bad_renewal_premium = policy_person_dates[
+                    current_premium.notna()
+                    & next_premium.notna()
+                    & ((current_premium <= 0) | (next_premium < 0))
                 ]
-                bad_renewal_uplift = policy_person_dates[
-                    policy_person_dates["renewal_amount_current_period"].notna()
-                    & policy_person_dates["renewal_amount_next_period"].notna()
-                    & pd.Series([
-                        delta is not None and delta > Decimal("0.01")
-                        for delta in uplift_delta
-                    ], index=policy_person_dates.index)
-                ]
-                if not bad_renewal_uplift.empty:
-                    print(f"policy_renewal_uplift error: {len(bad_renewal_uplift)} rows do not have 1% uplift")
+                if not bad_renewal_premium.empty:
+                    print(f"policy_renewal_premium error: {len(bad_renewal_premium)} rows have invalid current/next premium amounts")
                     print(
                         "sample:",
-                        bad_renewal_uplift[["policy_hash_key", "renewal_amount_current_period", "renewal_amount_next_period"]]
+                        bad_renewal_premium[["policy_hash_key", "renewal_amount_current_period", "renewal_amount_next_period"]]
                         .head(10)
                         .to_dict("records")
                     )
                 else:
-                    print("policy_renewal_uplift valid")
+                    print("policy_renewal_premium valid")
 
                 bad_status = policy_person_dates[
                     policy_person_dates["policy_end_date"].notna()
@@ -1107,6 +1326,7 @@ def main(base_path: str):
             else:
                 print("lead_to_policy_window valid")
 
+    verify_churn_rule_fields(sat_policy, sat_natural_person, sat_mpr, sat_motor)
 
     print("\n===== SUMMARY =====\n")
 

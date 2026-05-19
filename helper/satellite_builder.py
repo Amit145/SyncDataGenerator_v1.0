@@ -92,6 +92,107 @@ def _add_years(dt: datetime, years: int) -> datetime:
         return dt.replace(year=dt.year + years, day=min(dt.day, last_day))
 
 
+def _sample_renewal_premiums() -> tuple[float, float]:
+    current_band = random.choices(
+        ["LOW", "MEDIUM", "HIGH", "VERY_HIGH"],
+        weights=[35, 35, 20, 10],
+    )[0]
+    current_ranges = {
+        "LOW": (300, 600),
+        "MEDIUM": (601, 900),
+        "HIGH": (901, 1200),
+        "VERY_HIGH": (1201, 1800),
+    }
+    low, high = current_ranges[current_band]
+    current = round(random.uniform(low, high), 2)
+
+    increase_band = random.choices(
+        ["DECREASE", "SMALL", "MEDIUM", "LARGE"],
+        weights=[10, 20, 30, 40],
+    )[0]
+    rate_ranges = {
+        "DECREASE": (-0.08, -0.01),
+        "SMALL": (0.00, 0.05),
+        "MEDIUM": (0.05, 0.10),
+        "LARGE": (0.10, 0.35),
+    }
+    rate_low, rate_high = rate_ranges[increase_band]
+    next_premium = round(current * (1 + random.uniform(rate_low, rate_high)), 2)
+    return current, max(0.0, next_premium)
+
+
+def _sample_policy_claim_counts() -> tuple[int, int, int]:
+    total_claims = random.choices([0, 1, 2, 3, 4, 5], weights=[18, 25, 25, 18, 9, 5])[0]
+    if total_claims == 0:
+        return 0, 0, 0
+
+    active_claims = min(total_claims, random.choices([0, 1, 2], weights=[45, 40, 15])[0])
+    remaining = total_claims - active_claims
+    declined_claims = min(remaining, random.choices([0, 1, 2], weights=[70, 25, 5])[0])
+    previous_claims = max(0, total_claims - active_claims - declined_claims)
+    return declined_claims, active_claims, previous_claims
+
+
+def _policy_cycle_from_dates(policy_start: datetime, as_of_dt: datetime) -> int:
+    days_active = max(0, (as_of_dt.date() - policy_start.date()).days)
+    return days_active // 365
+
+
+def _sample_policy_cover_option() -> str:
+    return random.choices(
+        ["BASE_ONLY", "ONE_ADD_ON", "TWO_ADD_ONS", "THREE_PLUS_ADD_ONS"],
+        weights=[35, 30, 22, 13],
+    )[0]
+
+
+def _sample_vehicle_profile() -> tuple[str, str, str, str]:
+    segment = random.choices(
+        ["STANDARD", "PREMIUM", "HIGH_RISK"],
+        weights=[65, 25, 10],
+    )[0]
+    profiles = {
+        "STANDARD": [
+            ("SEDAN", "PRIVATE", "Focus", "CAR"),
+            ("HATCH", "PRIVATE", "Corsa", "CAR"),
+            ("SEDAN", "PRIVATE", "Corolla", "CAR"),
+        ],
+        "PREMIUM": [
+            ("SUV", "PRIVATE", "Qashqai", "CAR"),
+            ("SEDAN", "PRIVATE", "3 Series", "CAR"),
+            ("HATCH", "PRIVATE", "A3", "CAR"),
+        ],
+        "HIGH_RISK": [
+            ("BIKE", "PRIVATE", "Sport Bike", "BIKE"),
+            ("BIKE", "PRIVATE", "Superbike", "BIKE"),
+            ("SUV", "COMMERCIAL", "High Performance SUV", "CAR"),
+        ],
+    }
+    return random.choice(profiles[segment])
+
+
+def _sample_marketing_preference_flags() -> dict[str, str]:
+    engagement_band = random.choices(
+        ["HIGH", "MEDIUM", "LOW", "NONE"],
+        weights=[15, 30, 35, 20],
+    )[0]
+    channels = ["SMS", "Email", "Email Subscriptions", "Commercial Email", "Postal Mail"]
+    selected_count = {
+        "HIGH": random.randint(4, 5),
+        "MEDIUM": random.randint(2, 3),
+        "LOW": 1,
+        "NONE": 0,
+    }[engagement_band]
+    selected = set(random.sample(channels, selected_count)) if selected_count else set()
+    service_call_band = random.choices(
+        ["NONE", "LOW", "MEDIUM", "HIGH"],
+        weights=[45, 30, 18, 7],
+    )[0]
+    flags = {channel: "Y" if channel in selected else "N" for channel in channels}
+    flags["Call"] = "Y" if service_call_band != "NONE" else "N"
+    flags["Any"] = "Y" if any(value == "Y" for value in flags.values()) else "N"
+    return flags
+
+
 def pick_gender_and_title():
     gender = random.choice(["M", "F"])  # extend if you want: ["M","F","X"]
     if gender == "M":
@@ -300,6 +401,24 @@ def _birth_date_for_age_range(rng: random.Random, reference_date, minimum_age: i
     return fake.date_between(start_date=earliest_birth, end_date=latest_birth)
 
 
+def _birth_date_for_driver_experience_proxy(rng: random.Random, reference_date):
+    ref_dt = _coerce_datetime(reference_date) if reference_date else datetime.now().replace(microsecond=0)
+    band = rng.choices(
+        ["LT_2Y", "Y2_5", "Y6_10", "GT_10"],
+        weights=[12, 20, 25, 43],
+    )[0]
+    age_ranges = {
+        "LT_2Y": (18, 19),
+        "Y2_5": (20, 22),
+        "Y6_10": (23, 27),
+        "GT_10": (28, 85),
+    }
+    minimum_age, maximum_age = age_ranges[band]
+    latest_birth = _add_years(ref_dt, -minimum_age).date()
+    earliest_birth = _add_years(ref_dt, -maximum_age).date()
+    return fake.date_between(start_date=earliest_birth, end_date=latest_birth)
+
+
 def get_or_create_person_profile(person_hk: str, reference_date=None) -> dict:
     """
     Canonical person info for consistency across satellites.
@@ -316,7 +435,7 @@ def get_or_create_person_profile(person_hk: str, reference_date=None) -> dict:
     first = fake.first_name_male() if gender == "Male" else fake.first_name_female()
     last = fake.last_name()
 
-    dob = _birth_date_for_age_range(rng, reference_date, minimum_age=18, maximum_age=85)
+    dob = _birth_date_for_driver_experience_proxy(rng, reference_date)
     title = _pick_title_uk(gender, marital_status, rng)
 
     occupation, job_title = _pick_occupation_and_job_consistent(rng)
@@ -466,9 +585,14 @@ def sat_lead(
         for lead_hk in _as_list(hk_or_hks):
             # Bias lead conversions toward recent history so downstream policy
             # timelines produce a more realistic active/lapsed portfolio mix.
-            if random.random() < 0.8:
+            lead_age_roll = random.random()
+            if lead_age_roll < 0.2:
                 recent_start = max(biz_start, upper_date - timedelta(days=365))
                 converted_dt = _cap_datetime_to_load(_rand_datetime_between(recent_start, upper_date), load_date)
+            elif lead_age_roll < 0.45:
+                historical_start = upper_date - timedelta(days=365 * 7)
+                historical_end = min(upper_date, upper_date - timedelta(days=365 * 6))
+                converted_dt = _cap_datetime_to_load(_rand_datetime_between(historical_start, historical_end), load_date)
             else:
                 converted_dt = _cap_datetime_to_load(_rand_datetime_between(biz_start, upper_date), load_date)
             person_score = random.randint(1, 100)
@@ -885,22 +1009,18 @@ def sat_marketing_preference(person_to_mpr_hk, load_date):
     rows = []
     for _, hk_or_hks in person_to_mpr_hk.items():
         for hk in _as_list(hk_or_hks):
-            any_col =  random.choice(["Y", "N"])
-            if any_col == 'Y':
-                choosed_value = any_col
-            else:
-                choosed_value = random.choice(["Y", "N"])
+            flags = _sample_marketing_preference_flags()
                 
             rows.append({
                 "Marketing Preference Hash Key": hk,
                 "Load Date": load_date,
-                "SMS": choosed_value,
-                "Email": choosed_value,
-                "Email Subscriptions": choosed_value,
-                "Call": choosed_value,
-                "Any": any_col,
-                "Commercial Email": choosed_value,
-                "Postal Mail": choosed_value
+                "SMS": flags["SMS"],
+                "Email": flags["Email"],
+                "Email Subscriptions": flags["Email Subscriptions"],
+                "Call": flags["Call"],
+                "Any": flags["Any"],
+                "Commercial Email": flags["Commercial Email"],
+                "Postal Mail": flags["Postal Mail"]
             })
     return rows
 
@@ -1018,14 +1138,12 @@ def sat_policy(
 
         renewal_date = policy_end - timedelta(days=random.randint(0, 10))
 
-        renewal_current = round(random.uniform(200, 1500), 2)
-        renewal_next = round(renewal_current * 1.01, 2)
-        declined_claims = random.randint(0, 3)
-        active_claims = random.randint(0, 2)
-        previous_claims = random.randint(0, 5)
+        renewal_current, renewal_next = _sample_renewal_premiums()
+        declined_claims, active_claims, previous_claims = _sample_policy_claim_counts()
         gross_revenue = round(random.uniform(300, 2500), 2)
         net_revenue = round(random.uniform(200, 2000), 2)
         sales_channel = random.choice(["ONLINE", "AGENT", "BRANCH"])
+        policy_cycle = _policy_cycle_from_dates(policy_start, as_of_dt)
 
         fraud_risk_score = 0
         if declined_claims >= 2:
@@ -1048,14 +1166,14 @@ def sat_policy(
         rows.append({
             "Policy Hash Key": hk,
             "Load Date": load_date,
-            "Cover Option": random.choice(["BASIC", "FULL"]),
+            "Cover Option": _sample_policy_cover_option(),
             "Declined Claims": declined_claims,
             "Fraud Flag": fraud_flag,
             "Gross Revenue": gross_revenue,
             "Net Revenue": net_revenue,
             "Number of Active Claim": active_claims,
             "Number of Previous Claim": previous_claims,
-            "Policy Cycle": random.randint(1, 5),
+            "Policy Cycle": policy_cycle,
             "Policy End Date": policy_end.strftime("%Y-%m-%d %H:%M:%S"),
             "Policy Length": policy_length_months,
             "Policy Number": random.randint(1000000, 9999999),
@@ -1136,11 +1254,13 @@ def sat_motor(motor_hks, load_date, motor_to_addr: dict | None = None):
         if not addr:
             addr = _address_from_cache_by_hk(motor_hk)
 
+        body_type, vehicle_class, vehicle_model, vehicle_type = _sample_vehicle_profile()
+
         rows.append({
             "Motor Hash Key": motor_hk,
             "Load Date": load_date,
             "Auto Decline Vehicle": random.choice(["Y", "N"]),
-            "Body Type": random.choice(["SEDAN", "SUV", "HATCH"]),
+            "Body Type": body_type,
             "Fuel Type": random.choice(["PETROL", "DIESEL", "EV"]),
             "License Status": random.choice(["VALID", "EXPIRED"]),
             "Is Existing Motor Customer": random.choice(["Y", "N"]),
@@ -1150,9 +1270,9 @@ def sat_motor(motor_hks, load_date, motor_to_addr: dict | None = None):
             "Variant": random.choice(["BASE", "SPORT"]),
             "Vehicle Owner Type": random.choice(["SELF", "COMPANY"]),
             "Vehicle RegState": addr["State"],
-            "Vehicle Class": random.choice(["PRIVATE", "COMMERCIAL"]),
-            "Vehicle Model": random.choice(["Focus", "Corsa", "3 Series", "A3", "Corolla", "Qashqai"]),
-            "Vehicle Type": random.choice(["CAR", "BIKE"]),
+            "Vehicle Class": vehicle_class,
+            "Vehicle Model": vehicle_model,
+            "Vehicle Type": vehicle_type,
             "Motor Sum Insrd": round(random.uniform(2000, 20000), 2),
             "Vehicle Year": year,
             "Vehicle Age": 2025 - year

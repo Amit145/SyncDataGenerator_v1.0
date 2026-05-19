@@ -79,7 +79,7 @@ SAT_ENUMS = {
     },
 
     "sat_policy": {
-        "cover_option": ["BASIC", "FULL"],
+        "cover_option": ["BASE_ONLY", "ONE_ADD_ON", "TWO_ADD_ONS", "THREE_PLUS_ADD_ONS"],
         "fraud_flag": ["Y", "N"],
         "policy_status": ["ACTIVE", "LAPSED", "CANCELLED"],
         "sales_channel": ["ONLINE", "AGENT", "BRANCH"],
@@ -108,7 +108,7 @@ SAT_ENUMS = {
 
     "sat_motor": {
         "auto_decline_vehicle": ["Y", "N"],
-        "body_type": ["SEDAN", "SUV", "HATCH"],
+        "body_type": ["SEDAN", "SUV", "HATCH", "BIKE"],
         "fuel_type": ["PETROL", "DIESEL", "EV"],
         "license_status": ["VALID", "EXPIRED"],
         "is_existing_motor_customer": ["Y", "N"],
@@ -116,7 +116,7 @@ SAT_ENUMS = {
         "variant": ["BASE", "SPORT"],
         "vehicle_owner_type": ["SELF", "COMPANY"],
         "vehicle_class": ["PRIVATE", "COMMERCIAL"],
-        "vehicle_model": ["Focus", "Corsa", "3 Series", "A3", "Corolla", "Qashqai"],
+        "vehicle_model": ["Focus", "Corsa", "3 Series", "A3", "Corolla", "Qashqai", "Sport Bike", "Superbike", "High Performance SUV"],
         "vehicle_type": ["CAR", "BIKE"],
     },
 

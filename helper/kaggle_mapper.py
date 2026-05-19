@@ -32,6 +32,25 @@ def _hash_text(parts, prefix=""):
     return f"{prefix}{hashlib.md5(raw.encode('utf-8')).hexdigest()}"
 
 
+def _stable_bucket(parts, modulo=100):
+    raw = "|".join(_str_or_empty(part) for part in parts)
+    return int(hashlib.md5(raw.encode("utf-8")).hexdigest(), 16) % modulo
+
+
+def _to_float(value, default=0.0):
+    try:
+        return float(_str_or_empty(value).replace(",", ""))
+    except ValueError:
+        return default
+
+
+def _date_from_source(row: pd.Series, column: str):
+    parsed = pd.to_datetime(row.get(column), errors="coerce")
+    if pd.isna(parsed):
+        return None
+    return parsed
+
+
 def _load_sources(input_dir: Path, config: dict) -> dict[str, pd.DataFrame]:
     frames = {}
     for source in config.get("sources", []):
@@ -85,6 +104,124 @@ def _eval_rule(row: pd.Series, rule: dict):
         source_value = _str_or_empty(row.get(rule["column"]))
         mapping = {str(key): str(value) for key, value in rule.get("mapping", {}).items()}
         return mapping.get(source_value, _str_or_empty(rule.get("default", "")))
+
+    if kind == "numeric_multiply":
+        return str(round(_to_float(row.get(rule["column"])) * float(rule.get("factor", 1)), int(rule.get("round", 2))))
+
+    if kind == "date_minus_months":
+        source_date = _date_from_source(row, rule["date_column"])
+        if source_date is None:
+            return ""
+        months = int(_to_float(row.get(rule["months_column"]), 0))
+        return (source_date - pd.DateOffset(months=months)).strftime(rule.get("format", "%Y-%m-%d"))
+
+    if kind == "churn_policy_start_date":
+        reference_date = pd.Timestamp(datetime.now())
+        bucket = _stable_bucket([row.get(col) for col in rule.get("seed_columns", [])])
+        if bucket < 35:
+            months = 6
+        elif bucket < 65:
+            months = 18
+        elif bucket < 88:
+            months = 48
+        else:
+            months = 84
+        return (reference_date - pd.DateOffset(months=months)).strftime(rule.get("format", "%Y-%m-%d"))
+
+    if kind == "policy_cycle_from_months":
+        months = int(_to_float(row.get(rule["column"]), 0))
+        return str(max(0, months // 12))
+
+    if kind == "policy_cycle_from_start_date":
+        source_date = _date_from_source(row, rule["date_column"])
+        if source_date is None:
+            return ""
+        months = int(_to_float(row.get(rule["months_column"]), 0))
+        start_date = source_date - pd.DateOffset(months=months)
+        reference_date = pd.Timestamp(datetime.now())
+        return str(max(0, int((reference_date.date() - start_date.date()).days // 365)))
+
+    if kind == "churn_policy_cycle":
+        bucket = _stable_bucket([row.get(col) for col in rule.get("seed_columns", [])])
+        if bucket < 35:
+            return "0"
+        if bucket < 65:
+            return "1"
+        if bucket < 88:
+            return "4"
+        return "7"
+
+    if kind == "churn_cover_option":
+        coverage = _str_or_empty(row.get(rule["column"])).strip().lower()
+        if coverage == "basic":
+            return "BASE_ONLY"
+        if coverage == "extended":
+            return "ONE_ADD_ON"
+        if coverage == "premium":
+            return "THREE_PLUS_ADD_ONS" if _stable_bucket([row.get(col) for col in rule.get("seed_columns", [])]) >= 60 else "TWO_ADD_ONS"
+        return "BASE_ONLY"
+
+    if kind == "churn_claim_component":
+        seed_values = [row.get(col) for col in rule.get("seed_columns", [])]
+        bucket = _stable_bucket(seed_values)
+        if bucket < 18:
+            total = 0
+        elif bucket < 43:
+            total = 1
+        elif bucket < 68:
+            total = 2
+        elif bucket < 86:
+            total = 3
+        elif bucket < 95:
+            total = 4
+        else:
+            total = 5
+        component = rule["component"]
+        if component == "active":
+            return str(min(total, _stable_bucket(seed_values + ["active"], 3)))
+        active = min(total, _stable_bucket(seed_values + ["active"], 3))
+        remaining = total - active
+        declined = min(remaining, 1 if _stable_bucket(seed_values + ["declined"]) >= 75 else 0)
+        if component == "declined":
+            return str(declined)
+        if component == "previous":
+            return str(max(0, total - active - declined))
+
+    if kind == "churn_renewal_next":
+        current = _to_float(row.get(rule["current_column"])) * float(rule.get("current_factor", 1))
+        bucket = _stable_bucket([row.get(col) for col in rule.get("seed_columns", [])])
+        if bucket < 10:
+            rate = -0.05
+        elif bucket < 30:
+            rate = 0.03
+        elif bucket < 60:
+            rate = 0.075
+        else:
+            rate = 0.18
+        return str(round(current * (1 + rate), int(rule.get("round", 2))))
+
+    if kind == "driver_birth_date_proxy":
+        ref_date = pd.Timestamp(datetime.now())
+        bucket = _stable_bucket([row.get(col) for col in rule.get("seed_columns", [])])
+        if bucket < 12:
+            age = 18
+        elif bucket < 32:
+            age = 21
+        elif bucket < 57:
+            age = 25
+        else:
+            age = 45
+        return (ref_date - pd.DateOffset(years=age)).strftime(rule.get("format", "%Y-%m-%d"))
+
+    if kind == "vehicle_model_segment":
+        vehicle_class = _str_or_empty(row.get(rule.get("class_column", ""))).lower()
+        vehicle_size = _str_or_empty(row.get(rule.get("size_column", ""))).lower()
+        bucket = _stable_bucket([row.get(col) for col in rule.get("seed_columns", [])])
+        if "luxury" in vehicle_class or bucket >= 90:
+            return "High Performance SUV"
+        if "suv" in vehicle_class or "large" in vehicle_size or bucket >= 65:
+            return ["Qashqai", "3 Series", "A3"][bucket % 3]
+        return ["Focus", "Corsa", "Corolla"][bucket % 3]
 
     if kind == "date_format":
         source_value = row.get(rule["column"])
