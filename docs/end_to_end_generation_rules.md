@@ -417,6 +417,12 @@ Validation:
 - `verify_csv.py` checks the churn source-field logic, expected distribution bands, example-value bands, and business-rule direction implied by workbook columns G, H, I, and J
 - distribution validation requires representative row counts before enforcing full band coverage
 
+Large-volume generation:
+
+- use `python main.py --streaming-base --total-people 10000000 --chunk-size 100000` for large base Data Vault runs
+- streaming mode writes each chunk immediately and normalizes to `data/synthetic/base/<run_id>` without loading full CSV files into pandas
+- default `main.py` behavior is unchanged for complete raw, silver, enhanced, SCD2, and full validation workflows
+
 
 ## 12. Customer and Account Rules
 

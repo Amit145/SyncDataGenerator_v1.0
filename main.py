@@ -38,8 +38,8 @@ from helper.raw_scd2_generator import generate_raw_scd2
 from helper.scd2_generator import create_scd_data
 from helper.scd2_diff_engine import previous_subdir
 from helper.source_context_builder import build_source_context
+from helper.streaming_base_generator import generate_streaming_base
 from helper.link_builder import build_links, make_link
-from modules.inference import inference_module
 from modules.module_parser import parse_ddl_module, file_ready
 from helper.pk_validator import assert_unique
 
@@ -83,6 +83,27 @@ parser.add_argument(
     "--enhanced-only",
     action="store_true",
     help="Generate only enhanced synthetic output. Base context is still built in memory.",
+)
+parser.add_argument(
+    "--streaming-base",
+    action="store_true",
+    help="Generate base Data Vault output in chunks for very large volumes.",
+)
+parser.add_argument(
+    "--total-people",
+    type=int,
+    help="Total people to generate in --streaming-base mode.",
+)
+parser.add_argument(
+    "--chunk-size",
+    type=int,
+    default=100000,
+    help="People per chunk in --streaming-base mode. Default: 100000.",
+)
+parser.add_argument(
+    "--no-stream-normalize",
+    action="store_true",
+    help="Skip streaming normalization into data/synthetic/base for --streaming-base mode.",
 )
 args = parser.parse_args()
 enhanced_only = args.enhanced_only
@@ -128,6 +149,8 @@ else:
     print(f"⏭️  Skipping parse_ddl_module: {PARSED_DDL_PATH} already exists")
 
 if not file_ready(ORDERED_TABLE_METADATA_PATH):
+    from modules.inference import inference_module
+
     inference_module()
 else:
     print(f"⏭️  Skipping inference_module: {ORDERED_TABLE_METADATA_PATH} already exists")
@@ -140,6 +163,28 @@ random.seed(seed)
 run_id = get_run_id(seed)
 folder_run_id = get_folder_run_id()
 out = os.path.join(OUTPUT_BASE, folder_run_id)
+
+if args.streaming_base:
+    streaming_total_people = args.total_people or cfg["run_settings"]["total_people"]
+    summary = generate_streaming_base(
+        cfg=cfg,
+        total_people=streaming_total_people,
+        chunk_size=args.chunk_size,
+        business_start_date=BUSINESS_START_DATE,
+        as_of_date=AS_OF_DATE,
+        hub_date=HUB_DATE,
+        link_date=LINK_DATE,
+        sat_date=SAT_DATE,
+        normalize_output=not args.no_stream_normalize,
+    )
+    print("STREAMING BASE DONE:", summary["output_dir"])
+    if summary["synthetic_dir"]:
+        print("STREAMING SYNTHETIC BASE:", summary["synthetic_dir"])
+    print("STREAMING TOTAL PEOPLE:", summary["total_people"])
+    print("STREAMING CHUNK SIZE:", summary["chunk_size"])
+    end_time = datetime.now()
+    print("Total time taken:", end_time - start_time)
+    raise SystemExit(0)
 
 
 def generate_kaggle_raw_batches():

@@ -236,6 +236,7 @@ Lifecycle rules:
 - complaints are generated from customer policy context and occur after `customer_since`
 - regulations can link to complaints and must have ordered raised/deadline/closed timestamps
 - enhanced DDL `TIMESTAMP` columns must include time components and are checked generically by `misc/verify_enhanced_synthetic.py`
+- large base runs use `main.py --streaming-base --total-people <n> --chunk-size <n>` to append chunked base Data Vault outputs without loading the whole population into memory
 
 ## Enhanced Model Rules
 

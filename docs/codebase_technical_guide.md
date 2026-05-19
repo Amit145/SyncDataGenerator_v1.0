@@ -366,6 +366,13 @@ Policy and renewal:
 - policy cycle is standardized as `policy_cycle`; the legacy misspelled column name is not used
 - churn-available and proxy fields are generated once in base satellites and reused by CRM, API, data-source, canonical raw, silver, and enhanced outputs
 
+Large-volume generation:
+
+- `main.py --streaming-base --total-people <n> --chunk-size <n>` generates base Data Vault output in bounded chunks and appends rows to the same output files
+- streaming mode reuses the same base hub/link/satellite builders per chunk, then drops the chunk context before generating the next chunk
+- streaming normalization writes `data/synthetic/base/<run_id>` row by row and avoids pandas full-file reads
+- the normal `main.py` path is unchanged and remains the full-output path for raw, silver, enhanced, SCD2, and detailed validation runs
+
 Campaign:
 
 - campaigns are enhanced reference-style entities sampled from `DimCampaign.csv`

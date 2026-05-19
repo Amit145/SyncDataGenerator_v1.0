@@ -1,5 +1,6 @@
 faker
-pandas
+numpy==2.0.2
+pandas==2.2.3
 dotenv
 python-dotenv
 tqdm
