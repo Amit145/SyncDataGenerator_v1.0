@@ -1,39 +1,49 @@
-SyncDataGenerator command reference
+Base load and SCD2 example commands
 ===================================
 
-Use PowerShell from the repo root:
+Run these from PowerShell in the repo root:
 
   cd F:\SyncDataGenerator_v1.0
   $env:PYTHONUTF8='1'
 
 
-1. Normal full run: base + raw + silver API + enhanced + SCD2 where prior runs exist
------------------------------------------------------------------------------------
+Example A: normal full base load, full rule validation, SCD2 generation, SCD2 validation
+---------------------------------------------------------------------------------------
+
+Run #1 creates the first base load:
 
   .\venv\Scripts\python.exe .\main.py
 
-This runs the standard generator and built-in base checks:
-
-  - DDL/file-column checks for data/output/<run_id>
-  - referential integrity checks
-  - policy date checks
-  - lead-to-policy timeline checks
-  - synthetic/base normalization
-  - raw CRM/API/claims/data_source/Kaggle generation
-  - enhanced synthetic generation
-  - SCD2 outputs when previous comparable runs exist
-
-
-2. Validate all silver rules, including churn logic and distribution
--------------------------------------------------------------------
-
-Run after the normal full run:
+Validate all rules and churn rules for Run #1:
 
   .\venv\Scripts\python.exe .\misc\transform_all_raw_to_silver.py
   .\venv\Scripts\python.exe .\misc\verify_all_silver.py
 
-This validates CRM, API, claims, data_source, and Kaggle silver outputs.
-It includes:
+Run #2 creates the next base load and generates SCD2 outputs by comparing against Run #1:
+
+  .\venv\Scripts\python.exe .\main.py
+
+Validate all rules and churn rules for Run #2:
+
+  .\venv\Scripts\python.exe .\misc\transform_all_raw_to_silver.py
+  .\venv\Scripts\python.exe .\misc\verify_all_silver.py
+
+Validate SCD2 deltas:
+
+  .\venv\Scripts\python.exe .\misc\compare_all_scd2.py
+
+
+What this checks
+----------------
+
+main.py checks base output:
+
+  - DDL/file-column alignment
+  - referential integrity
+  - policy date rules
+  - lead-to-policy timeline rules
+
+verify_all_silver.py checks full silver rules:
 
   - relationship and uniqueness rules
   - person/contact/identity/address rules
@@ -47,49 +57,23 @@ It includes:
   - driver-experience proxy from birth date
   - vehicle-model churn segment logic and distributions
 
-
-3. Validate SCD2 outputs
------------------------
-
-Run after at least two normal full runs:
-
-  .\venv\Scripts\python.exe .\misc\compare_all_scd2.py
-
-This compares prior and current outputs and reports:
+compare_all_scd2.py checks SCD2:
 
   - source raw SCD2 deltas
   - synthetic base SCD2 deltas
+  - changed rows
   - changed columns per file
   - whether only expected SCD2 mutation columns changed
 
-Note: SCD2 delta files are changed-row extracts. Full distribution validation is meaningful on the full base/silver outputs, not on tiny delta-only extracts.
 
+Example B: large 10M base-load only, with base validation
+--------------------------------------------------------
 
-4. Large base-load generation: 5M / 10M records
------------------------------------------------
-
-Use streaming base mode for large record counts. Do not set config total_people to millions and run plain main.py; the normal path builds too much in memory.
-
-5M base load:
-
-  .\venv\Scripts\python.exe .\main.py --streaming-base --total-people 5000000 --chunk-size 100000
-
-10M base load:
+Use this when you only want a large unique base load:
 
   .\venv\Scripts\python.exe .\main.py --streaming-base --total-people 10000000 --chunk-size 100000
 
-Outputs:
-
-  - data/output/<run_id>
-  - data/synthetic/base/<run_id>
-
-The streaming mode appends each chunk immediately and preserves unique business IDs/hash keys by using a unique chunk run id per chunk.
-
-
-5. Validate large streaming base output
----------------------------------------
-
-Run after a streaming base run:
+Validate the large streaming base output:
 
   @'
   from config.runConfig import DDL_JSON_PATH, OUTPUT_BASE
@@ -103,50 +87,5 @@ Run after a streaming base run:
   print(validate_integrity(OUTPUT_BASE))
   '@ | .\venv\Scripts\python.exe -
 
-These checks validate:
-
-  - DDL/file-column alignment
-  - referential integrity
-  - policy date rules
-  - lead-to-policy timeline rules
-
-Important: full silver/churn validation for 5M/10M is not yet streaming-safe. Use the normal full run for complete CRM/API/claims/data_source/Kaggle silver validation.
-
-
-6. Enhanced-only run
---------------------
-
-  .\venv\Scripts\python.exe .\main.py --enhanced-only
-
-This builds the in-memory base context and writes enhanced synthetic output only.
-It does not write the base output/raw/silver files from the normal path.
-
-
-7. Streaming base without synthetic/base normalization
------------------------------------------------------
-
-Use this when you only want data/output/<run_id> and want to skip writing normalized data/synthetic/base/<run_id>:
-
-  .\venv\Scripts\python.exe .\main.py --streaming-base --total-people 10000000 --chunk-size 100000 --no-stream-normalize
-
-
-8. Recommended quick smoke test before a 10M run
-------------------------------------------------
-
-  .\venv\Scripts\python.exe .\main.py --streaming-base --total-people 1000000 --chunk-size 100000
-
-Then run the large streaming base validation commands in section 5.
-
-
-9. Dependency repair if pandas/numba import errors appear
----------------------------------------------------------
-
-The project pins pandas/numpy in requirements.txt. If the venv is out of sync:
-
-  .\venv\Scripts\python.exe -m ensurepip --upgrade
-  python -m pip install --target .\venv\Lib\site-packages --upgrade --force-reinstall pandas==2.2.3 numpy==2.0.2
-
-Then rerun:
-
-  .\venv\Scripts\python.exe .\main.py
+Note: full raw/silver/churn/SCD2 validation at 10M is not streaming-safe yet. Use Example A for the complete full-rule and SCD2 workflow.
 

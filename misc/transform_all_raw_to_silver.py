@@ -92,6 +92,7 @@ def transform_all():
 
 if __name__ == "__main__":
     outputs = transform_all()
+    print(outputs)
     if not outputs:
         raise SystemExit("No raw batches found to transform.")
 
