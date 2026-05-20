@@ -626,7 +626,7 @@ python .\misc\verify_all_silver.py
 Latest verified enhanced run during implementation:
 
 - full local generation and verification against the active `enhanced_360/new` DDL
-- enhanced-only verification run `data/synthetic/enhanced/20260508103525`
+- latest full verified run: `data/synthetic/enhanced/20260520182650`
 
 Verified outcomes:
 
@@ -638,10 +638,10 @@ Verified outcomes:
 - all `80` enhanced tables were generated
 - schema, primary-key, foreign-key, enum, timeline, and enhanced business checks passed
 - DDL-driven timestamp checks passed for all enhanced `TIMESTAMP` columns
+- churn and policy-date alignment remained valid in the full silver verification path
 
 
 ## 19. Operational Notes
 
-- `main.py` still prints Unicode log symbols, so on this Windows console `PYTHONUTF8=1` is recommended
 - enhanced verification is intentionally stricter than the original structural-only version
 - shared domain alignment is treated as a hard rule for enhanced, especially for channels and products

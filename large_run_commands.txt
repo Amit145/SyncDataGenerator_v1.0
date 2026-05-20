@@ -14,6 +14,13 @@ Run #1 creates the first base load:
 
   .\venv\Scripts\python.exe .\main.py
 
+By default, this skips data/new_outputs_src generation to keep runs faster.
+It still creates base output, synthetic/base, raw CRM/API/claims/data_source, enhanced synthetic, and SCD2 where prior runs exist.
+
+To include the skipped optional outputs:
+
+  .\venv\Scripts\python.exe .\main.py --include-new-outputs-src
+
 Validate all rules and churn rules for Run #1:
 
   .\venv\Scripts\python.exe .\misc\transform_all_raw_to_silver.py
@@ -52,10 +59,14 @@ verify_all_silver.py checks full silver rules:
   - churn premium movement logic and distributions
   - churn claim-count logic and distributions
   - policy-cycle / tenure logic and distributions
+  - policy-cycle churn direction: higher completed tenure has lower churn
   - policy add-on logic and distributions
+  - sales-channel churn variance, with AGENT carrying broker/aggregator-like higher churn
   - marketing proxy logic and distributions where sat_marketing_preference exists
   - driver-experience proxy from birth date
   - vehicle-model churn segment logic and distributions
+
+Churn distributions are configured in config/scenario_v1.json under churn_settings.
 
 compare_all_scd2.py checks SCD2:
 
@@ -87,5 +98,12 @@ Validate the large streaming base output:
   print(validate_integrity(OUTPUT_BASE))
   '@ | .\venv\Scripts\python.exe -
 
-Note: full raw/silver/churn/SCD2 validation at 10M is not streaming-safe yet. Use Example A for the complete full-rule and SCD2 workflow.
+Validate only the churn KPI fields in the latest base run:
 
+  .\venv\Scripts\python.exe .\validate_churn_kpis.py
+
+Or validate a specific base run folder:
+
+  .\venv\Scripts\python.exe .\validate_churn_kpis.py --path .\data\synthetic\base\<run_id>
+
+Note: full raw/silver/churn/SCD2 validation at 10M is not streaming-safe yet. Use Example A for the complete full-rule and SCD2 workflow.

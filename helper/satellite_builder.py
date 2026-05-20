@@ -92,11 +92,23 @@ def _add_years(dt: datetime, years: int) -> datetime:
         return dt.replace(year=dt.year + years, day=min(dt.day, last_day))
 
 
-def _sample_renewal_premiums() -> tuple[float, float]:
-    current_band = random.choices(
-        ["LOW", "MEDIUM", "HIGH", "VERY_HIGH"],
-        weights=[35, 35, 20, 10],
-    )[0]
+def _weighted_choice_from_mapping(weight_map: dict | None, default_map: dict) -> str:
+    weights_by_value = weight_map or default_map
+    values = list(weights_by_value.keys())
+    weights = [float(weights_by_value[value]) for value in values]
+    return random.choices(values, weights=weights)[0]
+
+
+def _churn_settings(churn_config: dict | None) -> dict:
+    return churn_config or {}
+
+
+def _sample_renewal_premiums(churn_config: dict | None = None) -> tuple[float, float]:
+    churn_cfg = _churn_settings(churn_config)
+    current_band = _weighted_choice_from_mapping(
+        churn_cfg.get("renewal_current_premium_band_weights"),
+        {"LOW": 35, "MEDIUM": 35, "HIGH": 20, "VERY_HIGH": 10},
+    )
     current_ranges = {
         "LOW": (300, 600),
         "MEDIUM": (601, 900),
@@ -106,10 +118,16 @@ def _sample_renewal_premiums() -> tuple[float, float]:
     low, high = current_ranges[current_band]
     current = round(random.uniform(low, high), 2)
 
-    increase_band = random.choices(
-        ["DECREASE", "SMALL", "MEDIUM", "LARGE"],
-        weights=[10, 20, 30, 40],
-    )[0]
+    increase_band = _weighted_choice_from_mapping(
+        churn_cfg.get("renewal_movement_band_weights"),
+        {"DECREASE": 10, "SMALL": 20, "MEDIUM": 30, "LARGE": 40},
+    )
+    increase_band_aliases = {
+        "0_5": "SMALL",
+        "5_10": "MEDIUM",
+        "GT_10": "LARGE",
+    }
+    increase_band = increase_band_aliases.get(increase_band, increase_band)
     rate_ranges = {
         "DECREASE": (-0.08, -0.01),
         "SMALL": (0.00, 0.05),
@@ -121,14 +139,24 @@ def _sample_renewal_premiums() -> tuple[float, float]:
     return current, max(0.0, next_premium)
 
 
-def _sample_policy_claim_counts() -> tuple[int, int, int]:
-    total_claims = random.choices([0, 1, 2, 3, 4, 5], weights=[18, 25, 25, 18, 9, 5])[0]
+def _sample_policy_claim_counts(churn_config: dict | None = None) -> tuple[int, int, int]:
+    churn_cfg = _churn_settings(churn_config)
+    total_claims = int(_weighted_choice_from_mapping(
+        churn_cfg.get("claim_count_weights"),
+        {"0": 18, "1": 25, "2": 25, "3": 18, "4": 9, "5": 5},
+    ))
     if total_claims == 0:
         return 0, 0, 0
 
-    active_claims = min(total_claims, random.choices([0, 1, 2], weights=[45, 40, 15])[0])
+    active_claims = min(total_claims, int(_weighted_choice_from_mapping(
+        churn_cfg.get("active_claim_count_weights"),
+        {"0": 45, "1": 40, "2": 15},
+    )))
     remaining = total_claims - active_claims
-    declined_claims = min(remaining, random.choices([0, 1, 2], weights=[70, 25, 5])[0])
+    declined_claims = min(remaining, int(_weighted_choice_from_mapping(
+        churn_cfg.get("declined_claim_count_weights"),
+        {"0": 70, "1": 25, "2": 5},
+    )))
     previous_claims = max(0, total_claims - active_claims - declined_claims)
     return declined_claims, active_claims, previous_claims
 
@@ -138,18 +166,64 @@ def _policy_cycle_from_dates(policy_start: datetime, as_of_dt: datetime) -> int:
     return days_active // 365
 
 
-def _sample_policy_cover_option() -> str:
-    return random.choices(
-        ["BASE_ONLY", "ONE_ADD_ON", "TWO_ADD_ONS", "THREE_PLUS_ADD_ONS"],
-        weights=[35, 30, 22, 13],
-    )[0]
+def _sample_policy_cover_option(churn_config: dict | None = None) -> str:
+    return _weighted_choice_from_mapping(
+        _churn_settings(churn_config).get("cover_option_weights"),
+        {"BASE_ONLY": 35, "ONE_ADD_ON": 30, "TWO_ADD_ONS": 22, "THREE_PLUS_ADD_ONS": 13},
+    )
 
 
-def _sample_vehicle_profile() -> tuple[str, str, str, str]:
-    segment = random.choices(
-        ["STANDARD", "PREMIUM", "HIGH_RISK"],
-        weights=[65, 25, 10],
-    )[0]
+def _sample_sales_channel_for_status(policy_status: str, churn_config: dict | None = None) -> str:
+    channel_weights = _churn_settings(churn_config).get("sales_channel_by_policy_status") or {
+        "ACTIVE": {"ONLINE": 50, "BRANCH": 38, "AGENT": 12},
+        "LAPSED": {"ONLINE": 22, "BRANCH": 18, "AGENT": 60},
+        "CANCELLED": {"ONLINE": 10, "BRANCH": 8, "AGENT": 82},
+    }
+    return _weighted_choice_from_mapping(
+        channel_weights.get(policy_status),
+        {"ONLINE": 35, "BRANCH": 30, "AGENT": 35},
+    )
+
+
+def _tenure_churn_probability(policy_cycle: int, churn_config: dict | None = None) -> float:
+    probabilities = _churn_settings(churn_config).get("tenure_churn_probability") or {}
+    if policy_cycle < 1:
+        return float(probabilities.get("LT_1", 0.58))
+    if policy_cycle <= 2:
+        return float(probabilities.get("Y1_2", 0.16))
+    if policy_cycle <= 5:
+        return float(probabilities.get("Y3_5", 0.04))
+    return float(probabilities.get("GT_5", 0.0))
+
+
+def _sample_policy_status_for_tenure(policy_cycle: int, account_status: str | None, churn_config: dict | None = None) -> str:
+    churn_cfg = _churn_settings(churn_config)
+    if account_status == "CLOSED":
+        return "CANCELLED"
+    if account_status == "SUSPENDED":
+        if policy_cycle < 1:
+            return "CANCELLED"
+        return _weighted_choice_from_mapping(
+            churn_cfg.get("suspended_policy_status_weights"),
+            {"LAPSED": 65, "CANCELLED": 35},
+        )
+
+    if random.random() >= _tenure_churn_probability(policy_cycle, churn_cfg):
+        return "ACTIVE"
+
+    if policy_cycle < 1:
+        return "CANCELLED"
+    return _weighted_choice_from_mapping(
+        churn_cfg.get("churned_policy_status_weights"),
+        {"LAPSED": 70, "CANCELLED": 30},
+    )
+
+
+def _sample_vehicle_profile(churn_config: dict | None = None) -> tuple[str, str, str, str]:
+    segment = _weighted_choice_from_mapping(
+        _churn_settings(churn_config).get("vehicle_segment_weights"),
+        {"STANDARD": 65, "PREMIUM": 25, "HIGH_RISK": 10},
+    )
     profiles = {
         "STANDARD": [
             ("SEDAN", "PRIVATE", "Focus", "CAR"),
@@ -170,11 +244,12 @@ def _sample_vehicle_profile() -> tuple[str, str, str, str]:
     return random.choice(profiles[segment])
 
 
-def _sample_marketing_preference_flags() -> dict[str, str]:
-    engagement_band = random.choices(
-        ["HIGH", "MEDIUM", "LOW", "NONE"],
-        weights=[15, 30, 35, 20],
-    )[0]
+def _sample_marketing_preference_flags(churn_config: dict | None = None) -> dict[str, str]:
+    churn_cfg = _churn_settings(churn_config)
+    engagement_band = _weighted_choice_from_mapping(
+        churn_cfg.get("marketing_engagement_band_weights"),
+        {"HIGH": 15, "MEDIUM": 30, "LOW": 35, "NONE": 20},
+    )
     channels = ["SMS", "Email", "Email Subscriptions", "Commercial Email", "Postal Mail"]
     selected_count = {
         "HIGH": random.randint(4, 5),
@@ -183,10 +258,10 @@ def _sample_marketing_preference_flags() -> dict[str, str]:
         "NONE": 0,
     }[engagement_band]
     selected = set(random.sample(channels, selected_count)) if selected_count else set()
-    service_call_band = random.choices(
-        ["NONE", "LOW", "MEDIUM", "HIGH"],
-        weights=[45, 30, 18, 7],
-    )[0]
+    service_call_band = _weighted_choice_from_mapping(
+        churn_cfg.get("service_call_band_weights"),
+        {"NONE": 45, "LOW": 30, "MEDIUM": 18, "HIGH": 7},
+    )
     flags = {channel: "Y" if channel in selected else "N" for channel in channels}
     flags["Call"] = "Y" if service_call_band != "NONE" else "N"
     flags["Any"] = "Y" if any(value == "Y" for value in flags.values()) else "N"
@@ -672,7 +747,8 @@ def sat_customer(
         load_date,
         business_start_date=datetime.combine(date(2020, 1, 1), datetime.min.time()).strftime("%Y-%m-%d %H:%M:%S"),
         as_of_date=None,
-        earliest_policy_start_by_person=None
+        earliest_policy_start_by_person=None,
+        churn_config=None,
 ):
     """
     No new columns.
@@ -706,7 +782,10 @@ def sat_customer(
                 "Customer Hash Key": hk,
                 "Load Date": load_date,
                 "Customer Number": random.randint(100000, 999999),
-                "Customer Status": random.choices(["ACTIVE", "LAPSED"], weights=[0.8, 0.2])[0],
+                "Customer Status": _weighted_choice_from_mapping(
+                    _churn_settings(churn_config).get("customer_status_weights"),
+                    {"ACTIVE": 80, "LAPSED": 20},
+                ),
                 "Customer Status Reason": random.choice(["RENEWAL", "PAYMENT", "CUSTOMER_REQUEST"]),
                 "Customer Since": customer_since.strftime("%Y-%m-%d %H:%M:%S"),
                 "Customer Rating": 3,
@@ -964,15 +1043,15 @@ def sat_consent(person_to_consent_hk, load_date):
 
 
 # ---------------- ACCOUNT ----------------
-def sat_account(person_to_account_hk, load_date):
+def sat_account(person_to_account_hk, load_date, churn_config=None):
     rows = []
     load_dt = _coerce_datetime(load_date)
     for _, hk_or_hks in person_to_account_hk.items():
         for hk in _as_list(hk_or_hks):
-            account_status = random.choices(
-                ["OPEN", "SUSPENDED", "CLOSED"],
-                weights=[0.80, 0.12, 0.08],
-            )[0]
+            account_status = _weighted_choice_from_mapping(
+                _churn_settings(churn_config).get("account_status_weights"),
+                {"OPEN": 96, "SUSPENDED": 3, "CLOSED": 1},
+            )
 
             created_anchor = load_dt - timedelta(days=random.randint(30, 365 * 3))
             last_change_dt = created_anchor + timedelta(days=random.randint(0, max(1, (load_dt - created_anchor).days)))
@@ -1005,11 +1084,11 @@ def sat_account(person_to_account_hk, load_date):
 
 
 # ---------------- MARKETING PREFERENCE ----------------
-def sat_marketing_preference(person_to_mpr_hk, load_date):
+def sat_marketing_preference(person_to_mpr_hk, load_date, churn_config=None):
     rows = []
     for _, hk_or_hks in person_to_mpr_hk.items():
         for hk in _as_list(hk_or_hks):
-            flags = _sample_marketing_preference_flags()
+            flags = _sample_marketing_preference_flags(churn_config)
                 
             rows.append({
                 "Marketing Preference Hash Key": hk,
@@ -1067,6 +1146,7 @@ def sat_policy(
         policy_to_person_map=None,
         latest_lead_converted_by_person=None,
         person_account_status_by_person=None,
+        churn_config=None,
 ):
     """
     Drop-in replacement.
@@ -1096,54 +1176,36 @@ def sat_policy(
             fallback_start = _rand_datetime_between(biz_start, as_of_dt.date())
             policy_start = min(fallback_start, load_dt)
 
-        policy_length_months = 12
-        planned_end = _add_one_year(policy_start)
-
         account_status = person_account_status_by_person.get(person_hk) if person_account_status_by_person and person_hk else None
-        if account_status == "CLOSED":
+        policy_length_months = 12
+        policy_cycle = _policy_cycle_from_dates(policy_start, as_of_dt)
+        current_term_start = _add_years(policy_start, policy_cycle)
+        current_term_end = _add_years(policy_start, policy_cycle + 1)
+        status = _sample_policy_status_for_tenure(policy_cycle, account_status, churn_config)
+
+        if status == "LAPSED" and current_term_start > load_dt:
             status = "CANCELLED"
-            min_end = policy_start + timedelta(days=7)
-            max_end = min(planned_end - timedelta(days=1), load_dt)
+
+        if status == "ACTIVE":
+            policy_end = current_term_end
+        elif status == "LAPSED":
+            policy_end = current_term_start if policy_cycle > 0 else min(as_of_dt, load_dt)
+        else:
+            min_end = max(policy_start + timedelta(days=7), current_term_start)
+            max_end = min(current_term_end - timedelta(days=1), as_of_dt, load_dt)
             if max_end >= min_end:
                 span_seconds = int((max_end - min_end).total_seconds())
                 policy_end = min_end + timedelta(seconds=random.randint(0, span_seconds))
             else:
-                policy_end = min_end
-        elif account_status == "SUSPENDED":
-            if planned_end <= as_of_dt:
-                policy_end = planned_end
-                status = "LAPSED"
-            else:
-                status = "CANCELLED"
-                min_end = policy_start + timedelta(days=7)
-                max_end = min(planned_end - timedelta(days=1), load_dt)
-                if max_end >= min_end:
-                    span_seconds = int((max_end - min_end).total_seconds())
-                    policy_end = min_end + timedelta(seconds=random.randint(0, span_seconds))
-                else:
-                    policy_end = min_end
-        else:
-            if random.random() < 0.05:
-                status = "CANCELLED"
-                min_end = policy_start + timedelta(days=7)
-                max_end = min(planned_end - timedelta(days=1), load_dt)
-                if max_end >= min_end:
-                    span_seconds = int((max_end - min_end).total_seconds())
-                    policy_end = min_end + timedelta(seconds=random.randint(0, span_seconds))
-                else:
-                    policy_end = min_end
-            else:
-                policy_end = planned_end
-                status = "ACTIVE" if policy_end > as_of_dt else "LAPSED"
+                policy_end = min(policy_start + timedelta(days=7), load_dt)
 
         renewal_date = policy_end - timedelta(days=random.randint(0, 10))
 
-        renewal_current, renewal_next = _sample_renewal_premiums()
-        declined_claims, active_claims, previous_claims = _sample_policy_claim_counts()
+        renewal_current, renewal_next = _sample_renewal_premiums(churn_config)
+        declined_claims, active_claims, previous_claims = _sample_policy_claim_counts(churn_config)
         gross_revenue = round(random.uniform(300, 2500), 2)
         net_revenue = round(random.uniform(200, 2000), 2)
-        sales_channel = random.choice(["ONLINE", "AGENT", "BRANCH"])
-        policy_cycle = _policy_cycle_from_dates(policy_start, as_of_dt)
+        sales_channel = _sample_sales_channel_for_status(status, churn_config)
 
         fraud_risk_score = 0
         if declined_claims >= 2:
@@ -1166,7 +1228,7 @@ def sat_policy(
         rows.append({
             "Policy Hash Key": hk,
             "Load Date": load_date,
-            "Cover Option": _sample_policy_cover_option(),
+            "Cover Option": _sample_policy_cover_option(churn_config),
             "Declined Claims": declined_claims,
             "Fraud Flag": fraud_flag,
             "Gross Revenue": gross_revenue,
@@ -1243,7 +1305,7 @@ def sat_home(home_hks, load_date, home_to_addr: dict | None = None):
 
 
 # ---------------- MOTOR ----------------
-def sat_motor(motor_hks, load_date, motor_to_addr: dict | None = None):
+def sat_motor(motor_hks, load_date, motor_to_addr: dict | None = None, churn_config=None):
     rows = []
     for motor_hk in motor_hks:
         year = random.randint(2005, 2025)
@@ -1254,7 +1316,7 @@ def sat_motor(motor_hks, load_date, motor_to_addr: dict | None = None):
         if not addr:
             addr = _address_from_cache_by_hk(motor_hk)
 
-        body_type, vehicle_class, vehicle_model, vehicle_type = _sample_vehicle_profile()
+        body_type, vehicle_class, vehicle_model, vehicle_type = _sample_vehicle_profile(churn_config)
 
         rows.append({
             "Motor Hash Key": motor_hk,

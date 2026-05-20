@@ -204,8 +204,8 @@ def build_source_context(
     sat_eci = sat_identities(person_to_identity, sat_date)
     sat_con = sat_contact(person_to_contact, sat_date)
     sat_cns = sat_consent(person_to_consent, sat_date)
-    sat_acc = sat_account(person_to_account, sat_date)
-    sat_mpr = sat_marketing_preference(person_to_mpr, sat_date)
+    sat_acc = sat_account(person_to_account, sat_date, churn_config=cfg_local.get("churn_settings"))
+    sat_mpr = sat_marketing_preference(person_to_mpr, sat_date, churn_config=cfg_local.get("churn_settings"))
     sat_men = sat_marketing_engagement(person_to_men, sat_date)
     sat_quo = sat_quote(person_to_quote, sat_date)
 
@@ -252,6 +252,7 @@ def build_source_context(
         policy_to_person_map=policy_to_person_map,
         latest_lead_converted_by_person=latest_lead_converted_by_person,
         person_account_status_by_person=person_account_status_by_person,
+        churn_config=cfg_local.get("churn_settings"),
     )
     sat_lea = apply_lead_interest_levels(
         sat_lea,
@@ -300,6 +301,7 @@ def build_source_context(
         business_start_date=business_start_date,
         as_of_date=as_of_date,
         earliest_policy_start_by_person=earliest_policy_start_by_person,
+        churn_config=cfg_local.get("churn_settings"),
     )
     sat_cus = apply_customer_segments(
         sat_cus,
@@ -334,7 +336,7 @@ def build_source_context(
     fallback_addr = addr_hks[0] if addr_hks else None
     for motor_hk in motor_hks:
         motor_to_addr.setdefault(motor_hk, fallback_addr)
-    sat_mot = sat_motor(motor_hks, sat_date, motor_to_addr)
+    sat_mot = sat_motor(motor_hks, sat_date, motor_to_addr, churn_config=cfg_local.get("churn_settings"))
 
     extract_ts = (datetime.fromisoformat(hub_date) - timedelta(days=7)).isoformat()
 

@@ -2,347 +2,179 @@
 
 This repo generates synthetic insurance data across multiple raw sources, maps selected sources into a common raw contract, builds vault-compatible silver tables, and creates SCD2 outputs.
 
-## Current Synthetic Model
+## Current Outputs
 
-Implemented synthetic outputs:
-- base 360
-- enhanced 360
-- source-specific `new_outputs_src`
+Default `main.py` output:
 
-Base output:
-- `data/output/<run_id>`
-- `data/synthetic/base/<run_id>`
-- `data/scd2/base/<run_id>`
+- base Data Vault CSVs under `data/output/<run_id>`
+- normalized synthetic base under `data/synthetic/base/<run_id>`
+- enhanced 360 under `data/synthetic/enhanced/<run_id>`
+- raw CRM/API/claims/data_source outputs
+- canonical raw for CRM and data_source
+- API silver under `data/silver/api/<run_id>`
+- raw CRM/API SCD2 when prior raw batches exist
+- base/enhanced SCD2 when prior synthetic runs exist
 
-Enhanced output:
-- `data/synthetic/enhanced/<run_id>`
-- `data/scd2/enhanced/<run_id>`
+Optional output:
 
-## Current Source Model
+- `data/new_outputs_src/<source>/data/<run_id>` and `data/new_outputs_src/<source>/scd2/<run_id>` are generated only when `--include-new-outputs-src` is passed.
 
-Implemented sources:
+## Sources
+
+Implemented default sources:
+
 - `crm`
 - `api`
-- `kaggle`
+- `claims`
 - `data_source`
-- `new_outputs_src/crm`
-- `new_outputs_src/adp`
-- `new_outputs_src/transunion`
-- `new_outputs_src/experian`
 
-Current behavior:
-- `crm` is generated from the main synthetic context.
-- `api` is generated from its own independent synthetic context.
-- `data_source` is generated from its own independent synthetic context.
-- `kaggle` is external-input-driven and uses files under `data/input/kaggle`.
+Optional `new_outputs_src` sources:
 
-Important:
-- `crm`, `api`, and `data_source` use the same configured scenario size each.
-- They do not reuse the same raw business IDs.
-- `data_source` still has source-shaped `motor` and `home` extracts, so its file row counts differ from `crm` and `api`.
+- `crm`
+- `adp`
+- `transunion`
+- `experian`
+
+`crm`, `api`, `claims`, and `data_source` use independent synthetic contexts where applicable. They follow the same churn and lifecycle rules but do not reuse the same raw business IDs.
 
 ## Main Commands
 
-Run the main base-load generation:
+Run normal generation:
 
 ```powershell
-$env:PYTHONUTF8='1'
-python .\main.py
+.\venv\Scripts\python.exe .\main.py
 ```
 
-What `main.py` creates:
-- normalized vault-style output under `data/output/<run_id>`
-- normalized enhanced vault-style output under `data/synthetic/enhanced/<run_id>`
-- raw `crm`
-- raw `api`
-- raw `data_source` source-native extracts
-- raw `data_source` canonical raw
-- raw `kaggle` if Kaggle input data exists
-- `new_outputs_src` source-specific outputs
-- raw SCD2 for `crm`, `api`, and `kaggle` when a previous run exists
-- source-specific SCD2 under `data/new_outputs_src/<source>/scd2/<run_id>` when previous source batches exist
-- silver `api`
-- normalized synthetic base output
-- base SCD2 when a previous normalized run exists
-- enhanced SCD2 when a previous enhanced run exists
-
-Transform all latest raw sources to silver:
+Run normal generation plus optional source-specific outputs:
 
 ```powershell
-python .\misc\transform_all_raw_to_silver.py
+.\venv\Scripts\python.exe .\main.py --include-new-outputs-src
 ```
 
-This builds silver for:
-- `crm`
-- `api`
-- `kaggle`
-- `data_source`
+Transform latest raw sources to silver:
+
+```powershell
+.\venv\Scripts\python.exe .\misc\transform_all_raw_to_silver.py
+```
 
 Verify all latest silver folders:
 
 ```powershell
-python .\misc\verify_all_silver.py
+.\venv\Scripts\python.exe .\misc\verify_all_silver.py
 ```
 
-Run only `data_source` raw -> canonical raw -> silver:
+Validate churn KPI fields in the latest base run:
 
 ```powershell
-python .\misc\data_source_to_silver.py
+.\venv\Scripts\python.exe .\validate_churn_kpis.py
 ```
 
-Skip `data_source` silver verification:
+Validate a specific base run:
 
 ```powershell
-python .\misc\data_source_to_silver.py --skip-verify
+.\venv\Scripts\python.exe .\validate_churn_kpis.py --path .\data\synthetic\base\<run_id>
 ```
 
-Verify one silver folder directly:
+## Churn Rules
 
-```powershell
-python .\verify_csv.py <silver_folder_path>
-```
+Churn source fields are generated in the base satellites and inherited by raw, canonical raw, silver, and enhanced outputs.
 
-## Config Inputs
+The churn distributions are configurable in `config/scenario_v1.json` under `churn_settings`:
 
-Primary scenario config:
-- `config/scenario_v1.json`
+- `renewal_current_premium_band_weights`
+- `renewal_movement_band_weights`
+- `claim_count_weights`
+- `active_claim_count_weights`
+- `declined_claim_count_weights`
+- `cover_option_weights`
+- `vehicle_segment_weights`
+- `marketing_engagement_band_weights`
+- `service_call_band_weights`
+- `customer_status_weights`
+- `account_status_weights`
+- `tenure_churn_probability`
+- `sales_channel_by_policy_status`
+- `suspended_policy_status_weights`
+- `churned_policy_status_weights`
 
-Storage root definitions:
-- `config/storage_paths.py`
+Important churn behavior:
 
-Kaggle mapping configs:
-- `config/kaggle_mappings/*.json`
+- `Policy Cycle` is completed annual tenure from policy start date to load/snapshot date.
+- `Policy Cycle` is not the number of policies purchased by a customer.
+- Churn decreases as `Policy Cycle` increases: `<1` has the highest churn, then `1-2`, then `3-5`, then `>5`.
+- Renewal current/next amounts follow the configured churn movement bands.
+- Claim-count, add-on, marketing proxy, driver-experience proxy, and vehicle model churn bands are validated.
+- Sales-channel churn variance is preserved using existing channel values: `AGENT` carries broker/aggregator-like higher churn behavior; `AGGREGATOR` is not emitted.
 
-Kaggle input landing:
-- `data/input/kaggle/<dataset_name>/...`
+Validation coverage:
+
+- `validate_churn_kpis.py` checks churn source fields and churn direction by tenure/channel.
+- `verify_csv.py` checks the same churn rules as part of full silver validation.
+
+## Policy Date Rules
+
+Policy date rules are validated in base and silver checks:
+
+- `Policy Start Date <= Policy End Date`
+- `Renewal Date` is within the configured renewal window before `Policy End Date`
+- `ACTIVE`, `LAPSED`, and `CANCELLED` statuses are date-consistent
+- long-tenure active/lapsed policies use the current annual term boundary
+- `LAPSED` only represents a completed renewal cycle; sub-one-year churn is represented as `CANCELLED`
 
 ## Output Folders
 
 Main normalized output:
+
 - `data/output/<run_id>`
 
 Raw folders:
+
 - `data/raw/crm/<run_id>`
+- `data/raw/crm_canonical/<run_id>`
 - `data/raw/api/<run_id>`
-- `data/raw/kaggle/<dataset_name>/<run_id>`
+- `data/raw/claims/<run_id>`
+- `data/raw/claims_canonical/<run_id>`
 - `data/raw/data_source/motor/<run_id>`
 - `data/raw/data_source/home/<run_id>`
 - `data/raw/data_source_canonical/<run_id>`
-- `data/new_outputs_src/crm/data/<run_id>`
-- `data/new_outputs_src/adp/data/<run_id>`
-- `data/new_outputs_src/transunion/data/<run_id>`
-- `data/new_outputs_src/experian/data/<run_id>`
 
 Silver folders:
-- `data/silver/rebuild/<run_id>` for `crm`
+
+- `data/silver/rebuild/<run_id>` for CRM
 - `data/silver/api/<run_id>`
-- `data/silver/kaggle/<run_id>`
+- `data/silver/claims/<run_id>`
 - `data/silver/data_source/<run_id>`
 
-Synthetic normalized base:
+Synthetic folders:
+
 - `data/synthetic/base/<run_id>`
 - `data/synthetic/enhanced/<run_id>`
 
 SCD2 folders:
+
 - `data/scd2/base/<run_id>`
 - `data/scd2/enhanced/<run_id>`
 - `data/scd2/raw/crm/<run_id>`
 - `data/scd2/raw/api/<run_id>`
-- `data/scd2/raw/kaggle/<dataset_name>/<run_id>`
-- `data/new_outputs_src/<source>/scd2/<run_id>`
-
-## Raw Layer Logic
-
-### new_outputs_src
-
-Generated by:
-- `helper/new_outputs_src.py`
-
-Output shape:
-- `crm`: CRM-style CSV
-- `adp`: API-style JSONL
-- `transunion`: CRM-style CSV
-- `experian`: CRM-style CSV
-
-Behavior:
-- all four sources are generated per run
-- each source has its own `data/<run_id>` folder
-- each source can generate its own `scd2/<run_id>` on later runs
-- source markers are carried inside the records:
-  - `CRM`
-  - `ADP`
-  - `TRANSUNION`
-  - `EXPERIAN`
-
-### CRM raw
-
-Generated by:
-- `generators/raw_crm_generator.py`
-
-Output shape:
-- canonical CRM-style CSV files such as `crm_person.csv`, `crm_policy.csv`, `crm_motor.csv`
-
-### API raw
-
-Generated by:
-- `generators/raw_api_generator.py`
-
-Output shape:
-- source-native JSONL files such as `person.jsonl`, `policy.jsonl`
-
-Behavior:
-- generated from its own independent synthetic context
-- uses API-specific source IDs
-
-### Kaggle raw
-
-Generated by:
-- `generators/raw_kaggle_generator.py`
-
-Output shape:
-- canonical raw CSV files matching the common raw-to-silver contract
-
-Behavior:
-- driven by external dataset contents, not by scenario population
-
-### data_source raw
-
-Generated by:
-- `generators/raw_data_source_generator.py`
-
-Output shape:
-- source-native extract CSVs:
-  - `motor_party_extract.csv`
-  - `motor_policy_extract.csv`
-  - `motor_vehicle_extract.csv`
-  - `home_party_extract.csv`
-  - `home_policy_extract.csv`
-  - `home_property_extract.csv`
-
-Behavior:
-- generated from its own independent synthetic context
-- not derived from CRM raw in the active run paths
-
-### data_source canonical raw
-
-Generated by:
-- `helper/data_source_mapper.py`
-
-Purpose:
-- maps `data_source` source-native files into the common canonical raw schema used by the shared silver builder
-
-Output shape:
-- canonical CRM-style CSV files such as `crm_person.csv`, `crm_policy.csv`
-
-## Silver Logic
-
-Shared silver builder:
-- `misc/raw_to_silver_sample.py`
-
-API wrapper:
-- `helper/api_silver_builder.py`
-
-Current silver behavior:
-- one common vault-compatible silver transformation path
-- supports canonical CSV raw and API JSONL raw
-- carries source information into `record_source`
-
-Silver verification:
-- `verify_csv.py`
-
-## Run Flow
-
-### First run
-
-On the first run:
-- `main.py` generates normalized output and current raw outputs
-- `main.py` generates enhanced synthetic output
-- `main.py` generates `new_outputs_src`
-- `main.py` builds API silver
-- `main.py` maps `data_source` raw into canonical raw
-- `main.py` does not automatically build CRM, Kaggle, or `data_source` silver
-- raw SCD2 is skipped if there is no previous raw batch
-- base SCD2 is skipped if there is no previous normalized base batch
-- enhanced SCD2 is skipped if there is no previous enhanced batch
-
-Recommended sequence:
-
-```powershell
-$env:PYTHONUTF8='1'
-python .\main.py
-python .\misc\transform_all_raw_to_silver.py
-python .\misc\verify_all_silver.py
-```
-
-### Second run and later
-
-On later runs:
-- `main.py` generates a new `run_id`
-- `crm`, `api`, `data_source`, and optional `kaggle` raw are regenerated
-- `new_outputs_src` batches are regenerated
-- API silver is rebuilt for the current run in `main.py`
-- raw SCD2 is generated by diffing current vs previous raw batches for:
-  - `crm`
-  - `api`
-  - `kaggle`
-- source-specific SCD2 is generated for:
-  - `new_outputs_src/crm`
-  - `new_outputs_src/adp`
-  - `new_outputs_src/transunion`
-  - `new_outputs_src/experian`
-- base SCD2 is generated by diffing normalized base satellite outputs
-- enhanced SCD2 is generated by diffing prior enhanced synthetic runs
-
-Then run:
-
-```powershell
-python .\misc\transform_all_raw_to_silver.py
-python .\misc\verify_all_silver.py
-```
+- optional `data/new_outputs_src/<source>/scd2/<run_id>`
 
 ## SCD2 Coverage
 
-Base SCD2:
-- generated by `helper/scd2_generator.py`
-- output under `data/scd2/base/<run_id>`
+Synthetic base/enhanced SCD2 uses sampled satellite mutations.
 
-Enhanced SCD2:
-- generated by `helper/scd2_generator.py`
-- output under `data/scd2/enhanced/<run_id>`
+Raw SCD2 currently covers:
 
-Raw SCD2:
-- generated by `helper/raw_scd2_generator.py`
-- currently covers:
-  - `crm`
-  - `api`
-  - `kaggle`
-
-Current limitation:
-- raw SCD2 for `data_source` is not implemented
-
-Source-specific SCD2:
-- generated by `helper/new_outputs_src.py`
-- covers:
-  - `crm`
-  - `adp`
-  - `transunion`
-  - `experian`
-
-## Databricks Notebook Support
-
-Notebook silver transformation:
-- `notebook/bsnew.ipynb`
-
-Supported notebook source schemas:
 - `crm`
 - `api`
-- `kaggle`
-- `data_source`
 
-## Notes
+Optional source-specific SCD2 covers `new_outputs_src` only when `--include-new-outputs-src` is used.
 
-- `load_config()` resolves `config/scenario_v1.json` relative to the repo, so scripts can be run from different working directories.
-- `main.py` prints Unicode to console, so using `PYTHONUTF8=1` is recommended on Windows.
-- `data_source` and `kaggle` canonical raw no longer include `_dataset_name`.
-- `data_source` source-native raw now populates `_extract_ts`.
-- enhanced-specific rules and verification are documented in `docs/enhanced_synthetic_plan.md`.
+## Large Runs
+
+For large base-only generation:
+
+```powershell
+.\venv\Scripts\python.exe .\main.py --streaming-base --total-people 10000000 --chunk-size 100000
+```
+
+The streaming path is intended for large unique base output. Full raw/silver/churn/SCD2 validation is still intended for the normal full workflow.

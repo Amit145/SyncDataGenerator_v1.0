@@ -4,7 +4,7 @@ import calendar
 from decimal import Decimal, ROUND_HALF_UP
 import pandas as pd
 from pandas.errors import EmptyDataError
-from config.storage_paths import SILVER_REBUILT_ROOT, SILVER_API_ROOT, SILVER_KAGGLE_ROOT, SILVER_DATA_SOURCE_ROOT
+from config.storage_paths import SILVER_REBUILT_ROOT, SILVER_API_ROOT, SILVER_DATA_SOURCE_ROOT
 
 
 def read_csv_safe(base_path: str, file_name: str) -> pd.DataFrame:
@@ -153,6 +153,17 @@ def add_one_year(ts: pd.Timestamp) -> pd.Timestamp:
         return ts.replace(year=ts.year + 1, day=min(ts.day, last_day))
 
 
+def add_years(ts: pd.Timestamp, years: int) -> pd.Timestamp:
+    if pd.isna(ts):
+        return pd.NaT
+    try:
+        return ts.replace(year=ts.year + int(years))
+    except ValueError:
+        target_year = ts.year + int(years)
+        last_day = calendar.monthrange(target_year, ts.month)[1]
+        return ts.replace(year=target_year, day=min(ts.day, last_day))
+
+
 def currency_round(value) -> Decimal | None:
     if pd.isna(value):
         return None
@@ -205,6 +216,7 @@ def verify_churn_rule_fields(sat_policy: pd.DataFrame, sat_natural_person: pd.Da
             "number_of_previous_claim",
             "declined_claims",
             "policy_cycle",
+            "policy_status",
             "cover_option",
         }
         missing = policy_cols - set(sat_policy.columns)
@@ -290,6 +302,29 @@ def verify_churn_rule_fields(sat_policy: pd.DataFrame, sat_natural_person: pd.Da
                 {"<1", "1-2", "3-5", ">5"},
                 len(policy),
             )
+            tenure_eval = policy[["policy_status", "policy_cycle"]].copy()
+            tenure_eval["churn_flag"] = tenure_eval["policy_status"].isin(["CANCELLED", "LAPSED"]).astype(int)
+            tenure_eval["tenure_band"] = tenure_eval["policy_cycle"].map(
+                lambda v: "<1" if v < 1 else "1-2" if v <= 2 else "3-5" if v <= 5 else ">5"
+            )
+            tenure_summary = (
+                tenure_eval.groupby("tenure_band")["churn_flag"]
+                .agg(["count", "mean"])
+                .reindex(["<1", "1-2", "3-5", ">5"])
+            )
+            if tenure_summary["count"].ge(20).all():
+                rates = tenure_summary["mean"]
+                tenure_detail = {
+                    idx: {"count": int(row["count"]), "churn_pct": round(float(row["mean"]) * 100, 2)}
+                    for idx, row in tenure_summary.iterrows()
+                }
+                _print_rule_result(
+                    "churn_policy_cycle_tenure_rate",
+                    [] if rates.loc["<1"] > rates.loc["1-2"] > rates.loc["3-5"] > rates.loc[">5"] else ["churn rate does not decrease as policy_cycle tenure increases"],
+                    tenure_detail,
+                )
+            else:
+                print(f"churn_policy_cycle_tenure_rate skipped: summary={tenure_summary.fillna(0).to_dict('index')}")
 
             cover_allowed = {"BASE_ONLY", "ONE_ADD_ON", "TWO_ADD_ONS", "THREE_PLUS_ADD_ONS"}
             bad_cover = policy[~policy["cover_option"].isin(cover_allowed)]
@@ -1215,14 +1250,29 @@ def main(base_path: str):
                 policy_person_dates = policy_person_dates.merge(policy_meta, on="policy_hash_key", how="left")
 
                 non_cancelled = policy_person_dates[policy_person_dates["policy_status"] != "CANCELLED"].copy()
-                non_cancelled["expected_policy_end_date"] = non_cancelled["policy_start_date"].apply(add_one_year)
+                if "policy_cycle" in sat_policy.columns:
+                    cycle_lookup = sat_policy[["policy_hash_key", "policy_cycle"]].copy()
+                    cycle_lookup["policy_cycle"] = pd.to_numeric(cycle_lookup["policy_cycle"], errors="coerce").fillna(0).astype(int)
+                    non_cancelled = non_cancelled.merge(cycle_lookup, on="policy_hash_key", how="left")
+                    non_cancelled["expected_policy_end_date"] = [
+                        add_years(start, int(cycle) if status == "LAPSED" else int(cycle) + 1)
+                        for start, cycle, status in zip(
+                            non_cancelled["policy_start_date"],
+                            non_cancelled["policy_cycle"].fillna(0),
+                            non_cancelled["policy_status"],
+                        )
+                    ]
+                    duration_label = "current annual term boundary"
+                else:
+                    non_cancelled["expected_policy_end_date"] = non_cancelled["policy_start_date"].apply(add_one_year)
+                    duration_label = "1 year"
                 bad_annual_duration = non_cancelled[
                     non_cancelled["policy_start_date"].notna()
                     & non_cancelled["policy_end_date"].notna()
                     & (non_cancelled["policy_end_date"] != non_cancelled["expected_policy_end_date"])
                 ]
                 if not bad_annual_duration.empty:
-                    print(f"policy_annual_duration error: {len(bad_annual_duration)} non-cancelled rows are not exactly 1 year")
+                    print(f"policy_annual_duration error: {len(bad_annual_duration)} non-cancelled rows do not match {duration_label}")
                     print(
                         "sample:",
                         bad_annual_duration[["policy_hash_key", "policy_start_date", "policy_end_date", "expected_policy_end_date"]]
@@ -1350,8 +1400,8 @@ def main(base_path: str):
 
 
 if __name__ == "__main__":
-    dirs = [SILVER_REBUILT_ROOT,SILVER_API_ROOT,SILVER_KAGGLE_ROOT,SILVER_DATA_SOURCE_ROOT]
-    dirs = ['F:\\SyncDataGenerator_v1.0\\data\\synthetic\\base\\20260519095249']
+    dirs = [SILVER_REBUILT_ROOT,SILVER_API_ROOT,SILVER_DATA_SOURCE_ROOT]
+    dirs = ['F:\\SyncDataGenerator_v1.0\\data\\synthetic\\base\\20260520185750']
     for target_path in dirs:
         print(target_path)
         main(target_path)

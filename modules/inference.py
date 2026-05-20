@@ -99,7 +99,7 @@ def classify_tables_with_llm(parsed_statements):
             model_name="openai"
         )
 
-        # 🔒 CRITICAL: Parse & validate JSON
+        # CRITICAL: Parse and validate JSON
         try:
             table_json = json.loads(raw_output)
         except json.JSONDecodeError as e:
@@ -130,7 +130,7 @@ def enrich_foreign_keys(table_metadata, alter_table_fks):
         source_column = fk["source_column"]
 
         if source_table not in table_lookup:
-            print(f"⚠️ FK source table not found: {source_table}")
+            print(f"WARNING FK source table not found: {source_table}")
             continue
 
         table = table_lookup[source_table]
@@ -138,7 +138,7 @@ def enrich_foreign_keys(table_metadata, alter_table_fks):
 
         if source_column not in columns:
             print(
-                f"⚠️ FK column not found: {source_table}.{source_column}"
+                f"WARNING FK column not found: {source_table}.{source_column}"
             )
             continue
 
@@ -245,7 +245,7 @@ def inference_module():
     with open(TABLE_METADATA_PATH, "w", encoding="utf-8") as f:
         json.dump(table_metadata, f, indent=2, ensure_ascii=False)
 
-    print(f"✅ Final table metadata written → {TABLE_METADATA_PATH}")
+    print(f"OK Final table metadata written -> {TABLE_METADATA_PATH}")
 
     ordered_metadata = reorder_tables_for_generation(table_metadata)
 

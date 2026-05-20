@@ -55,7 +55,6 @@ Enhanced sample/reference data:
 Normal full generation:
 
 ```powershell
-$env:PYTHONUTF8='1'
 python .\main.py
 ```
 
@@ -103,13 +102,14 @@ The main flow is:
 8. Generate base satellites.
 9. Write base output to `data/output/<run_id>`.
 10. Build `base_context`.
-11. Generate raw CRM/API/claims/data_source/Kaggle outputs.
-12. Generate raw and source-specific SCD2 when previous runs exist.
-13. Generate API silver.
-14. Generate enhanced synthetic output from `base_context`.
-15. Generate enhanced SCD2 when previous enhanced runs exist.
-16. Validate base output and normalize to `data/synthetic/base/<run_id>`.
-17. Generate base SCD2 when previous base runs exist.
+11. Generate raw CRM/API/claims/data_source outputs.
+12. Generate raw SCD2 when previous CRM/API raw runs exist.
+13. Generate optional `new_outputs_src` only when `--include-new-outputs-src` is passed.
+14. Generate API silver.
+15. Generate enhanced synthetic output from `base_context`.
+16. Generate enhanced SCD2 when previous enhanced runs exist.
+17. Validate base output and normalize to `data/synthetic/base/<run_id>`.
+18. Generate base SCD2 when previous base runs exist.
 
 ## Important Code Files
 
@@ -139,9 +139,7 @@ Raw and silver:
 - `generators/raw_api_generator.py`
 - `generators/raw_claims_generator.py`
 - `generators/raw_data_source_generator.py`
-- `generators/raw_kaggle_generator.py`
 - `helper/data_source_mapper.py`
-- `helper/kaggle_mapper.py`
 - `misc/raw_to_silver_sample.py`
 - `misc/transform_all_raw_to_silver.py`
 
@@ -167,6 +165,8 @@ Configuration and enum sources:
 - `config/storage_paths.py`
 - `enums/product_catalog.py`
 - `enums/sat_enums.py`
+
+`config/scenario_v1.json` includes `churn_settings`, which controls renewal, claim-count, add-on, vehicle segment, marketing proxy, customer/account status, tenure-churn, sales-channel, and churned-status distributions.
 
 ## Base Model Rules
 
@@ -227,7 +227,13 @@ Lifecycle rules:
 - policy holders become customers and accounts
 - renewal is represented as fields on `sat_policy`, not as a new policy term row
 - renewal current/next amounts follow churn movement bands, including decreases and higher uplifts
-- policy cycle is standardized as `policy_cycle`; do not emit the legacy misspelled column name
+- policy cycle is standardized as `policy_cycle`; it means completed annual tenure, not number of policies purchased
+- churn probability decreases as completed `policy_cycle` tenure increases
+- sales-channel churn variance uses existing values only; `AGENT` carries broker/aggregator-like higher churn behavior and `AGGREGATOR` is not emitted
+- churn distribution weights are configured in `config/scenario_v1.json` under `churn_settings`
+- active/lapsed policy end dates use the current annual term boundary for long-tenure policies
+- `LAPSED` requires a completed renewal cycle; sub-one-year churn is represented as `CANCELLED`
+- do not emit the legacy misspelled policy-cycle column name
 - churn available/proxy fields from `new_rules/Data Req Churn NPS.xlsx` are enforced in base satellite generation before source-specific raw outputs are written
 - campaign rows link to lead persons and enrich the lead journey
 - insured objects are derived from policy-linked motor/home assets
@@ -519,28 +525,23 @@ Change cardinality:
 
 ## Current Known Good State
 
-A recent full run produced base/enhanced/current SCD2 outputs, and a later enhanced-only run verified the latest enhanced timestamp rules.
+The latest validated run during the churn-tenure update was:
 
-- `data/synthetic/base/20260507192109`
-- `data/synthetic/enhanced/20260507192109`
-- `data/scd2/base/20260507192109`
-- `data/scd2/enhanced/20260507192109`
-- `data/synthetic/enhanced/20260508103525`
-- `data/scd2/enhanced/20260508103525`
+- `data/synthetic/base/20260520182650`
+- `data/synthetic/enhanced/20260520182650`
+- `data/scd2/base/20260520182650`
+- `data/scd2/enhanced/20260520182650`
 
-The latest enhanced verification passed for:
+Validation passed for:
 
-- `data/synthetic/enhanced/20260508103525`
+- `main.py`
+- `validate_churn_kpis.py`
+- `misc/transform_all_raw_to_silver.py`
+- `misc/verify_all_silver.py`
 
-The latest enhanced output had:
+The validation confirmed:
 
-- `80` CSV files
-- `25` hubs
-- `30` links
-- `25` satellites
-
-Base SCD2 existed for the second run and matched the `10%` per-satellite rule.
-
-Enhanced SCD2 existed for the second run and contained historical sampled satellite deltas using the same `10%` per-satellite rule.
-
-The latest enhanced-only verification also confirmed DDL-driven timestamp checks for claim, complaint, regulation, insured object, campaign, policy issue/transaction, product launch, and quote date columns.
+- churn decreases as completed `policy_cycle` tenure increases
+- sales-channel churn variance is preserved with `AGENT` as the higher-risk broker/aggregator-like channel
+- policy start/end/renewal dates remain valid for active, lapsed, and cancelled policies
+- CRM, API, claims, and data_source silver outputs pass full rule validation
