@@ -76,6 +76,7 @@ Validate a specific base run:
 The current churn behavior follows `new_rules/Data Req Churn NPS.xlsx` for available and proxy rows.
 
 Tune churn distributions in `config/scenario_v1.json` under `churn_settings`.
+For the meaning of each config key, see `docs/scenario_config_reference.md`.
 
 Key points:
 

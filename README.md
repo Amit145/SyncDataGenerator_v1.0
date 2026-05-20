@@ -75,6 +75,10 @@ Validate a specific base run:
 .\venv\Scripts\python.exe .\validate_churn_kpis.py --path .\data\synthetic\base\<run_id>
 ```
 
+## Config Reference
+
+The full meaning of every `config/scenario_v1.json` setting is documented in [docs/scenario_config_reference.md](F:/SyncDataGenerator_v1.0/docs/scenario_config_reference.md).
+
 ## Churn Rules
 
 Churn source fields are generated in the base satellites and inherited by raw, canonical raw, silver, and enhanced outputs.

@@ -67,6 +67,7 @@ verify_all_silver.py checks full silver rules:
   - vehicle-model churn segment logic and distributions
 
 Churn distributions are configured in config/scenario_v1.json under churn_settings.
+Each config key is explained in docs/scenario_config_reference.md.
 
 compare_all_scd2.py checks SCD2:
 

@@ -168,6 +168,8 @@ Configuration and enum sources:
 
 `config/scenario_v1.json` includes `churn_settings`, which controls renewal, claim-count, add-on, vehicle segment, marketing proxy, customer/account status, tenure-churn, sales-channel, and churned-status distributions.
 
+Use `docs/scenario_config_reference.md` for the meaning of each scenario config key before changing generator behavior.
+
 ## Base Model Rules
 
 Base model has:

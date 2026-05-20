@@ -266,6 +266,8 @@ Important base rule:
 - conversion rates
 - enhanced settings
 
+See `docs/scenario_config_reference.md` for the meaning of every scenario config key.
+
 `config/cardinality.json` controls relationship counts for selected links.
 
 `enums/product_catalog.py` controls product codes and product selection weights by person type.

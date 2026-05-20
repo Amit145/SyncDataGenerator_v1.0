@@ -83,6 +83,7 @@ SCD2 is generated only when prior comparable runs exist.
 Current churn alignment:
 
 - churn distributions are configured in `config/scenario_v1.json` under `churn_settings`
+- config key meanings are documented in `docs/scenario_config_reference.md`
 - `Policy Cycle` is completed annual tenure.
 - Higher `Policy Cycle` produces lower churn.
 - `Policy Cycle` is not number of policies/products held.
