@@ -1,5 +1,8 @@
 # Unified Data Runbook
 
+Detailed current rules are documented in `docs/current_rules_reference.md`.
+Scenario config meanings are documented in `docs/scenario_config_reference.md`.
+
 This runbook describes the current commands and storage layout.
 
 ## Commands
@@ -88,7 +91,8 @@ Current churn alignment:
 - Higher `Policy Cycle` produces lower churn.
 - `Policy Cycle` is not number of policies/products held.
 - Multi-product ownership is a separate concept and should not be inferred from `Policy Cycle`.
-- `AGENT` carries broker/aggregator-like higher churn behavior using existing channel values.
+- Completed-tenure churn targets the workbook ranges: `<1 year 35-50%`, `1-2 years 25-35%`, `3-5 years 15-25%`, and `>5 years 8-15%`.
+- `AGENT` carries broker/aggregator-like higher churn behavior using existing channel values. The workbook does not define a sales-channel benchmark range.
 - `AGGREGATOR` is not emitted.
 - Policy dates and status rules remain valid for `ACTIVE`, `LAPSED`, and `CANCELLED`.
 

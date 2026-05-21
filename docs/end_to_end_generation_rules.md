@@ -2,6 +2,8 @@
 
 This document describes the implemented behavior of the generator as it exists in the codebase.
 
+For the current consolidated rule set across base, raw, silver, enhanced, churn, and SCD2 outputs, see [current_rules_reference.md](F:/SyncDataGenerator_v1.0/docs/current_rules_reference.md).
+
 It covers:
 
 - execution flow
@@ -424,7 +426,8 @@ Current implemented fields:
 - renewal premium current and next amounts produce decreases, `0-5%`, `5-10%`, and `>10%` renewal movement bands
 - `Policy Cycle` is derived from policy start date to snapshot/load date as completed annual cycles
 - churn probability decreases as completed `Policy Cycle` tenure increases: `<1` highest, then `1-2`, then `3-5`, then `>5`
-- sales-channel churn variance is preserved with existing values only: `AGENT` carries broker/aggregator-like higher churn behavior; `AGGREGATOR` is not emitted
+- completed-tenure churn is tuned to the workbook ranges: `<1 year 35-50%`, `1-2 years 25-35%`, `3-5 years 15-25%`, and `>5 years 8-15%`
+- sales-channel churn variance is preserved with existing values only: `AGENT` carries broker/aggregator-like higher churn behavior; `AGGREGATOR` is not emitted; the workbook does not provide a sales-channel benchmark range
 - active, previous, and declined claim counts are generated from a total recent-claims distribution
 - current premium amount is banded through the generated renewal current amount
 - `Cover Option` uses add-on-count categories: `BASE_ONLY`, `ONE_ADD_ON`, `TWO_ADD_ONS`, `THREE_PLUS_ADD_ONS`
@@ -432,6 +435,7 @@ Current implemented fields:
 - marketing preference flags represent the email/SMS engagement proxy, from no opted-in channels through high engagement
 - `Call` in marketing preference represents the customer-service call-frequency proxy
 - `Birth Date` is generated with driver-experience proxy bands because no licence issue date is available
+- Driver experience uses `max(age - 17, 0)` as the proxy and follows the workbook churn ranges: `<2y` `25-40%`, `2-5y` `18-30%`, `6-10y` `15-25%`, and `>10y` `10-18%`
 
 Validation:
 

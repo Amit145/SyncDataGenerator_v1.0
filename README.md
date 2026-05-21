@@ -79,6 +79,10 @@ Validate a specific base run:
 
 The full meaning of every `config/scenario_v1.json` setting is documented in [docs/scenario_config_reference.md](F:/SyncDataGenerator_v1.0/docs/scenario_config_reference.md).
 
+The current detailed rule set for base, raw, silver, enhanced, churn, and SCD2 outputs is documented in [docs/current_rules_reference.md](F:/SyncDataGenerator_v1.0/docs/current_rules_reference.md).
+
+Enhanced claim financials are configurable through `claim_financial_settings`. They populate enhanced `sat_claim` amount, paid, reserve, expense, recovery/fraud/legal financials, `claim_band`, and `claim_band_sort`.
+
 ## Churn Rules
 
 Churn source fields are generated in the base satellites and inherited by raw, canonical raw, silver, and enhanced outputs.
@@ -94,6 +98,7 @@ The churn distributions are configurable in `config/scenario_v1.json` under `chu
 - `vehicle_segment_weights`
 - `marketing_engagement_band_weights`
 - `service_call_band_weights`
+- `driver_experience_band_weights`
 - `customer_status_weights`
 - `account_status_weights`
 - `tenure_churn_probability`
@@ -106,13 +111,23 @@ Important churn behavior:
 - `Policy Cycle` is completed annual tenure from policy start date to load/snapshot date.
 - `Policy Cycle` is not the number of policies purchased by a customer.
 - Churn decreases as `Policy Cycle` increases: `<1` has the highest churn, then `1-2`, then `3-5`, then `>5`.
+- Current `Policy Cycle` churn is tuned to the workbook tenure ranges: `<1 year 35-50%`, `1-2 years 25-35%`, `3-5 years 15-25%`, and `>5 years 8-15%`.
 - Renewal current/next amounts follow the configured churn movement bands.
+- Current premium churn follows workbook ranges: low `10-18%`, medium `15-25%`, high `25-40%`, and very high `40-55%`.
+- Percentage premium increase churn follows workbook ranges: `<0%` movement `8-12%`, `0-5%` movement `15-20%`, `5-10%` movement `25-35%`, and `>10%` movement `45-65%`.
+- Absolute premium increase churn follows workbook ranges: `<=0` increase `8-12%`, `1-50` increase `15-22%`, `51-100` increase `25-38%`, and `>100` increase `45-65%`.
 - Claim-count, add-on, marketing proxy, driver-experience proxy, and vehicle model churn bands are validated.
-- Sales-channel churn variance is preserved using existing channel values: `AGENT` carries broker/aggregator-like higher churn behavior; `AGGREGATOR` is not emitted.
+- Claim-count churn follows workbook ranges: `0` claims `12-18%`, `1` claim `20-30%`, `2` claims `30-45%`, and `3+` claims `45-60%`.
+- Add-on churn follows workbook ranges: `0` add-ons `25-40%`, `1` add-on `18-28%`, `2` add-ons `12-22%`, and `3+` add-ons `8-18%`.
+- Marketing engagement churn follows workbook ranges: high `8-15%`, medium `18-30%`, low `35-55%`, and none `50-70%`, using existing marketing flags as the proxy.
+- Driver experience churn follows workbook ranges: `<2y` `25-40%`, `2-5y` `18-30%`, `6-10y` `15-25%`, and `>10y` `10-18%`, using existing `birth_date` as the proxy when licence issue date is unavailable.
+- Vehicle segment churn follows workbook ranges: standard `12-22%`, premium `20-35%`, and high-risk `30-50%`; enhanced validation checks the rate through direct policy-to-motor links.
+- Policy status uses the configured churn factors first, then applies a narrow calibration pass so premium, claim-count, and add-on marginal bands stay close to the workbook ranges without changing output columns.
+- Sales-channel churn variance is preserved using existing channel values: `AGENT` carries broker/aggregator-like higher churn behavior; `AGGREGATOR` is not emitted. The workbook does not define a sales-channel benchmark range, so this variance is scenario-config driven.
 
 Validation coverage:
 
-- `validate_churn_kpis.py` checks churn source fields and churn direction by tenure/channel.
+- `validate_churn_kpis.py` checks churn source fields, configured workbook churn ranges, and churn direction by tenure/channel.
 - `verify_csv.py` checks the same churn rules as part of full silver validation.
 
 ## Policy Date Rules

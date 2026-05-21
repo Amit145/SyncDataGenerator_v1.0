@@ -8,6 +8,9 @@ This repository is `SyncDataGenerator`.
 
 It generates synthetic insurance data in Data Vault style CSV outputs. It also creates raw source extracts, canonical raw, silver vault rebuilds, and SCD2-style delta outputs.
 
+Use `docs/current_rules_reference.md` for the current consolidated base, raw, silver, enhanced, churn, and SCD2 rules.
+Use `docs/scenario_config_reference.md` for scenario config meanings.
+
 The project is Python-based. The main executable script is:
 
 - `main.py`
@@ -231,7 +234,8 @@ Lifecycle rules:
 - renewal current/next amounts follow churn movement bands, including decreases and higher uplifts
 - policy cycle is standardized as `policy_cycle`; it means completed annual tenure, not number of policies purchased
 - churn probability decreases as completed `policy_cycle` tenure increases
-- sales-channel churn variance uses existing values only; `AGENT` carries broker/aggregator-like higher churn behavior and `AGGREGATOR` is not emitted
+- completed-tenure churn is tuned to the workbook ranges: `<1 year 35-50%`, `1-2 years 25-35%`, `3-5 years 15-25%`, and `>5 years 8-15%`
+- sales-channel churn variance uses existing values only; `AGENT` carries broker/aggregator-like higher churn behavior and `AGGREGATOR` is not emitted; the workbook does not define a sales-channel benchmark range
 - churn distribution weights are configured in `config/scenario_v1.json` under `churn_settings`
 - active/lapsed policy end dates use the current annual term boundary for long-tenure policies
 - `LAPSED` requires a completed renewal cycle; sub-one-year churn is represented as `CANCELLED`

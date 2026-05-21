@@ -1,9 +1,10 @@
-import os
-import sys
 import calendar
+import os
 from decimal import Decimal, ROUND_HALF_UP
+
 import pandas as pd
 from pandas.errors import EmptyDataError
+
 from config.storage_paths import SILVER_REBUILT_ROOT, SILVER_API_ROOT, SILVER_DATA_SOURCE_ROOT
 
 
@@ -200,7 +201,16 @@ def _require_band_coverage(label: str, counts: dict, required_bands: set, total_
     return True
 
 
-def verify_churn_rule_fields(sat_policy: pd.DataFrame, sat_natural_person: pd.DataFrame, sat_mpr: pd.DataFrame, sat_motor: pd.DataFrame):
+def verify_churn_rule_fields(
+    sat_policy: pd.DataFrame,
+    sat_natural_person: pd.DataFrame,
+    sat_mpr: pd.DataFrame,
+    sat_motor: pd.DataFrame,
+    l_pol_customer: pd.DataFrame | None = None,
+    l_c_person: pd.DataFrame | None = None,
+    l_p_mpr: pd.DataFrame | None = None,
+    l_p_nat: pd.DataFrame | None = None,
+):
     print("\n===== CHURN RULE FIELD VALIDATION =====\n")
 
     if sat_policy.empty:
@@ -254,18 +264,120 @@ def verify_churn_rule_fields(sat_policy: pd.DataFrame, sat_natural_person: pd.Da
                 {"<0%", "0-5%", "5-10%", ">10%"},
                 int(premium_valid.sum()),
             )
+            premium_pct_eval = policy[["policy_status"]].copy()
+            premium_pct_eval["premium_pct_band"] = pct_change.map(
+                lambda v: "<0%" if v < 0 else "0-5%" if v <= 5 else "5-10%" if v <= 10 else ">10%"
+            )
+            premium_pct_eval["churn_flag"] = policy["policy_status"].isin(["CANCELLED", "LAPSED"]).astype(int)
+            premium_pct_summary = (
+                premium_pct_eval.groupby("premium_pct_band")["churn_flag"]
+                .agg(["count", "mean"])
+                .reindex(["<0%", "0-5%", "5-10%", ">10%"])
+            )
+            premium_pct_ranges = {
+                "<0%": (0.08, 0.12),
+                "0-5%": (0.15, 0.20),
+                "5-10%": (0.25, 0.35),
+                ">10%": (0.45, 0.65),
+            }
+            if premium_pct_summary["count"].ge(20).all():
+                rates = premium_pct_summary["mean"]
+                premium_pct_detail = {
+                    idx: {"count": int(row["count"]), "churn_pct": round(float(row["mean"]) * 100, 2)}
+                    for idx, row in premium_pct_summary.iterrows()
+                }
+                direction_ok = rates.loc["<0%"] < rates.loc["0-5%"] < rates.loc["5-10%"] < rates.loc[">10%"]
+                ranges_ok = all(
+                    premium_pct_ranges[idx][0] <= float(rates.loc[idx]) <= premium_pct_ranges[idx][1]
+                    for idx in premium_pct_ranges
+                )
+                _print_rule_result(
+                    "churn_renewal_pct_rate",
+                    [] if direction_ok and ranges_ok else ["percentage premium increase churn rates are outside expected ranges or do not increase as percentage increase rises"],
+                    premium_pct_detail,
+                )
+            else:
+                print(f"churn_renewal_pct_rate skipped: summary={premium_pct_summary.fillna(0).to_dict('index')}")
             _require_band_coverage(
                 "churn_renewal_abs",
                 _band_counts(delta[premium_valid], lambda v: "<=0" if v <= 0 else "1-50" if v <= 50 else "51-100" if v <= 100 else ">100"),
                 {"<=0", "1-50", "51-100", ">100"},
                 int(premium_valid.sum()),
             )
+            premium_abs_eval = policy[["policy_status"]].copy()
+            premium_abs_eval["premium_abs_band"] = delta.map(
+                lambda v: "<=0" if v <= 0 else "1-50" if v <= 50 else "51-100" if v <= 100 else ">100"
+            )
+            premium_abs_eval["churn_flag"] = policy["policy_status"].isin(["CANCELLED", "LAPSED"]).astype(int)
+            premium_abs_summary = (
+                premium_abs_eval.groupby("premium_abs_band")["churn_flag"]
+                .agg(["count", "mean"])
+                .reindex(["<=0", "1-50", "51-100", ">100"])
+            )
+            premium_abs_ranges = {
+                "<=0": (0.08, 0.12),
+                "1-50": (0.15, 0.22),
+                "51-100": (0.25, 0.38),
+                ">100": (0.45, 0.65),
+            }
+            if premium_abs_summary["count"].ge(20).all():
+                rates = premium_abs_summary["mean"]
+                premium_abs_detail = {
+                    idx: {"count": int(row["count"]), "churn_pct": round(float(row["mean"]) * 100, 2)}
+                    for idx, row in premium_abs_summary.iterrows()
+                }
+                direction_ok = rates.loc["<=0"] < rates.loc["1-50"] < rates.loc["51-100"] < rates.loc[">100"]
+                ranges_ok = all(
+                    premium_abs_ranges[idx][0] <= float(rates.loc[idx]) <= premium_abs_ranges[idx][1]
+                    for idx in premium_abs_ranges
+                )
+                _print_rule_result(
+                    "churn_renewal_abs_rate",
+                    [] if direction_ok and ranges_ok else ["absolute premium increase churn rates are outside expected ranges or do not increase as premium increase rises"],
+                    premium_abs_detail,
+                )
+            else:
+                print(f"churn_renewal_abs_rate skipped: summary={premium_abs_summary.fillna(0).to_dict('index')}")
             _require_band_coverage(
                 "churn_current_premium",
                 _band_counts(current[current.notna()], lambda v: "LOW" if v <= 600 else "MEDIUM" if v <= 900 else "HIGH" if v <= 1200 else "VERY_HIGH"),
                 {"LOW", "MEDIUM", "HIGH", "VERY_HIGH"},
                 int(current.notna().sum()),
             )
+            current_premium_eval = policy[["policy_status"]].copy()
+            current_premium_eval["current_premium_band"] = current.map(
+                lambda v: "LOW" if v <= 600 else "MEDIUM" if v <= 900 else "HIGH" if v <= 1200 else "VERY_HIGH"
+            )
+            current_premium_eval["churn_flag"] = policy["policy_status"].isin(["CANCELLED", "LAPSED"]).astype(int)
+            current_premium_summary = (
+                current_premium_eval.groupby("current_premium_band")["churn_flag"]
+                .agg(["count", "mean"])
+                .reindex(["LOW", "MEDIUM", "HIGH", "VERY_HIGH"])
+            )
+            current_premium_ranges = {
+                "LOW": (0.10, 0.18),
+                "MEDIUM": (0.15, 0.25),
+                "HIGH": (0.25, 0.40),
+                "VERY_HIGH": (0.40, 0.55),
+            }
+            if current_premium_summary["count"].ge(20).all():
+                rates = current_premium_summary["mean"]
+                current_premium_detail = {
+                    idx: {"count": int(row["count"]), "churn_pct": round(float(row["mean"]) * 100, 2)}
+                    for idx, row in current_premium_summary.iterrows()
+                }
+                direction_ok = rates.loc["LOW"] < rates.loc["MEDIUM"] < rates.loc["HIGH"] < rates.loc["VERY_HIGH"]
+                ranges_ok = all(
+                    current_premium_ranges[idx][0] <= float(rates.loc[idx]) <= current_premium_ranges[idx][1]
+                    for idx in current_premium_ranges
+                )
+                _print_rule_result(
+                    "churn_current_premium_rate",
+                    [] if direction_ok and ranges_ok else ["current premium churn rates are outside expected ranges or do not increase as current premium rises"],
+                    current_premium_detail,
+                )
+            else:
+                print(f"churn_current_premium_rate skipped: summary={current_premium_summary.fillna(0).to_dict('index')}")
 
             total_claims = (
                 policy["number_of_active_claim"].fillna(0)
@@ -284,6 +396,38 @@ def verify_churn_rule_fields(sat_policy: pd.DataFrame, sat_natural_person: pd.Da
                 {"0", "1", "2", "3+"},
                 len(total_claims),
             )
+            claim_count_eval = policy[["policy_status"]].copy()
+            claim_count_eval["claim_band"] = total_claims.map(lambda v: "3+" if v >= 3 else str(int(v)))
+            claim_count_eval["churn_flag"] = policy["policy_status"].isin(["CANCELLED", "LAPSED"]).astype(int)
+            claim_count_summary = (
+                claim_count_eval.groupby("claim_band")["churn_flag"]
+                .agg(["count", "mean"])
+                .reindex(["0", "1", "2", "3+"])
+            )
+            claim_count_ranges = {
+                "0": (0.12, 0.18),
+                "1": (0.20, 0.30),
+                "2": (0.30, 0.45),
+                "3+": (0.45, 0.60),
+            }
+            if claim_count_summary["count"].ge(20).all():
+                rates = claim_count_summary["mean"]
+                claim_count_detail = {
+                    idx: {"count": int(row["count"]), "churn_pct": round(float(row["mean"]) * 100, 2)}
+                    for idx, row in claim_count_summary.iterrows()
+                }
+                direction_ok = rates.loc["0"] < rates.loc["1"] < rates.loc["2"] < rates.loc["3+"]
+                ranges_ok = all(
+                    claim_count_ranges[idx][0] <= float(rates.loc[idx]) <= claim_count_ranges[idx][1]
+                    for idx in claim_count_ranges
+                )
+                _print_rule_result(
+                    "churn_claim_count_rate",
+                    [] if direction_ok and ranges_ok else ["claim-count churn rates are outside expected ranges or do not increase as claims increase"],
+                    claim_count_detail,
+                )
+            else:
+                print(f"churn_claim_count_rate skipped: summary={claim_count_summary.fillna(0).to_dict('index')}")
 
             expected_cycle = pd.Series([
                 ((ld.date() - ps.date()).days // 365) if pd.notna(ld) and pd.notna(ps) else None
@@ -318,9 +462,20 @@ def verify_churn_rule_fields(sat_policy: pd.DataFrame, sat_natural_person: pd.Da
                     idx: {"count": int(row["count"]), "churn_pct": round(float(row["mean"]) * 100, 2)}
                     for idx, row in tenure_summary.iterrows()
                 }
+                tenure_ranges = {
+                    "<1": (0.35, 0.50),
+                    "1-2": (0.25, 0.35),
+                    "3-5": (0.15, 0.25),
+                    ">5": (0.08, 0.15),
+                }
+                direction_ok = rates.loc["<1"] > rates.loc["1-2"] > rates.loc["3-5"] > rates.loc[">5"]
+                ranges_ok = all(
+                    tenure_ranges[idx][0] <= float(rates.loc[idx]) <= tenure_ranges[idx][1]
+                    for idx in tenure_ranges
+                )
                 _print_rule_result(
                     "churn_policy_cycle_tenure_rate",
-                    [] if rates.loc["<1"] > rates.loc["1-2"] > rates.loc["3-5"] > rates.loc[">5"] else ["churn rate does not decrease as policy_cycle tenure increases"],
+                    [] if direction_ok and ranges_ok else ["churn rate is outside workbook ranges or does not decrease as policy_cycle tenure increases"],
                     tenure_detail,
                 )
             else:
@@ -339,6 +494,42 @@ def verify_churn_rule_fields(sat_policy: pd.DataFrame, sat_natural_person: pd.Da
                 cover_allowed,
                 len(policy),
             )
+            addon_eval = policy[["policy_status", "cover_option"]].copy()
+            addon_eval["churn_flag"] = addon_eval["policy_status"].isin(["CANCELLED", "LAPSED"]).astype(int)
+            addon_summary = (
+                addon_eval.groupby("cover_option")["churn_flag"]
+                .agg(["count", "mean"])
+                .reindex(["BASE_ONLY", "ONE_ADD_ON", "TWO_ADD_ONS", "THREE_PLUS_ADD_ONS"])
+            )
+            addon_ranges = {
+                "BASE_ONLY": (0.25, 0.40),
+                "ONE_ADD_ON": (0.18, 0.28),
+                "TWO_ADD_ONS": (0.12, 0.22),
+                "THREE_PLUS_ADD_ONS": (0.08, 0.18),
+            }
+            if addon_summary["count"].ge(20).all():
+                rates = addon_summary["mean"]
+                addon_detail = {
+                    idx: {"count": int(row["count"]), "churn_pct": round(float(row["mean"]) * 100, 2)}
+                    for idx, row in addon_summary.iterrows()
+                }
+                direction_ok = (
+                    rates.loc["BASE_ONLY"]
+                    > rates.loc["ONE_ADD_ON"]
+                    > rates.loc["TWO_ADD_ONS"]
+                    > rates.loc["THREE_PLUS_ADD_ONS"]
+                )
+                ranges_ok = all(
+                    addon_ranges[idx][0] <= float(rates.loc[idx]) <= addon_ranges[idx][1]
+                    for idx in addon_ranges
+                )
+                _print_rule_result(
+                    "churn_policy_addon_rate",
+                    [] if direction_ok and ranges_ok else ["add-on churn rates are outside expected ranges or do not decrease as add-ons increase"],
+                    addon_detail,
+                )
+            else:
+                print(f"churn_policy_addon_rate skipped: summary={addon_summary.fillna(0).to_dict('index')}")
 
     if sat_mpr.empty:
         print("churn_marketing_proxy_rules skipped: sat_marketing_preference empty")
@@ -369,6 +560,60 @@ def verify_churn_rule_fields(sat_policy: pd.DataFrame, sat_natural_person: pd.Da
                 {"Y", "N"},
                 len(sat_mpr),
             )
+            if (
+                not sat_policy.empty
+                and l_pol_customer is not None and not l_pol_customer.empty
+                and l_c_person is not None and not l_c_person.empty
+                and l_p_mpr is not None and not l_p_mpr.empty
+                and {"policy_hash_key", "policy_status"}.issubset(sat_policy.columns)
+                and {"policy_hash_key", "customer_hash_key"}.issubset(l_pol_customer.columns)
+                and {"customer_hash_key", "person_hash_key"}.issubset(l_c_person.columns)
+                and {"person_hash_key", "marketing_preference_hash_key"}.issubset(l_p_mpr.columns)
+                and "marketing_preference_hash_key" in sat_mpr.columns
+            ):
+                mpr_eval = sat_mpr[["marketing_preference_hash_key"] + channels].copy()
+                mpr_eval["marketing_engagement_band"] = mpr_eval[channels].eq("Y").sum(axis=1).map(
+                    lambda v: "NONE" if v == 0 else "LOW" if v == 1 else "MEDIUM" if v <= 3 else "HIGH"
+                )
+                policy_marketing = (
+                    sat_policy[["policy_hash_key", "policy_status"]]
+                    .merge(l_pol_customer[["policy_hash_key", "customer_hash_key"]], on="policy_hash_key", how="left")
+                    .merge(l_c_person[["customer_hash_key", "person_hash_key"]], on="customer_hash_key", how="left")
+                    .merge(l_p_mpr[["person_hash_key", "marketing_preference_hash_key"]], on="person_hash_key", how="left")
+                    .merge(mpr_eval[["marketing_preference_hash_key", "marketing_engagement_band"]], on="marketing_preference_hash_key", how="left")
+                    .dropna(subset=["marketing_engagement_band"])
+                )
+                if not policy_marketing.empty:
+                    policy_marketing["churn_flag"] = policy_marketing["policy_status"].isin(["CANCELLED", "LAPSED"]).astype(int)
+                    marketing_summary = (
+                        policy_marketing.groupby("marketing_engagement_band")["churn_flag"]
+                        .agg(["count", "mean"])
+                        .reindex(["HIGH", "MEDIUM", "LOW", "NONE"])
+                    )
+                    if marketing_summary["count"].ge(20).all():
+                        rates = marketing_summary["mean"]
+                        marketing_ranges = {
+                            "HIGH": (0.08, 0.15),
+                            "MEDIUM": (0.18, 0.30),
+                            "LOW": (0.35, 0.55),
+                            "NONE": (0.50, 0.70),
+                        }
+                        marketing_detail = {
+                            idx: {"count": int(row["count"]), "churn_pct": round(float(row["mean"]) * 100, 2)}
+                            for idx, row in marketing_summary.iterrows()
+                        }
+                        direction_ok = rates.loc["HIGH"] < rates.loc["MEDIUM"] < rates.loc["LOW"] < rates.loc["NONE"]
+                        ranges_ok = all(
+                            marketing_ranges[idx][0] <= float(rates.loc[idx]) <= marketing_ranges[idx][1]
+                            for idx in marketing_ranges
+                        )
+                        _print_rule_result(
+                            "churn_marketing_engagement_rate",
+                            [] if direction_ok and ranges_ok else ["marketing engagement churn rates are outside expected ranges or do not increase as engagement decreases"],
+                            marketing_detail,
+                        )
+                    else:
+                        print(f"churn_marketing_engagement_rate skipped: summary={marketing_summary.fillna(0).to_dict('index')}")
 
     if sat_natural_person.empty:
         print("churn_driver_experience_proxy skipped: sat_natural_person empty")
@@ -394,6 +639,59 @@ def verify_churn_rule_fields(sat_policy: pd.DataFrame, sat_natural_person: pd.Da
             {"<2y", "2-5y", "6-10y", ">10y"},
             int(driver_exp.notna().sum()),
         )
+        if (
+            not sat_policy.empty
+            and l_pol_customer is not None and not l_pol_customer.empty
+            and l_c_person is not None and not l_c_person.empty
+            and l_p_nat is not None and not l_p_nat.empty
+            and {"policy_hash_key", "policy_status"}.issubset(sat_policy.columns)
+            and {"policy_hash_key", "customer_hash_key"}.issubset(l_pol_customer.columns)
+            and {"customer_hash_key", "person_hash_key"}.issubset(l_c_person.columns)
+            and {"person_hash_key", "natural_person_hash_key"}.issubset(l_p_nat.columns)
+        ):
+            natural_eval = natural[["natural_person_hash_key"]].copy()
+            natural_eval["driver_experience_band"] = driver_exp.map(
+                lambda v: "<2y" if v < 2 else "2-5y" if v <= 5 else "6-10y" if v <= 10 else ">10y"
+            )
+            policy_driver = (
+                sat_policy[["policy_hash_key", "policy_status"]]
+                .merge(l_pol_customer[["policy_hash_key", "customer_hash_key"]], on="policy_hash_key", how="left")
+                .merge(l_c_person[["customer_hash_key", "person_hash_key"]], on="customer_hash_key", how="left")
+                .merge(l_p_nat[["person_hash_key", "natural_person_hash_key"]], on="person_hash_key", how="left")
+                .merge(natural_eval[["natural_person_hash_key", "driver_experience_band"]], on="natural_person_hash_key", how="left")
+                .dropna(subset=["driver_experience_band"])
+            )
+            if not policy_driver.empty:
+                policy_driver["churn_flag"] = policy_driver["policy_status"].isin(["CANCELLED", "LAPSED"]).astype(int)
+                driver_summary = (
+                    policy_driver.groupby("driver_experience_band")["churn_flag"]
+                    .agg(["count", "mean"])
+                    .reindex(["<2y", "2-5y", "6-10y", ">10y"])
+                )
+                if driver_summary["count"].ge(20).all():
+                    rates = driver_summary["mean"]
+                    driver_ranges = {
+                        "<2y": (0.25, 0.40),
+                        "2-5y": (0.18, 0.30),
+                        "6-10y": (0.15, 0.25),
+                        ">10y": (0.10, 0.18),
+                    }
+                    driver_detail = {
+                        idx: {"count": int(row["count"]), "churn_pct": round(float(row["mean"]) * 100, 2)}
+                        for idx, row in driver_summary.iterrows()
+                    }
+                    direction_ok = rates.loc["<2y"] > rates.loc["2-5y"] > rates.loc["6-10y"] > rates.loc[">10y"]
+                    ranges_ok = all(
+                        driver_ranges[idx][0] <= float(rates.loc[idx]) <= driver_ranges[idx][1]
+                        for idx in driver_ranges
+                    )
+                    _print_rule_result(
+                        "churn_driver_experience_rate",
+                        [] if direction_ok and ranges_ok else ["driver experience churn rates are outside expected ranges or do not decrease as experience increases"],
+                        driver_detail,
+                    )
+                else:
+                    print(f"churn_driver_experience_rate skipped: summary={driver_summary.fillna(0).to_dict('index')}")
     else:
         print("churn_driver_experience_proxy skipped: missing birth_date/load_date")
 
@@ -1376,7 +1674,7 @@ def main(base_path: str):
             else:
                 print("lead_to_policy_window valid")
 
-    verify_churn_rule_fields(sat_policy, sat_natural_person, sat_mpr, sat_motor)
+    verify_churn_rule_fields(sat_policy, sat_natural_person, sat_mpr, sat_motor, l_pol_customer, l_c_person, l_p_mpr, l_p_nat)
 
     print("\n===== SUMMARY =====\n")
 
@@ -1401,7 +1699,7 @@ def main(base_path: str):
 
 if __name__ == "__main__":
     dirs = [SILVER_REBUILT_ROOT,SILVER_API_ROOT,SILVER_DATA_SOURCE_ROOT]
-    dirs = ['F:\\SyncDataGenerator_v1.0\\data\\synthetic\\base\\20260520185750']
+    dirs = ['F:\\SyncDataGenerator_v1.0\\data\\synthetic\\base\\20260522002542']
     for target_path in dirs:
         print(target_path)
         main(target_path)

@@ -6,6 +6,9 @@ Run these from PowerShell in the repo root:
   cd F:\SyncDataGenerator_v1.0
   $env:PYTHONUTF8='1'
 
+Detailed current rules are documented in docs/current_rules_reference.md.
+Scenario config meanings are documented in docs/scenario_config_reference.md.
+
 
 Example A: normal full base load, full rule validation, SCD2 generation, SCD2 validation
 ---------------------------------------------------------------------------------------
@@ -60,8 +63,9 @@ verify_all_silver.py checks full silver rules:
   - churn claim-count logic and distributions
   - policy-cycle / tenure logic and distributions
   - policy-cycle churn direction: higher completed tenure has lower churn
+  - policy-cycle churn ranges from the workbook: <1 year 35-50%, 1-2 years 25-35%, 3-5 years 15-25%, >5 years 8-15%
   - policy add-on logic and distributions
-  - sales-channel churn variance, with AGENT carrying broker/aggregator-like higher churn
+  - sales-channel churn variance, with AGENT carrying broker/aggregator-like higher churn; the workbook does not define a channel benchmark range
   - marketing proxy logic and distributions where sat_marketing_preference exists
   - driver-experience proxy from birth date
   - vehicle-model churn segment logic and distributions

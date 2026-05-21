@@ -2,6 +2,9 @@
 
 This runbook captures the current operational flow for base, enhanced, raw, silver, churn validation, and SCD2 generation.
 
+Detailed current rules are documented in `docs/current_rules_reference.md`.
+Scenario config meanings are documented in `docs/scenario_config_reference.md`.
+
 Run all commands from:
 
 ```powershell
@@ -83,7 +86,8 @@ Key points:
 - `Policy Cycle` means completed annual tenure from policy start date to load/snapshot date.
 - `Policy Cycle` does not mean number of policies purchased.
 - Churn decreases as completed `Policy Cycle` increases.
-- Sales-channel variance uses existing values only: `AGENT` carries broker/aggregator-like higher churn behavior; `AGGREGATOR` is not emitted.
+- Current completed-tenure churn targets the workbook ranges: `<1 year 35-50%`, `1-2 years 25-35%`, `3-5 years 15-25%`, and `>5 years 8-15%`.
+- Sales-channel variance uses existing values only: `AGENT` carries broker/aggregator-like higher churn behavior; `AGGREGATOR` is not emitted. The workbook does not define a sales-channel benchmark range.
 - Renewal premium movement, claim counts, add-ons, marketing proxy, driver experience, and vehicle model segments are generated and validated.
 
 Policy date rules:

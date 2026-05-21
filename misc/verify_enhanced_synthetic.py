@@ -295,6 +295,13 @@ def verify_base_timelines(frames: dict[str, pd.DataFrame]) -> int:
             if ((~renewal.isna()) & (~end.isna()) & (renewal > end)).any():
                 print("TIMELINE CHECK FAILED: sat_policy renewal_date > policy_end_date")
                 errors += 1
+        if {"policy_start_date", "policy_issue_date"}.issubset(sat_policy.columns):
+            start_date = parse_dt(sat_policy["policy_start_date"])
+            issue_date = parse_dt(sat_policy["policy_issue_date"])
+            mismatch = start_date.notna() & issue_date.notna() & (start_date != issue_date)
+            if mismatch.any():
+                print("TIMELINE CHECK FAILED: sat_policy policy_issue_date != policy_start_date")
+                errors += 1
 
     sat_lead = frames.get("sat_lead")
     link_person_lead = frames.get("link_person_lead")
@@ -335,9 +342,12 @@ def verify_enhanced_business_rules(frames: dict[str, pd.DataFrame]) -> int:
     link_policy_override = frames.get("link_policy_override", pd.DataFrame())
     link_policy_channel = frames.get("link_policy_channel", pd.DataFrame())
     link_policy_product = frames.get("link_policy_product", pd.DataFrame())
+    link_policy_insured_object = frames.get("link_policy_insured_object", pd.DataFrame())
+    link_insured_object_motor = frames.get("link_insured_object_motor", pd.DataFrame())
     link_policy_customer = frames.get("link_policy_customer", pd.DataFrame())
     link_customer_person = frames.get("link_customer_person", pd.DataFrame())
     link_broker_person = frames.get("link_broker_person", pd.DataFrame())
+    sat_motor = frames.get("sat_motor", pd.DataFrame())
 
     policy_cols = {"policy_hash_key", "policy_status", "policy_start_date", "policy_end_date", "sales_channel", "override_commission"}
     if not sat_policy.empty and policy_cols.issubset(set(sat_policy.columns)):
@@ -400,6 +410,60 @@ def verify_enhanced_business_rules(frames: dict[str, pd.DataFrame]) -> int:
             else:
                 print("BROKER CHECK FAILED: AGENT policies exist but no person-broker links were generated")
                 errors += 1
+
+    if (
+        not sat_policy.empty
+        and not sat_motor.empty
+        and not link_policy_insured_object.empty
+        and not link_insured_object_motor.empty
+        and {"policy_hash_key", "policy_status"}.issubset(sat_policy.columns)
+        and {"motor_hash_key", "vehicle_model"}.issubset(sat_motor.columns)
+        and {"policy_hash_key", "insured_object_hash_key"}.issubset(link_policy_insured_object.columns)
+        and {"insured_object_hash_key", "motor_hash_key"}.issubset(link_insured_object_motor.columns)
+    ):
+        standard = {"Focus", "Corsa", "Corolla"}
+        premium = {"Qashqai", "3 Series", "A3"}
+        high_risk = {"Sport Bike", "Superbike", "High Performance SUV"}
+
+        def vehicle_segment(value):
+            if value in standard:
+                return "STANDARD"
+            if value in premium:
+                return "PREMIUM"
+            if value in high_risk:
+                return "HIGH_RISK"
+            return "UNKNOWN"
+
+        policy_motor = (
+            sat_policy[["policy_hash_key", "policy_status"]]
+            .merge(link_policy_insured_object[["policy_hash_key", "insured_object_hash_key"]], on="policy_hash_key", how="inner")
+            .merge(link_insured_object_motor[["insured_object_hash_key", "motor_hash_key"]], on="insured_object_hash_key", how="inner")
+            .merge(sat_motor[["motor_hash_key", "vehicle_model"]], on="motor_hash_key", how="inner")
+        )
+        if not policy_motor.empty:
+            policy_motor["vehicle_segment"] = policy_motor["vehicle_model"].map(vehicle_segment)
+            policy_motor["churn_flag"] = policy_motor["policy_status"].isin(["CANCELLED", "LAPSED"]).astype(int)
+            summary = (
+                policy_motor.groupby("vehicle_segment")["churn_flag"]
+                .agg(["count", "mean"])
+                .reindex(["STANDARD", "PREMIUM", "HIGH_RISK"])
+            )
+            if summary["count"].ge(20).all():
+                ranges = {
+                    "STANDARD": (0.12, 0.22),
+                    "PREMIUM": (0.20, 0.35),
+                    "HIGH_RISK": (0.30, 0.50),
+                }
+                rates = summary["mean"]
+                ranges_ok = all(ranges[idx][0] <= float(rates.loc[idx]) <= ranges[idx][1] for idx in ranges)
+                direction_ok = rates.loc["STANDARD"] < rates.loc["PREMIUM"] < rates.loc["HIGH_RISK"]
+                if not (ranges_ok and direction_ok):
+                    detail = {
+                        idx: {"count": int(row["count"]), "churn_pct": round(float(row["mean"]) * 100, 2)}
+                        for idx, row in summary.iterrows()
+                    }
+                    print(f"VEHICLE CHURN CHECK FAILED: vehicle segment churn outside workbook ranges {detail}")
+                    errors += 1
 
     if not link_claim_policy.empty and not sat_claim.empty and not policy_lookup.empty:
         claim_product_by_policy = {}

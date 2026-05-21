@@ -1,5 +1,8 @@
 # SyncDataGenerator Technical Guide
 
+For the consolidated current rules across base, raw, silver, enhanced, churn, and SCD2 outputs, see [current_rules_reference.md](F:/SyncDataGenerator_v1.0/docs/current_rules_reference.md).
+For scenario config key meanings, see [scenario_config_reference.md](F:/SyncDataGenerator_v1.0/docs/scenario_config_reference.md).
+
 This document explains how the codebase works, what it generates, how to run it, and the main business rules enforced by the current implementation.
 
 ## 1. Purpose
@@ -363,7 +366,8 @@ Policy and renewal:
 - account state can force a policy out of active status
 - policy cycle is standardized as `policy_cycle`; it means completed annual tenure and the legacy misspelled column name is not used
 - churn decreases as completed `policy_cycle` tenure increases
-- sales-channel churn variance uses existing values only; `AGENT` carries broker/aggregator-like higher churn behavior and `AGGREGATOR` is not emitted
+- completed-tenure churn is tuned to the workbook ranges: `<1 year 35-50%`, `1-2 years 25-35%`, `3-5 years 15-25%`, and `>5 years 8-15%`
+- sales-channel churn variance uses existing values only; `AGENT` carries broker/aggregator-like higher churn behavior and `AGGREGATOR` is not emitted; the workbook does not define a sales-channel benchmark range
 - churn distributions are read from `config/scenario_v1.json` `churn_settings`
 - churn-available and proxy fields are generated once in base satellites and reused by CRM, API, data-source, canonical raw, silver, and enhanced outputs
 
