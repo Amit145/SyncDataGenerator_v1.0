@@ -81,6 +81,8 @@ The full meaning of every `config/scenario_v1.json` setting is documented in [do
 
 The current detailed rule set for base, raw, silver, enhanced, churn, and SCD2 outputs is documented in [docs/current_rules_reference.md](F:/SyncDataGenerator_v1.0/docs/current_rules_reference.md).
 
+The latest generated-run validation summary, including expected vs current churn ratios, is documented in [docs/latest_run_validation.md](F:/SyncDataGenerator_v1.0/docs/latest_run_validation.md).
+
 Enhanced claim financials are configurable through `claim_financial_settings`. They populate enhanced `sat_claim` amount, paid, reserve, expense, recovery/fraud/legal financials, `claim_band`, and `claim_band_sort`.
 
 ## Churn Rules

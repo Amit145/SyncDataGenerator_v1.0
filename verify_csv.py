@@ -1699,7 +1699,7 @@ def main(base_path: str):
 
 if __name__ == "__main__":
     dirs = [SILVER_REBUILT_ROOT,SILVER_API_ROOT,SILVER_DATA_SOURCE_ROOT]
-    dirs = ['F:\\SyncDataGenerator_v1.0\\data\\synthetic\\base\\20260522002542']
+    dirs = ['F:\\SyncDataGenerator_v1.0\\data\\synthetic\\base\\20260522092135']
     for target_path in dirs:
         print(target_path)
         main(target_path)

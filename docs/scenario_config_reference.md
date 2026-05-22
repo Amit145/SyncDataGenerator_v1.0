@@ -212,7 +212,7 @@ Scales the add-on churn modifier so it works alongside tenure and claim-count ch
 
 After initial policy status sampling, `sat_policy` applies a narrow calibration pass across the generated rows. It keeps the same output columns and date rules, but can flip selected rows between `ACTIVE` and churned statuses so the marginal workbook bands for premium increase, claim count, add-ons, marketing engagement, vehicle segment, driver experience, current premium, and tenure stay close to their configured expected ranges.
 
-The calibration now works toward configured target counts inside each workbook range, not only the range edge. It protects rows in bands that are already at or below the workbook minimum, prefers removing churn from bands above their configured maximum, and keeps policies on `CLOSED` or `SUSPENDED` accounts locked as churned so account lifecycle rules are not broken.
+The calibration now works toward configured target counts inside each workbook range, not only the range edge. It uses a weighted penalty check before flipping a row, so a policy is changed only when the total fit improves across the overlapping churn dimensions it belongs to. It keeps policies on `CLOSED` or `SUSPENDED` accounts locked as churned so account lifecycle rules are not broken.
 
 ### vehicle_segment_weights
 

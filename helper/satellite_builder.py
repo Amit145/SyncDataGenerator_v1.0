@@ -763,6 +763,57 @@ def _policy_row_in_band_below_min(idx: int, counts: dict, bands_by_row: list[dic
     return False
 
 
+def _policy_calibration_weights() -> dict:
+    return {
+        "current_premium": 1.0,
+        "premium": 1.1,
+        "premium_pct": 1.1,
+        "claim": 1.2,
+        "addon": 1.3,
+        "tenure": 1.4,
+        "marketing": 1.1,
+        "vehicle": 0.8,
+        "driver": 1.6,
+    }
+
+
+def _policy_band_penalty(churned: int, band_counts: dict, weight: float) -> float:
+    count = max(int(band_counts["count"]), 1)
+    target = int(band_counts["target"])
+    lower = int(band_counts["min"])
+    upper = int(band_counts["max"])
+    target_error = ((churned - target) / count) ** 2
+    outside_error = 0.0
+    if churned < lower:
+        outside_error = ((lower - churned) / count) ** 2
+    elif churned > upper:
+        outside_error = ((churned - upper) / count) ** 2
+    return weight * (target_error + 25.0 * outside_error)
+
+
+def _policy_flip_delta(idx: int, to_churned: bool, counts: dict, bands_by_row: list[dict], weights: dict) -> float:
+    delta = 0.0
+    step = 1 if to_churned else -1
+    for dimension, band in bands_by_row[idx].items():
+        band_counts = counts.get(dimension, {}).get(band)
+        if not band_counts:
+            continue
+        weight = float(weights.get(dimension, 1.0))
+        before = _policy_band_penalty(int(band_counts["churned"]), band_counts, weight)
+        after = _policy_band_penalty(int(band_counts["churned"]) + step, band_counts, weight)
+        delta += after - before
+    return delta
+
+
+def _policy_apply_flip(idx: int, to_churned: bool, flags: list[bool], counts: dict, bands_by_row: list[dict]) -> None:
+    flags[idx] = to_churned
+    step = 1 if to_churned else -1
+    for dimension, band in bands_by_row[idx].items():
+        band_counts = counts.get(dimension, {}).get(band)
+        if band_counts:
+            band_counts["churned"] += step
+
+
 def _set_policy_row_status_dates(row: dict, status: str, load_dt: datetime, as_of_dt: datetime, churn_config: dict | None) -> None:
     policy_start = _coerce_datetime(row["Policy Start Date"])
     policy_cycle = int(row["Policy Cycle"])
@@ -822,8 +873,9 @@ def _calibrate_policy_churn_rows(rows: list[dict], churn_config: dict | None, lo
             flags[idx] = True
     bands_by_row = [_policy_row_bands(row) for row in rows]
     scores = [_policy_churn_score(row, targets) for row in rows]
+    weights = _policy_calibration_weights()
 
-    for _ in range(50):
+    for _ in range(30):
         changed = False
         counts = _policy_churn_counts(flags, bands_by_row, targets)
         for dimension, spec in targets.items():
@@ -843,32 +895,39 @@ def _calibrate_policy_churn_rows(rows: list[dict], churn_config: dict | None, lo
                     candidates = [idx for idx in indices if not flags[idx]]
                     candidates.sort(
                         key=lambda idx: (
-                            _policy_row_in_band_below_min(idx, counts, bands_by_row),
-                            scores[idx],
+                            _policy_flip_delta(idx, True, counts, bands_by_row, weights),
+                            -scores[idx],
                         ),
-                        reverse=True,
                     )
-                    for idx in candidates[: target_count - current]:
-                        flags[idx] = True
-                        changed = True
+                    flipped = 0
+                    for idx in candidates:
+                        if flipped >= target_count - current:
+                            break
+                        if _policy_flip_delta(idx, True, counts, bands_by_row, weights) <= 0:
+                            _policy_apply_flip(idx, True, flags, counts, bands_by_row)
+                            flipped += 1
+                            changed = True
                 elif current > target_count:
                     candidates = [
                         idx
                         for idx in indices
                         if flags[idx]
                         and not locked_churn[idx]
-                        and not _policy_row_in_band_below_min(idx, counts, bands_by_row)
                     ]
                     candidates.sort(
                         key=lambda idx: (
-                            not _policy_row_in_band_above_max(idx, counts, bands_by_row),
+                            _policy_flip_delta(idx, False, counts, bands_by_row, weights),
                             scores[idx],
                         )
                     )
-                    for idx in candidates[: current - target_count]:
-                        flags[idx] = False
-                        changed = True
-                counts = _policy_churn_counts(flags, bands_by_row, targets)
+                    flipped = 0
+                    for idx in candidates:
+                        if flipped >= current - target_count:
+                            break
+                        if _policy_flip_delta(idx, False, counts, bands_by_row, weights) <= 0:
+                            _policy_apply_flip(idx, False, flags, counts, bands_by_row)
+                            flipped += 1
+                            changed = True
         if not changed:
             break
 

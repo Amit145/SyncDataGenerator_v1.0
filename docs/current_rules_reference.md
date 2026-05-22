@@ -4,6 +4,8 @@ This document describes the currently implemented generation and validation rule
 
 For scenario configuration meanings, see [scenario_config_reference.md](F:/SyncDataGenerator_v1.0/docs/scenario_config_reference.md).
 
+For the latest generated-run validation results and expected-vs-current churn ratios, see [latest_run_validation.md](F:/SyncDataGenerator_v1.0/docs/latest_run_validation.md).
+
 ## Output Scope
 
 Default `main.py` generation creates:
@@ -141,7 +143,7 @@ Add-on and coverage rules:
 - add-on churn is configurable and validated against workbook ranges: `0` add-ons `25-40%`, `1` add-on `18-28%`, `2` add-ons `12-22%`, and `3+` add-ons `8-18%`
 - churn probability decreases as add-on count increases
 - coverage behavior remains consistent with policy/product context
-- after initial policy status sampling, a calibration pass can adjust selected policies between active and churned statuses so premium-increase, claim-count, add-on, marketing, vehicle, driver, current-premium, and tenure marginal churn bands move toward configured workbook target counts while preserving date, renewal, and non-open-account rules
+- after initial policy status sampling, a weighted calibration pass can adjust selected policies between active and churned statuses when the flip improves the total workbook fit across premium-increase, claim-count, add-on, marketing, vehicle, driver, current-premium, and tenure bands while preserving date, renewal, and non-open-account rules
 
 Marketing and engagement proxy rules:
 
