@@ -193,6 +193,28 @@ def build_source_context(
     links["Link_Quote_Product"] = link_quote_product
 
     sat_nat = sat_natural_person(person_to_nat, sat_date)
+    natural_to_person_map = {}
+    for person_hk, natural_hks in person_to_nat.items():
+        for natural_hk in (natural_hks if isinstance(natural_hks, list) else [natural_hks]):
+            natural_to_person_map[natural_hk] = person_hk
+
+    person_driver_experience_by_person = {}
+    for row in sat_nat:
+        person_hk = natural_to_person_map.get(row.get("Natural Person Hash Key"))
+        if not person_hk:
+            continue
+        birth_dt = datetime.fromisoformat(str(row.get("Birth Date")))
+        load_dt = datetime.fromisoformat(str(row.get("Load Date")))
+        age_years = load_dt.year - birth_dt.year - ((load_dt.month, load_dt.day) < (birth_dt.month, birth_dt.day))
+        experience_years = max(0, age_years - 17)
+        if experience_years < 2:
+            person_driver_experience_by_person[person_hk] = "LT_2Y"
+        elif experience_years <= 5:
+            person_driver_experience_by_person[person_hk] = "Y2_5"
+        elif experience_years <= 10:
+            person_driver_experience_by_person[person_hk] = "Y6_10"
+        else:
+            person_driver_experience_by_person[person_hk] = "GT_10"
     sat_leg = sat_legal_person(person_to_leg, sat_date)
     sat_per = sat_person(person_hks, sat_date, person_type, person_to_lead, person_to_consent)
     sat_lea = sat_lead(
@@ -204,8 +226,14 @@ def build_source_context(
     sat_eci = sat_identities(person_to_identity, sat_date)
     sat_con = sat_contact(person_to_contact, sat_date)
     sat_cns = sat_consent(person_to_consent, sat_date)
-    sat_acc = sat_account(person_to_account, sat_date)
-    sat_mpr = sat_marketing_preference(person_to_mpr, sat_date)
+    sat_acc = sat_account(person_to_account, sat_date, churn_config=cfg_local.get("churn_settings"))
+    person_marketing_engagement_by_person = {}
+    sat_mpr = sat_marketing_preference(
+        person_to_mpr,
+        sat_date,
+        churn_config=cfg_local.get("churn_settings"),
+        person_marketing_engagement_by_person=person_marketing_engagement_by_person,
+    )
     sat_men = sat_marketing_engagement(person_to_men, sat_date)
     sat_quo = sat_quote(person_to_quote, sat_date)
 
@@ -244,6 +272,7 @@ def build_source_context(
             latest_lead_converted_by_person[person_hk] = converted_date
 
     all_policy_hks = [r["Policy Hash Key"] for r in hub_pol_rows]
+    motor_vehicle_profiles = {}
     sat_pol = sat_policy(
         all_policy_hks,
         sat_date,
@@ -252,6 +281,11 @@ def build_source_context(
         policy_to_person_map=policy_to_person_map,
         latest_lead_converted_by_person=latest_lead_converted_by_person,
         person_account_status_by_person=person_account_status_by_person,
+        churn_config=cfg_local.get("churn_settings"),
+        policy_to_motor=policy_to_motor,
+        motor_vehicle_profiles=motor_vehicle_profiles,
+        person_marketing_engagement_by_person=person_marketing_engagement_by_person,
+        person_driver_experience_by_person=person_driver_experience_by_person,
     )
     sat_lea = apply_lead_interest_levels(
         sat_lea,
@@ -300,6 +334,7 @@ def build_source_context(
         business_start_date=business_start_date,
         as_of_date=as_of_date,
         earliest_policy_start_by_person=earliest_policy_start_by_person,
+        churn_config=cfg_local.get("churn_settings"),
     )
     sat_cus = apply_customer_segments(
         sat_cus,
@@ -334,7 +369,13 @@ def build_source_context(
     fallback_addr = addr_hks[0] if addr_hks else None
     for motor_hk in motor_hks:
         motor_to_addr.setdefault(motor_hk, fallback_addr)
-    sat_mot = sat_motor(motor_hks, sat_date, motor_to_addr)
+    sat_mot = sat_motor(
+        motor_hks,
+        sat_date,
+        motor_to_addr,
+        churn_config=cfg_local.get("churn_settings"),
+        motor_vehicle_profiles=motor_vehicle_profiles,
+    )
 
     extract_ts = (datetime.fromisoformat(hub_date) - timedelta(days=7)).isoformat()
 

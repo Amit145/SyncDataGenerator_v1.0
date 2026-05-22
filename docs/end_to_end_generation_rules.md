@@ -2,6 +2,8 @@
 
 This document describes the implemented behavior of the generator as it exists in the codebase.
 
+For the current consolidated rule set across base, raw, silver, enhanced, churn, and SCD2 outputs, see [current_rules_reference.md](F:/SyncDataGenerator_v1.0/docs/current_rules_reference.md).
+
 It covers:
 
 - execution flow
@@ -343,20 +345,21 @@ Rules:
 
 The current generator enforces these policy rules:
 
-- first policy tenure is `1 year`
+- policy terms are annual; customer tenure is represented by `Policy Cycle`
 - `Policy Length = 12`
 - `Policy Start Date = latest Lead Converted Date + 1 to 90 days` when lead history exists
+- a controlled portion of lead conversions is sampled from older history so churn tenure covers `<1`, `1-2`, `3-5`, and `>5` completed-cycle bands
 - fallback policies without usable lead history still get a valid start date capped by policy satellite load date
-- non-cancelled policies have:
-  - `Policy End Date = Policy Start Date + 1 year`
+- active policies have:
+  - `Policy End Date = current annual term end`
+- lapsed policies have:
+  - `Policy End Date = completed annual term boundary`
 - cancelled policies have:
   - `Policy End Date` before the planned annual end date
   - `Policy Status = CANCELLED`
-- non-cancelled policies use date-driven status:
-  - `ACTIVE` if `Policy End Date > policy satellite Load Date`
-  - `LAPSED` if `Policy End Date <= policy satellite Load Date`
+- `LAPSED` is used only when a renewal cycle has completed; sub-one-year churn is represented as `CANCELLED`
 - `Renewal Date = Policy End Date - 0 to 10 days`
-- `Renewal Amount Next Period = Renewal Amount Current Period * 1.01`
+- `Renewal Amount Next Period` is sampled from churn-rule renewal movement bands: decrease, `0-5%`, `5-10%`, and `>10%`
 
 Important clarification:
 
@@ -367,6 +370,9 @@ Important clarification:
   - `LAPSED`
   - `CANCELLED`
 - `EXPIRED` is not currently used
+- `Policy Cycle` is emitted as `policy_cycle` in raw, silver, metadata, and Vault DDL outputs
+- `Policy Cycle` is completed annual tenure, not the number of policies purchased by the customer
+- the legacy misspelled policy-cycle column name is not supported
 
 ### `Sat_Policy.Fraud Flag`
 
@@ -392,6 +398,56 @@ Dependency direction:
 - policy and account risk signals are generated first
 - `Fraud Flag` is then derived from those signals
 - customer segment and customer rating use the resulting fraud flag as a negative input
+
+### Churn feature source fields
+
+Available and proxy churn-rule fields from `new_rules/Data Req Churn NPS.xlsx` are generated at the base satellite layer so CRM, API, data-source, canonical raw, silver, and enhanced outputs inherit the same values.
+
+The active churn distributions are configured in `config/scenario_v1.json` under `churn_settings`.
+
+Configurable distributions:
+
+- renewal current premium band weights
+- renewal movement band weights
+- claim count weights
+- active claim count weights
+- declined claim count weights
+- policy add-on / cover-option weights
+- vehicle segment weights
+- marketing engagement and service-call proxy weights
+- customer and account status weights
+- tenure churn probabilities
+- sales channel weights by policy status
+- suspended-account policy status weights
+- churned policy status weights
+
+Current implemented fields:
+
+- renewal premium current and next amounts produce decreases, `0-5%`, `5-10%`, and `>10%` renewal movement bands
+- `Policy Cycle` is derived from policy start date to snapshot/load date as completed annual cycles
+- churn probability decreases as completed `Policy Cycle` tenure increases: `<1` highest, then `1-2`, then `3-5`, then `>5`
+- completed-tenure churn is tuned to the workbook ranges: `<1 year 35-50%`, `1-2 years 25-35%`, `3-5 years 15-25%`, and `>5 years 8-15%`
+- sales-channel churn variance is preserved with existing values only: `AGENT` carries broker/aggregator-like higher churn behavior; `AGGREGATOR` is not emitted; the workbook does not provide a sales-channel benchmark range
+- active, previous, and declined claim counts are generated from a total recent-claims distribution
+- current premium amount is banded through the generated renewal current amount
+- `Cover Option` uses add-on-count categories: `BASE_ONLY`, `ONE_ADD_ON`, `TWO_ADD_ONS`, `THREE_PLUS_ADD_ONS`
+- `Vehicle Model` is generated from standard, premium, and high-risk vehicle groups
+- marketing preference flags represent the email/SMS engagement proxy, from no opted-in channels through high engagement
+- `Call` in marketing preference represents the customer-service call-frequency proxy
+- `Birth Date` is generated with driver-experience proxy bands because no licence issue date is available
+- Driver experience uses `max(age - 17, 0)` as the proxy and follows the workbook churn ranges: `<2y` `25-40%`, `2-5y` `18-30%`, `6-10y` `15-25%`, and `>10y` `10-18%`
+
+Validation:
+
+- `verify_csv.py` checks the churn source-field logic, expected distribution bands, example-value bands, and business-rule direction implied by workbook columns G, H, I, and J
+- `validate_churn_kpis.py` checks the base churn KPI fields directly, including decreasing churn by `Policy Cycle` tenure and sales-channel variance
+- distribution validation requires representative row counts before enforcing full band coverage
+
+Large-volume generation:
+
+- use `python main.py --streaming-base --total-people 10000000 --chunk-size 100000` for large base Data Vault runs
+- streaming mode writes each chunk immediately and normalizes to `data/synthetic/base/<run_id>` without loading full CSV files into pandas
+- default `main.py` behavior is unchanged for complete raw, silver, enhanced, SCD2, and full validation workflows
 
 
 ## 12. Customer and Account Rules

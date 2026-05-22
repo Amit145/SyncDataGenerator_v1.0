@@ -5,7 +5,6 @@ import os
 from config.storage_paths import (
     RAW_API_ROOT,
     RAW_CRM_ROOT,
-    RAW_KAGGLE_ROOT,
     SCD2_RAW_ROOT,
 )
 from helper.scd2_diff_engine import diff_folder, previous_subdir
@@ -21,8 +20,7 @@ def _generate_for_pair(source_label: str, previous_dir: str | None, current_dir:
     return summary
 
 
-def generate_raw_scd2(run_id: str, crm_raw_dir: str | None = None, api_raw_dir: str | None = None, kaggle_raw_dirs: list[str] | None = None) -> list[dict]:
-    kaggle_raw_dirs = kaggle_raw_dirs or []
+def generate_raw_scd2(run_id: str, crm_raw_dir: str | None = None, api_raw_dir: str | None = None) -> list[dict]:
     results = []
 
     crm_current = crm_raw_dir or os.path.join(RAW_CRM_ROOT, run_id)
@@ -38,14 +36,5 @@ def generate_raw_scd2(run_id: str, crm_raw_dir: str | None = None, api_raw_dir: 
     api_summary = _generate_for_pair("api", api_previous, api_current, api_output)
     if api_summary:
         results.append(api_summary)
-
-    for kaggle_raw_dir in kaggle_raw_dirs:
-        dataset_name = os.path.basename(os.path.dirname(kaggle_raw_dir))
-        dataset_root = os.path.join(RAW_KAGGLE_ROOT, dataset_name)
-        previous_dir = previous_subdir(dataset_root, exclude_name=run_id)
-        output_dir = os.path.join(SCD2_RAW_ROOT, "kaggle", dataset_name, run_id)
-        summary = _generate_for_pair(f"kaggle:{dataset_name}", previous_dir, kaggle_raw_dir, output_dir)
-        if summary:
-            results.append(summary)
 
     return results

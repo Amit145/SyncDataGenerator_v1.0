@@ -2,6 +2,7 @@ import random
 import hashlib
 import re
 import calendar
+import math
 from datetime import date, datetime, timedelta
 from faker import Faker
 from helper.key_factory import get_now_iso
@@ -90,6 +91,989 @@ def _add_years(dt: datetime, years: int) -> datetime:
     except ValueError:
         last_day = calendar.monthrange(dt.year + years, dt.month)[1]
         return dt.replace(year=dt.year + years, day=min(dt.day, last_day))
+
+
+def _weighted_choice_from_mapping(weight_map: dict | None, default_map: dict) -> str:
+    weights_by_value = weight_map or default_map
+    values = list(weights_by_value.keys())
+    weights = [float(weights_by_value[value]) for value in values]
+    return random.choices(values, weights=weights)[0]
+
+
+def _churn_settings(churn_config: dict | None) -> dict:
+    return churn_config or {}
+
+
+def _sample_renewal_premiums(churn_config: dict | None = None) -> tuple[float, float]:
+    churn_cfg = _churn_settings(churn_config)
+    current_band = _weighted_choice_from_mapping(
+        churn_cfg.get("renewal_current_premium_band_weights"),
+        {"LOW": 35, "MEDIUM": 35, "HIGH": 20, "VERY_HIGH": 10},
+    )
+    current_ranges = {
+        "LOW": (300, 600),
+        "MEDIUM": (601, 900),
+        "HIGH": (901, 1200),
+        "VERY_HIGH": (1201, 1800),
+    }
+    low, high = current_ranges[current_band]
+    current = round(random.uniform(low, high), 2)
+
+    increase_band = _weighted_choice_from_mapping(
+        churn_cfg.get("renewal_movement_band_weights"),
+        {"DECREASE": 10, "SMALL": 20, "MEDIUM": 30, "LARGE": 40},
+    )
+    increase_band_aliases = {
+        "0_5": "SMALL",
+        "5_10": "MEDIUM",
+        "GT_10": "LARGE",
+    }
+    increase_band = increase_band_aliases.get(increase_band, increase_band)
+    rate_ranges = {
+        "DECREASE": (-0.08, -0.01),
+        "SMALL": (0.00, 0.05),
+        "MEDIUM": (0.05, 0.10),
+        "LARGE": (0.10, 0.35),
+    }
+    rate_low, rate_high = rate_ranges[increase_band]
+    next_premium = round(current * (1 + random.uniform(rate_low, rate_high)), 2)
+    return current, max(0.0, next_premium)
+
+
+def _premium_abs_increase_band(current_premium: float, next_premium: float) -> str:
+    increase = next_premium - current_premium
+    if increase <= 0:
+        return "LE_0"
+    if increase <= 50:
+        return "1_50"
+    if increase <= 100:
+        return "51_100"
+    return "GT_100"
+
+
+def _current_premium_band(current_premium: float) -> str:
+    if current_premium <= 600:
+        return "LOW"
+    if current_premium <= 900:
+        return "MEDIUM"
+    if current_premium <= 1200:
+        return "HIGH"
+    return "VERY_HIGH"
+
+
+def _current_premium_churn_probability(current_premium: float, churn_config: dict | None = None) -> float:
+    probabilities = _churn_settings(churn_config).get("current_premium_churn_probability") or {}
+    defaults = {
+        "LOW": 0.14,
+        "MEDIUM": 0.20,
+        "HIGH": 0.32,
+        "VERY_HIGH": 0.47,
+    }
+    band = _current_premium_band(current_premium)
+    return float(probabilities.get(band, defaults.get(band, 0.20)))
+
+
+def _current_premium_churn_factor(current_premium: float, churn_config: dict | None = None) -> float:
+    churn_cfg = _churn_settings(churn_config)
+    premium_weights = churn_cfg.get("renewal_current_premium_band_weights") or {
+        "LOW": 35,
+        "MEDIUM": 35,
+        "HIGH": 20,
+        "VERY_HIGH": 10,
+    }
+    total_weight = sum(float(weight) for weight in premium_weights.values()) or 1.0
+    probabilities = churn_cfg.get("current_premium_churn_probability") or {
+        "LOW": 0.14,
+        "MEDIUM": 0.20,
+        "HIGH": 0.32,
+        "VERY_HIGH": 0.47,
+    }
+    weighted_probability = sum(
+        float(weight) * float(probabilities.get(band, 0.20))
+        for band, weight in premium_weights.items()
+    ) / total_weight
+    if weighted_probability <= 0:
+        return 1.0
+    scale = float(churn_cfg.get("current_premium_churn_normalization_scale", 1.0))
+    return scale * (_current_premium_churn_probability(current_premium, churn_cfg) / weighted_probability)
+
+
+def _premium_pct_increase_band(current_premium: float, next_premium: float) -> str:
+    if current_premium <= 0:
+        return "GT_10"
+    pct = ((next_premium - current_premium) / current_premium) * 100
+    if pct < 0:
+        return "LT_0"
+    if pct <= 5:
+        return "0_5"
+    if pct <= 10:
+        return "5_10"
+    return "GT_10"
+
+
+def _premium_pct_churn_probability(
+    current_premium: float,
+    next_premium: float,
+    churn_config: dict | None = None,
+) -> float:
+    probabilities = _churn_settings(churn_config).get("premium_pct_increase_churn_probability") or {}
+    defaults = {
+        "LT_0": 0.10,
+        "0_5": 0.17,
+        "5_10": 0.30,
+        "GT_10": 0.52,
+    }
+    band = _premium_pct_increase_band(current_premium, next_premium)
+    return float(probabilities.get(band, defaults.get(band, 0.17)))
+
+
+def _premium_pct_churn_factor(
+    current_premium: float,
+    next_premium: float,
+    churn_config: dict | None = None,
+) -> float:
+    churn_cfg = _churn_settings(churn_config)
+    movement_weights = churn_cfg.get("renewal_movement_band_weights") or {
+        "DECREASE": 10,
+        "0_5": 18,
+        "5_10": 30,
+        "GT_10": 42,
+    }
+    band_weight_map = {
+        "DECREASE": "LT_0",
+        "0_5": "0_5",
+        "SMALL": "0_5",
+        "5_10": "5_10",
+        "MEDIUM": "5_10",
+        "GT_10": "GT_10",
+        "LARGE": "GT_10",
+    }
+    expected_weights = {"LT_0": 0.0, "0_5": 0.0, "5_10": 0.0, "GT_10": 0.0}
+    for movement_band, weight in movement_weights.items():
+        expected_weights[band_weight_map.get(movement_band, "GT_10")] += float(weight)
+    total_weight = sum(expected_weights.values()) or 1.0
+    probabilities = churn_cfg.get("premium_pct_increase_churn_probability") or {
+        "LT_0": 0.10,
+        "0_5": 0.17,
+        "5_10": 0.30,
+        "GT_10": 0.52,
+    }
+    weighted_probability = sum(
+        weight * float(probabilities.get(band, 0.17))
+        for band, weight in expected_weights.items()
+    ) / total_weight
+    if weighted_probability <= 0:
+        return 1.0
+    scale = float(churn_cfg.get("premium_pct_increase_churn_normalization_scale", 1.0))
+    return scale * (_premium_pct_churn_probability(current_premium, next_premium, churn_cfg) / weighted_probability)
+
+
+def _premium_abs_churn_probability(
+    current_premium: float,
+    next_premium: float,
+    churn_config: dict | None = None,
+) -> float:
+    probabilities = _churn_settings(churn_config).get("premium_abs_increase_churn_probability") or {}
+    defaults = {
+        "LE_0": 0.10,
+        "1_50": 0.18,
+        "51_100": 0.31,
+        "GT_100": 0.55,
+    }
+    band = _premium_abs_increase_band(current_premium, next_premium)
+    return float(probabilities.get(band, defaults.get(band, 0.18)))
+
+
+def _premium_abs_churn_factor(
+    current_premium: float,
+    next_premium: float,
+    churn_config: dict | None = None,
+) -> float:
+    churn_cfg = _churn_settings(churn_config)
+    movement_weights = churn_cfg.get("renewal_movement_band_weights") or {
+        "DECREASE": 10,
+        "0_5": 18,
+        "5_10": 30,
+        "GT_10": 42,
+    }
+    # Approximate expected absolute-increase pressure from current configured movement bands.
+    band_weight_map = {
+        "DECREASE": "LE_0",
+        "0_5": "1_50",
+        "SMALL": "1_50",
+        "5_10": "51_100",
+        "MEDIUM": "51_100",
+        "GT_10": "GT_100",
+        "LARGE": "GT_100",
+    }
+    expected_weights = {"LE_0": 0.0, "1_50": 0.0, "51_100": 0.0, "GT_100": 0.0}
+    for movement_band, weight in movement_weights.items():
+        expected_weights[band_weight_map.get(movement_band, "GT_100")] += float(weight)
+    total_weight = sum(expected_weights.values()) or 1.0
+    probabilities = churn_cfg.get("premium_abs_increase_churn_probability") or {
+        "LE_0": 0.10,
+        "1_50": 0.18,
+        "51_100": 0.31,
+        "GT_100": 0.55,
+    }
+    weighted_probability = sum(
+        weight * float(probabilities.get(band, 0.18))
+        for band, weight in expected_weights.items()
+    ) / total_weight
+    if weighted_probability <= 0:
+        return 1.0
+    scale = float(churn_cfg.get("premium_abs_increase_churn_normalization_scale", 1.0))
+    return scale * (_premium_abs_churn_probability(current_premium, next_premium, churn_cfg) / weighted_probability)
+
+
+def _sample_policy_claim_counts(churn_config: dict | None = None) -> tuple[int, int, int]:
+    churn_cfg = _churn_settings(churn_config)
+    total_claims = int(_weighted_choice_from_mapping(
+        churn_cfg.get("claim_count_weights"),
+        {"0": 18, "1": 25, "2": 25, "3": 18, "4": 9, "5": 5},
+    ))
+    if total_claims == 0:
+        return 0, 0, 0
+
+    active_claims = min(total_claims, int(_weighted_choice_from_mapping(
+        churn_cfg.get("active_claim_count_weights"),
+        {"0": 45, "1": 40, "2": 15},
+    )))
+    remaining = total_claims - active_claims
+    declined_claims = min(remaining, int(_weighted_choice_from_mapping(
+        churn_cfg.get("declined_claim_count_weights"),
+        {"0": 70, "1": 25, "2": 5},
+    )))
+    previous_claims = max(0, total_claims - active_claims - declined_claims)
+    return declined_claims, active_claims, previous_claims
+
+
+def _policy_cycle_from_dates(policy_start: datetime, as_of_dt: datetime) -> int:
+    days_active = max(0, (as_of_dt.date() - policy_start.date()).days)
+    return days_active // 365
+
+
+def _sample_policy_cover_option(churn_config: dict | None = None) -> str:
+    return _weighted_choice_from_mapping(
+        _churn_settings(churn_config).get("cover_option_weights"),
+        {"BASE_ONLY": 35, "ONE_ADD_ON": 30, "TWO_ADD_ONS": 22, "THREE_PLUS_ADD_ONS": 13},
+    )
+
+
+def _addon_churn_probability(cover_option: str, churn_config: dict | None = None) -> float:
+    probabilities = _churn_settings(churn_config).get("addon_churn_probability") or {}
+    defaults = {
+        "BASE_ONLY": 0.34,
+        "ONE_ADD_ON": 0.23,
+        "TWO_ADD_ONS": 0.16,
+        "THREE_PLUS_ADD_ONS": 0.12,
+    }
+    return float(probabilities.get(cover_option, defaults.get(cover_option, 0.23)))
+
+
+def _addon_churn_factor(cover_option: str, churn_config: dict | None = None) -> float:
+    churn_cfg = _churn_settings(churn_config)
+    cover_weights = churn_cfg.get("cover_option_weights") or {
+        "BASE_ONLY": 35,
+        "ONE_ADD_ON": 30,
+        "TWO_ADD_ONS": 22,
+        "THREE_PLUS_ADD_ONS": 13,
+    }
+    total_weight = sum(float(weight) for weight in cover_weights.values()) or 1.0
+    weighted_probability = sum(
+        float(weight) * _addon_churn_probability(option, churn_cfg)
+        for option, weight in cover_weights.items()
+    ) / total_weight
+    if weighted_probability <= 0:
+        return 1.0
+    scale = float(churn_cfg.get("addon_churn_normalization_scale", 0.85))
+    return scale * (_addon_churn_probability(cover_option, churn_cfg) / weighted_probability)
+
+
+def _claim_count_band(total_claims: int) -> str:
+    if total_claims <= 0:
+        return "0"
+    if total_claims == 1:
+        return "1"
+    if total_claims == 2:
+        return "2"
+    return "3_PLUS"
+
+
+def _claim_count_churn_probability(total_claims: int, churn_config: dict | None = None) -> float:
+    probabilities = _churn_settings(churn_config).get("claim_count_churn_probability") or {}
+    defaults = {
+        "0": 0.15,
+        "1": 0.25,
+        "2": 0.37,
+        "3_PLUS": 0.52,
+    }
+    band = _claim_count_band(total_claims)
+    return float(probabilities.get(band, defaults.get(band, 0.25)))
+
+
+def _claim_count_churn_factor(total_claims: int, churn_config: dict | None = None) -> float:
+    churn_cfg = _churn_settings(churn_config)
+    claim_weights = churn_cfg.get("claim_count_weights") or {"0": 18, "1": 25, "2": 25, "3": 18, "4": 9, "5": 5}
+    band_weights = {"0": 0.0, "1": 0.0, "2": 0.0, "3_PLUS": 0.0}
+    for raw_count, weight in claim_weights.items():
+        band_weights[_claim_count_band(int(raw_count))] += float(weight)
+    total_weight = sum(band_weights.values()) or 1.0
+    weighted_probability = sum(
+        weight * _claim_count_churn_probability(3 if band == "3_PLUS" else int(band), churn_cfg)
+        for band, weight in band_weights.items()
+    ) / total_weight
+    if weighted_probability <= 0:
+        return 1.0
+    scale = float(churn_cfg.get("claim_count_churn_normalization_scale", 0.95))
+    return scale * (_claim_count_churn_probability(total_claims, churn_cfg) / weighted_probability)
+
+
+def _sample_sales_channel_for_status(policy_status: str, churn_config: dict | None = None) -> str:
+    channel_weights = _churn_settings(churn_config).get("sales_channel_by_policy_status") or {
+        "ACTIVE": {"ONLINE": 50, "BRANCH": 38, "AGENT": 12},
+        "LAPSED": {"ONLINE": 22, "BRANCH": 18, "AGENT": 60},
+        "CANCELLED": {"ONLINE": 10, "BRANCH": 8, "AGENT": 82},
+    }
+    return _weighted_choice_from_mapping(
+        channel_weights.get(policy_status),
+        {"ONLINE": 35, "BRANCH": 30, "AGENT": 35},
+    )
+
+
+def _tenure_churn_probability(policy_cycle: int, churn_config: dict | None = None) -> float:
+    probabilities = _churn_settings(churn_config).get("tenure_churn_probability") or {}
+    if policy_cycle < 1:
+        return float(probabilities.get("LT_1", 0.58))
+    if policy_cycle <= 2:
+        return float(probabilities.get("Y1_2", 0.16))
+    if policy_cycle <= 5:
+        return float(probabilities.get("Y3_5", 0.04))
+    return float(probabilities.get("GT_5", 0.0))
+
+
+def _tenure_band(policy_cycle: int) -> str:
+    if policy_cycle < 1:
+        return "LT_1"
+    if policy_cycle <= 2:
+        return "Y1_2"
+    if policy_cycle <= 5:
+        return "Y3_5"
+    return "GT_5"
+
+
+def _sample_policy_status_for_tenure(
+    policy_cycle: int,
+    account_status: str | None,
+    churn_config: dict | None = None,
+    cover_option: str | None = None,
+    total_claims: int | None = None,
+    renewal_current: float | None = None,
+    renewal_next: float | None = None,
+    vehicle_segment: str | None = None,
+    marketing_engagement_band: str | None = None,
+    driver_experience_band: str | None = None,
+) -> str:
+    churn_cfg = _churn_settings(churn_config)
+    if account_status == "CLOSED":
+        return "CANCELLED"
+    if account_status == "SUSPENDED":
+        if policy_cycle < 1:
+            return "CANCELLED"
+        return _weighted_choice_from_mapping(
+            churn_cfg.get("suspended_policy_status_weights"),
+            {"LAPSED": 65, "CANCELLED": 35},
+        )
+
+    churn_probability = _tenure_churn_probability(policy_cycle, churn_cfg)
+    if cover_option:
+        churn_probability *= _addon_churn_factor(cover_option, churn_cfg)
+    if total_claims is not None:
+        churn_probability *= _claim_count_churn_factor(total_claims, churn_cfg)
+    if renewal_current is not None and renewal_next is not None:
+        churn_probability *= _current_premium_churn_factor(renewal_current, churn_cfg)
+        churn_probability *= _premium_abs_churn_factor(renewal_current, renewal_next, churn_cfg)
+        churn_probability *= _premium_pct_churn_factor(renewal_current, renewal_next, churn_cfg)
+    if vehicle_segment:
+        churn_probability *= _vehicle_segment_churn_factor(vehicle_segment, churn_cfg)
+    if marketing_engagement_band:
+        churn_probability *= _marketing_engagement_churn_factor(marketing_engagement_band, churn_cfg)
+    if driver_experience_band:
+        churn_probability *= _driver_experience_churn_factor(driver_experience_band, churn_cfg)
+    churn_probability = max(0.0, min(0.95, churn_probability))
+    if random.random() >= churn_probability:
+        return "ACTIVE"
+
+    if policy_cycle < 1:
+        return "CANCELLED"
+    return _weighted_choice_from_mapping(
+        churn_cfg.get("churned_policy_status_weights"),
+        {"LAPSED": 70, "CANCELLED": 30},
+    )
+
+
+def _sample_vehicle_segment(churn_config: dict | None = None) -> str:
+    return _weighted_choice_from_mapping(
+        _churn_settings(churn_config).get("vehicle_segment_weights"),
+        {"STANDARD": 65, "PREMIUM": 25, "HIGH_RISK": 10},
+    )
+
+
+def _vehicle_profile_for_segment(segment: str) -> tuple[str, str, str, str]:
+    profiles = {
+        "STANDARD": [
+            ("SEDAN", "PRIVATE", "Focus", "CAR"),
+            ("HATCH", "PRIVATE", "Corsa", "CAR"),
+            ("SEDAN", "PRIVATE", "Corolla", "CAR"),
+        ],
+        "PREMIUM": [
+            ("SUV", "PRIVATE", "Qashqai", "CAR"),
+            ("SEDAN", "PRIVATE", "3 Series", "CAR"),
+            ("HATCH", "PRIVATE", "A3", "CAR"),
+        ],
+        "HIGH_RISK": [
+            ("BIKE", "PRIVATE", "Sport Bike", "BIKE"),
+            ("BIKE", "PRIVATE", "Superbike", "BIKE"),
+            ("SUV", "COMMERCIAL", "High Performance SUV", "CAR"),
+        ],
+    }
+    return random.choice(profiles.get(segment, profiles["STANDARD"]))
+
+
+def _sample_vehicle_profile(churn_config: dict | None = None) -> tuple[str, str, str, str]:
+    return _vehicle_profile_for_segment(_sample_vehicle_segment(churn_config))
+
+
+def _vehicle_segment_from_profile(profile: tuple[str, str, str, str] | None) -> str:
+    if not profile:
+        return ""
+    vehicle_model = profile[2]
+    if vehicle_model in {"Focus", "Corsa", "Corolla"}:
+        return "STANDARD"
+    if vehicle_model in {"Qashqai", "3 Series", "A3"}:
+        return "PREMIUM"
+    if vehicle_model in {"Sport Bike", "Superbike", "High Performance SUV"}:
+        return "HIGH_RISK"
+    return ""
+
+
+def _vehicle_segment_churn_probability(vehicle_segment: str, churn_config: dict | None = None) -> float:
+    probabilities = _churn_settings(churn_config).get("vehicle_segment_churn_probability") or {}
+    defaults = {
+        "STANDARD": 0.17,
+        "PREMIUM": 0.27,
+        "HIGH_RISK": 0.40,
+    }
+    return float(probabilities.get(vehicle_segment, defaults.get(vehicle_segment, 0.17)))
+
+
+def _vehicle_segment_churn_factor(vehicle_segment: str, churn_config: dict | None = None) -> float:
+    if not vehicle_segment:
+        return 1.0
+    churn_cfg = _churn_settings(churn_config)
+    segment_weights = churn_cfg.get("vehicle_segment_weights") or {"STANDARD": 65, "PREMIUM": 25, "HIGH_RISK": 10}
+    total_weight = sum(float(weight) for weight in segment_weights.values()) or 1.0
+    weighted_probability = sum(
+        float(weight) * _vehicle_segment_churn_probability(segment, churn_cfg)
+        for segment, weight in segment_weights.items()
+    ) / total_weight
+    if weighted_probability <= 0:
+        return 1.0
+    scale = float(churn_cfg.get("vehicle_segment_churn_normalization_scale", 1.0))
+    return scale * (_vehicle_segment_churn_probability(vehicle_segment, churn_cfg) / weighted_probability)
+
+
+def _policy_churn_band_targets(churn_config: dict | None = None) -> dict:
+    churn_cfg = _churn_settings(churn_config)
+    return {
+        "premium": {
+            "order": ["LE_0", "1_50", "51_100", "GT_100"],
+            "ranges": churn_cfg.get("premium_abs_increase_churn_expected_ranges") or {
+                "LE_0": [0.08, 0.12],
+                "1_50": [0.15, 0.22],
+                "51_100": [0.25, 0.38],
+                "GT_100": [0.45, 0.65],
+            },
+            "target": {"LE_0": 0.10, "1_50": 0.18, "51_100": 0.31, "GT_100": 0.50},
+        },
+        "current_premium": {
+            "order": ["LOW", "MEDIUM", "HIGH", "VERY_HIGH"],
+            "ranges": churn_cfg.get("current_premium_churn_expected_ranges") or {
+                "LOW": [0.10, 0.18],
+                "MEDIUM": [0.15, 0.25],
+                "HIGH": [0.25, 0.40],
+                "VERY_HIGH": [0.40, 0.55],
+            },
+            "target": {"LOW": 0.14, "MEDIUM": 0.20, "HIGH": 0.32, "VERY_HIGH": 0.47},
+        },
+        "tenure": {
+            "order": ["LT_1", "Y1_2", "Y3_5", "GT_5"],
+            "ranges": churn_cfg.get("tenure_churn_expected_ranges") or {
+                "LT_1": [0.35, 0.50],
+                "Y1_2": [0.25, 0.35],
+                "Y3_5": [0.15, 0.25],
+                "GT_5": [0.08, 0.15],
+            },
+            "target": {"LT_1": 0.42, "Y1_2": 0.30, "Y3_5": 0.20, "GT_5": 0.12},
+        },
+        "premium_pct": {
+            "order": ["LT_0", "0_5", "5_10", "GT_10"],
+            "ranges": churn_cfg.get("premium_pct_increase_churn_expected_ranges") or {
+                "LT_0": [0.08, 0.12],
+                "0_5": [0.15, 0.20],
+                "5_10": [0.25, 0.35],
+                "GT_10": [0.45, 0.65],
+            },
+            "target": {"LT_0": 0.10, "0_5": 0.17, "5_10": 0.30, "GT_10": 0.52},
+        },
+        "claim": {
+            "order": ["0", "1", "2", "3_PLUS"],
+            "ranges": churn_cfg.get("claim_count_churn_expected_ranges") or {
+                "0": [0.12, 0.18],
+                "1": [0.20, 0.30],
+                "2": [0.30, 0.45],
+                "3_PLUS": [0.45, 0.60],
+            },
+            "target": {"0": 0.15, "1": 0.25, "2": 0.38, "3_PLUS": 0.52},
+        },
+        "addon": {
+            "order": ["BASE_ONLY", "ONE_ADD_ON", "TWO_ADD_ONS", "THREE_PLUS_ADD_ONS"],
+            "ranges": churn_cfg.get("addon_churn_expected_ranges") or {
+                "BASE_ONLY": [0.25, 0.40],
+                "ONE_ADD_ON": [0.18, 0.28],
+                "TWO_ADD_ONS": [0.12, 0.22],
+                "THREE_PLUS_ADD_ONS": [0.08, 0.18],
+            },
+            "target": {
+                "BASE_ONLY": 0.34,
+                "ONE_ADD_ON": 0.24,
+                "TWO_ADD_ONS": 0.17,
+                "THREE_PLUS_ADD_ONS": 0.12,
+            },
+        },
+        "marketing": {
+            "order": ["HIGH", "MEDIUM", "LOW", "NONE"],
+            "ranges": churn_cfg.get("marketing_engagement_churn_expected_ranges") or {
+                "HIGH": [0.08, 0.15],
+                "MEDIUM": [0.18, 0.30],
+                "LOW": [0.35, 0.55],
+                "NONE": [0.50, 0.70],
+            },
+            "target": {"HIGH": 0.12, "MEDIUM": 0.24, "LOW": 0.45, "NONE": 0.60},
+        },
+        "vehicle": {
+            "order": ["STANDARD", "PREMIUM", "HIGH_RISK"],
+            "ranges": churn_cfg.get("vehicle_segment_churn_expected_ranges") or {
+                "STANDARD": [0.12, 0.22],
+                "PREMIUM": [0.20, 0.35],
+                "HIGH_RISK": [0.30, 0.50],
+            },
+            "target": {"STANDARD": 0.17, "PREMIUM": 0.27, "HIGH_RISK": 0.40},
+        },
+        "driver": {
+            "order": ["LT_2Y", "Y2_5", "Y6_10", "GT_10"],
+            "ranges": churn_cfg.get("driver_experience_churn_expected_ranges") or {
+                "LT_2Y": [0.25, 0.40],
+                "Y2_5": [0.18, 0.30],
+                "Y6_10": [0.15, 0.25],
+                "GT_10": [0.10, 0.18],
+            },
+            "target": {"LT_2Y": 0.32, "Y2_5": 0.24, "Y6_10": 0.20, "GT_10": 0.14},
+        },
+    }
+
+
+def _policy_row_bands(row: dict) -> dict:
+    current = float(row["Renewal Amount Current Period"])
+    next_amt = float(row["Renewal Amount Next Period"])
+    total_claims = (
+        int(row["Declined Claims"])
+        + int(row["Number of Active Claim"])
+        + int(row["Number of Previous Claim"])
+    )
+    return {
+        "current_premium": _current_premium_band(current),
+        "premium": _premium_abs_increase_band(current, next_amt),
+        "premium_pct": _premium_pct_increase_band(current, next_amt),
+        "claim": _claim_count_band(total_claims),
+        "addon": str(row["Cover Option"]),
+        "marketing": str(row.get("_Marketing Engagement Band") or ""),
+        "vehicle": str(row.get("_Vehicle Segment") or ""),
+        "driver": str(row.get("_Driver Experience Band") or ""),
+        "tenure": _tenure_band(int(row["Policy Cycle"])),
+    }
+
+
+def _policy_churn_score(row: dict, targets: dict) -> float:
+    bands = _policy_row_bands(row)
+    policy_cycle = int(row["Policy Cycle"])
+    tenure_score = targets.get("tenure", {}).get("target", {}).get(_tenure_band(policy_cycle), _tenure_churn_probability(policy_cycle, {}))
+    return (
+        tenure_score
+        + targets["current_premium"]["target"].get(bands["current_premium"], 0.20)
+        + targets["premium"]["target"].get(bands["premium"], 0.18)
+        + targets["premium_pct"]["target"].get(bands["premium_pct"], 0.17)
+        + targets["claim"]["target"].get(bands["claim"], 0.25)
+        + targets["addon"]["target"].get(bands["addon"], 0.24)
+        + targets["marketing"]["target"].get(bands["marketing"], 0.24)
+        + targets["vehicle"]["target"].get(bands["vehicle"], 0.17)
+        + targets["driver"]["target"].get(bands["driver"], 0.20)
+    )
+
+
+def _policy_churn_counts(flags: list[bool], bands_by_row: list[dict], targets: dict) -> dict:
+    counts = {}
+    for dimension, spec in targets.items():
+        dimension_counts = {}
+        for band in spec["order"]:
+            indices = [idx for idx, bands in enumerate(bands_by_row) if bands[dimension] == band]
+            if not indices:
+                continue
+            churned = sum(1 for idx in indices if flags[idx])
+            dimension_counts[band] = {
+                "indices": indices,
+                "count": len(indices),
+                "churned": churned,
+                "min": math.ceil(float(spec["ranges"][band][0]) * len(indices)),
+                "max": math.floor(float(spec["ranges"][band][1]) * len(indices)),
+                "target": min(
+                    max(round(float(spec["target"][band]) * len(indices)), math.ceil(float(spec["ranges"][band][0]) * len(indices))),
+                    math.floor(float(spec["ranges"][band][1]) * len(indices)),
+                ),
+            }
+        counts[dimension] = dimension_counts
+    return counts
+
+
+def _policy_row_in_band_above_max(idx: int, counts: dict, bands_by_row: list[dict]) -> bool:
+    for dimension, dimension_counts in counts.items():
+        band = bands_by_row[idx].get(dimension)
+        band_counts = dimension_counts.get(band)
+        if band_counts and band_counts["churned"] > band_counts["max"]:
+            return True
+    return False
+
+
+def _policy_row_in_band_below_min(idx: int, counts: dict, bands_by_row: list[dict]) -> bool:
+    for dimension, dimension_counts in counts.items():
+        band = bands_by_row[idx].get(dimension)
+        band_counts = dimension_counts.get(band)
+        if band_counts and band_counts["churned"] <= band_counts["min"]:
+            return True
+    return False
+
+
+def _policy_calibration_weights() -> dict:
+    return {
+        "current_premium": 1.0,
+        "premium": 1.1,
+        "premium_pct": 1.1,
+        "claim": 1.2,
+        "addon": 1.3,
+        "tenure": 1.4,
+        "marketing": 1.1,
+        "vehicle": 0.8,
+        "driver": 1.6,
+    }
+
+
+def _policy_band_penalty(churned: int, band_counts: dict, weight: float) -> float:
+    count = max(int(band_counts["count"]), 1)
+    target = int(band_counts["target"])
+    lower = int(band_counts["min"])
+    upper = int(band_counts["max"])
+    target_error = ((churned - target) / count) ** 2
+    outside_error = 0.0
+    if churned < lower:
+        outside_error = ((lower - churned) / count) ** 2
+    elif churned > upper:
+        outside_error = ((churned - upper) / count) ** 2
+    return weight * (target_error + 25.0 * outside_error)
+
+
+def _policy_flip_delta(idx: int, to_churned: bool, counts: dict, bands_by_row: list[dict], weights: dict) -> float:
+    delta = 0.0
+    step = 1 if to_churned else -1
+    for dimension, band in bands_by_row[idx].items():
+        band_counts = counts.get(dimension, {}).get(band)
+        if not band_counts:
+            continue
+        weight = float(weights.get(dimension, 1.0))
+        before = _policy_band_penalty(int(band_counts["churned"]), band_counts, weight)
+        after = _policy_band_penalty(int(band_counts["churned"]) + step, band_counts, weight)
+        delta += after - before
+    return delta
+
+
+def _policy_apply_flip(idx: int, to_churned: bool, flags: list[bool], counts: dict, bands_by_row: list[dict]) -> None:
+    flags[idx] = to_churned
+    step = 1 if to_churned else -1
+    for dimension, band in bands_by_row[idx].items():
+        band_counts = counts.get(dimension, {}).get(band)
+        if band_counts:
+            band_counts["churned"] += step
+
+
+def _set_policy_row_status_dates(row: dict, status: str, load_dt: datetime, as_of_dt: datetime, churn_config: dict | None) -> None:
+    policy_start = _coerce_datetime(row["Policy Start Date"])
+    policy_cycle = int(row["Policy Cycle"])
+    current_term_start = _add_years(policy_start, policy_cycle)
+    current_term_end = _add_years(policy_start, policy_cycle + 1)
+
+    if status == "LAPSED" and (policy_cycle < 1 or current_term_start > load_dt):
+        status = "CANCELLED"
+
+    if status == "ACTIVE":
+        policy_end = current_term_end
+    elif status == "LAPSED":
+        policy_end = current_term_start if policy_cycle > 0 else min(as_of_dt, load_dt)
+    else:
+        min_end = max(policy_start + timedelta(days=7), current_term_start)
+        max_end = min(current_term_end - timedelta(days=1), as_of_dt, load_dt)
+        if max_end >= min_end:
+            span_seconds = int((max_end - min_end).total_seconds())
+            policy_end = min_end + timedelta(seconds=random.randint(0, span_seconds))
+        else:
+            policy_end = min(policy_start + timedelta(days=7), load_dt)
+
+    row["Policy Status"] = status
+    row["Policy End Date"] = policy_end.strftime("%Y-%m-%d %H:%M:%S")
+    row["Renewal Date"] = (policy_end - timedelta(days=random.randint(0, 10))).strftime("%Y-%m-%d %H:%M:%S")
+    row["Sales Channel"] = _sample_sales_channel_for_status(status, churn_config)
+
+    fraud_risk_score = 0
+    if int(row["Declined Claims"]) >= 2:
+        fraud_risk_score += 2
+    if int(row["Number of Previous Claim"]) >= 4:
+        fraud_risk_score += 1
+    if int(row["Number of Active Claim"]) >= 2:
+        fraud_risk_score += 1
+    if status == "CANCELLED":
+        fraud_risk_score += 1
+    account_status = str(row.get("_Account Status") or "").upper()
+    if account_status == "SUSPENDED":
+        fraud_risk_score += 1
+    elif account_status == "CLOSED":
+        fraud_risk_score += 2
+    row["Fraud Flag"] = "Y" if fraud_risk_score >= 4 else "N"
+
+
+def _calibrate_policy_churn_rows(rows: list[dict], churn_config: dict | None, load_dt: datetime, as_of_dt: datetime) -> None:
+    if len(rows) < 200:
+        return
+
+    targets = _policy_churn_band_targets(churn_config)
+    flags = [row["Policy Status"] in {"CANCELLED", "LAPSED"} for row in rows]
+    locked_churn = [
+        str(row.get("_Account Status") or "").upper() in {"CLOSED", "SUSPENDED"}
+        for row in rows
+    ]
+    for idx, locked in enumerate(locked_churn):
+        if locked:
+            flags[idx] = True
+    bands_by_row = [_policy_row_bands(row) for row in rows]
+    scores = [_policy_churn_score(row, targets) for row in rows]
+    weights = _policy_calibration_weights()
+
+    for _ in range(30):
+        changed = False
+        counts = _policy_churn_counts(flags, bands_by_row, targets)
+        for dimension, spec in targets.items():
+            for band in spec["order"]:
+                band_counts = counts.get(dimension, {}).get(band)
+                if not band_counts:
+                    continue
+                indices = band_counts["indices"]
+                if len(indices) < 20:
+                    continue
+                current = band_counts["churned"]
+                min_count = band_counts["min"]
+                max_count = band_counts["max"]
+                target_count = band_counts["target"]
+
+                if current < target_count:
+                    candidates = [idx for idx in indices if not flags[idx]]
+                    candidates.sort(
+                        key=lambda idx: (
+                            _policy_flip_delta(idx, True, counts, bands_by_row, weights),
+                            -scores[idx],
+                        ),
+                    )
+                    flipped = 0
+                    for idx in candidates:
+                        if flipped >= target_count - current:
+                            break
+                        if _policy_flip_delta(idx, True, counts, bands_by_row, weights) <= 0:
+                            _policy_apply_flip(idx, True, flags, counts, bands_by_row)
+                            flipped += 1
+                            changed = True
+                elif current > target_count:
+                    candidates = [
+                        idx
+                        for idx in indices
+                        if flags[idx]
+                        and not locked_churn[idx]
+                    ]
+                    candidates.sort(
+                        key=lambda idx: (
+                            _policy_flip_delta(idx, False, counts, bands_by_row, weights),
+                            scores[idx],
+                        )
+                    )
+                    flipped = 0
+                    for idx in candidates:
+                        if flipped >= current - target_count:
+                            break
+                        if _policy_flip_delta(idx, False, counts, bands_by_row, weights) <= 0:
+                            _policy_apply_flip(idx, False, flags, counts, bands_by_row)
+                            flipped += 1
+                            changed = True
+        if not changed:
+            break
+
+    for idx, row in enumerate(rows):
+        if locked_churn[idx]:
+            status = "CANCELLED" if str(row.get("_Account Status") or "").upper() == "CLOSED" else (
+                "CANCELLED" if int(row["Policy Cycle"]) < 1 else _weighted_choice_from_mapping(
+                    _churn_settings(churn_config).get("suspended_policy_status_weights"),
+                    {"LAPSED": 65, "CANCELLED": 35},
+                )
+            )
+        elif flags[idx]:
+            if int(row["Policy Cycle"]) < 1:
+                status = "CANCELLED"
+            else:
+                status = _weighted_choice_from_mapping({"LAPSED": 55, "CANCELLED": 45}, {"LAPSED": 55, "CANCELLED": 45})
+        else:
+            status = "ACTIVE"
+        _set_policy_row_status_dates(row, status, load_dt, as_of_dt, churn_config)
+
+
+def _sample_marketing_preference_flags(churn_config: dict | None = None) -> dict[str, str]:
+    churn_cfg = _churn_settings(churn_config)
+    engagement_band = _weighted_choice_from_mapping(
+        churn_cfg.get("marketing_engagement_band_weights"),
+        {"HIGH": 15, "MEDIUM": 30, "LOW": 35, "NONE": 20},
+    )
+    channels = ["SMS", "Email", "Email Subscriptions", "Commercial Email", "Postal Mail"]
+    selected_count = {
+        "HIGH": random.randint(4, 5),
+        "MEDIUM": random.randint(2, 3),
+        "LOW": 1,
+        "NONE": 0,
+    }[engagement_band]
+    selected = set(random.sample(channels, selected_count)) if selected_count else set()
+    service_call_band = _weighted_choice_from_mapping(
+        churn_cfg.get("service_call_band_weights"),
+        {"NONE": 45, "LOW": 30, "MEDIUM": 18, "HIGH": 7},
+    )
+    flags = {channel: "Y" if channel in selected else "N" for channel in channels}
+    flags["Call"] = "Y" if service_call_band != "NONE" else "N"
+    flags["Any"] = "Y" if any(value == "Y" for value in flags.values()) else "N"
+    return flags
+
+
+def _marketing_engagement_band_from_flags(flags: dict[str, str]) -> str:
+    score = sum(
+        1
+        for channel in ("Email Subscriptions", "Commercial Email", "Email", "SMS")
+        if flags.get(channel) == "Y"
+    )
+    if score == 0:
+        return "NONE"
+    if score == 1:
+        return "LOW"
+    if score <= 3:
+        return "MEDIUM"
+    return "HIGH"
+
+
+def _marketing_engagement_churn_probability(engagement_band: str, churn_config: dict | None = None) -> float:
+    probabilities = _churn_settings(churn_config).get("marketing_engagement_churn_probability") or {}
+    defaults = {
+        "HIGH": 0.12,
+        "MEDIUM": 0.24,
+        "LOW": 0.45,
+        "NONE": 0.60,
+    }
+    return float(probabilities.get(engagement_band, defaults.get(engagement_band, 0.24)))
+
+
+def _marketing_engagement_churn_factor(engagement_band: str | None, churn_config: dict | None = None) -> float:
+    if not engagement_band:
+        return 1.0
+    churn_cfg = _churn_settings(churn_config)
+    band_weights = churn_cfg.get("marketing_engagement_band_weights") or {
+        "HIGH": 15,
+        "MEDIUM": 30,
+        "LOW": 35,
+        "NONE": 20,
+    }
+    total_weight = sum(float(weight) for weight in band_weights.values()) or 1.0
+    probabilities = churn_cfg.get("marketing_engagement_churn_probability") or {
+        "HIGH": 0.12,
+        "MEDIUM": 0.24,
+        "LOW": 0.45,
+        "NONE": 0.60,
+    }
+    weighted_probability = sum(
+        float(weight) * float(probabilities.get(band, 0.24))
+        for band, weight in band_weights.items()
+    ) / total_weight
+    if weighted_probability <= 0:
+        return 1.0
+    scale = float(churn_cfg.get("marketing_engagement_churn_normalization_scale", 1.0))
+    return scale * (_marketing_engagement_churn_probability(engagement_band, churn_cfg) / weighted_probability)
+
+
+def _driver_experience_band(experience_years: float | int | None) -> str:
+    if experience_years is None:
+        return ""
+    if experience_years < 2:
+        return "LT_2Y"
+    if experience_years <= 5:
+        return "Y2_5"
+    if experience_years <= 10:
+        return "Y6_10"
+    return "GT_10"
+
+
+def _driver_experience_churn_probability(driver_experience_band: str, churn_config: dict | None = None) -> float:
+    probabilities = _churn_settings(churn_config).get("driver_experience_churn_probability") or {}
+    defaults = {
+        "LT_2Y": 0.32,
+        "Y2_5": 0.24,
+        "Y6_10": 0.20,
+        "GT_10": 0.14,
+    }
+    return float(probabilities.get(driver_experience_band, defaults.get(driver_experience_band, 0.20)))
+
+
+def _driver_experience_churn_factor(driver_experience_band: str | None, churn_config: dict | None = None) -> float:
+    if not driver_experience_band:
+        return 1.0
+    churn_cfg = _churn_settings(churn_config)
+    band_weights = churn_cfg.get("driver_experience_band_weights") or {
+        "LT_2Y": 12,
+        "Y2_5": 20,
+        "Y6_10": 25,
+        "GT_10": 43,
+    }
+    total_weight = sum(float(weight) for weight in band_weights.values()) or 1.0
+    probabilities = churn_cfg.get("driver_experience_churn_probability") or {
+        "LT_2Y": 0.32,
+        "Y2_5": 0.24,
+        "Y6_10": 0.20,
+        "GT_10": 0.14,
+    }
+    weighted_probability = sum(
+        float(weight) * float(probabilities.get(band, 0.20))
+        for band, weight in band_weights.items()
+    ) / total_weight
+    if weighted_probability <= 0:
+        return 1.0
+    scale = float(churn_cfg.get("driver_experience_churn_normalization_scale", 1.0))
+    return scale * (_driver_experience_churn_probability(driver_experience_band, churn_cfg) / weighted_probability)
 
 
 def pick_gender_and_title():
@@ -300,6 +1284,24 @@ def _birth_date_for_age_range(rng: random.Random, reference_date, minimum_age: i
     return fake.date_between(start_date=earliest_birth, end_date=latest_birth)
 
 
+def _birth_date_for_driver_experience_proxy(rng: random.Random, reference_date):
+    ref_dt = _coerce_datetime(reference_date) if reference_date else datetime.now().replace(microsecond=0)
+    band = rng.choices(
+        ["LT_2Y", "Y2_5", "Y6_10", "GT_10"],
+        weights=[12, 20, 25, 43],
+    )[0]
+    age_ranges = {
+        "LT_2Y": (18, 19),
+        "Y2_5": (20, 22),
+        "Y6_10": (23, 27),
+        "GT_10": (28, 85),
+    }
+    minimum_age, maximum_age = age_ranges[band]
+    latest_birth = _add_years(ref_dt, -minimum_age).date()
+    earliest_birth = _add_years(ref_dt, -maximum_age).date()
+    return fake.date_between(start_date=earliest_birth, end_date=latest_birth)
+
+
 def get_or_create_person_profile(person_hk: str, reference_date=None) -> dict:
     """
     Canonical person info for consistency across satellites.
@@ -316,7 +1318,7 @@ def get_or_create_person_profile(person_hk: str, reference_date=None) -> dict:
     first = fake.first_name_male() if gender == "Male" else fake.first_name_female()
     last = fake.last_name()
 
-    dob = _birth_date_for_age_range(rng, reference_date, minimum_age=18, maximum_age=85)
+    dob = _birth_date_for_driver_experience_proxy(rng, reference_date)
     title = _pick_title_uk(gender, marital_status, rng)
 
     occupation, job_title = _pick_occupation_and_job_consistent(rng)
@@ -466,9 +1468,14 @@ def sat_lead(
         for lead_hk in _as_list(hk_or_hks):
             # Bias lead conversions toward recent history so downstream policy
             # timelines produce a more realistic active/lapsed portfolio mix.
-            if random.random() < 0.8:
+            lead_age_roll = random.random()
+            if lead_age_roll < 0.2:
                 recent_start = max(biz_start, upper_date - timedelta(days=365))
                 converted_dt = _cap_datetime_to_load(_rand_datetime_between(recent_start, upper_date), load_date)
+            elif lead_age_roll < 0.45:
+                historical_start = upper_date - timedelta(days=365 * 7)
+                historical_end = min(upper_date, upper_date - timedelta(days=365 * 6))
+                converted_dt = _cap_datetime_to_load(_rand_datetime_between(historical_start, historical_end), load_date)
             else:
                 converted_dt = _cap_datetime_to_load(_rand_datetime_between(biz_start, upper_date), load_date)
             person_score = random.randint(1, 100)
@@ -548,7 +1555,8 @@ def sat_customer(
         load_date,
         business_start_date=datetime.combine(date(2020, 1, 1), datetime.min.time()).strftime("%Y-%m-%d %H:%M:%S"),
         as_of_date=None,
-        earliest_policy_start_by_person=None
+        earliest_policy_start_by_person=None,
+        churn_config=None,
 ):
     """
     No new columns.
@@ -582,7 +1590,10 @@ def sat_customer(
                 "Customer Hash Key": hk,
                 "Load Date": load_date,
                 "Customer Number": random.randint(100000, 999999),
-                "Customer Status": random.choices(["ACTIVE", "LAPSED"], weights=[0.8, 0.2])[0],
+                "Customer Status": _weighted_choice_from_mapping(
+                    _churn_settings(churn_config).get("customer_status_weights"),
+                    {"ACTIVE": 80, "LAPSED": 20},
+                ),
                 "Customer Status Reason": random.choice(["RENEWAL", "PAYMENT", "CUSTOMER_REQUEST"]),
                 "Customer Since": customer_since.strftime("%Y-%m-%d %H:%M:%S"),
                 "Customer Rating": 3,
@@ -840,15 +1851,15 @@ def sat_consent(person_to_consent_hk, load_date):
 
 
 # ---------------- ACCOUNT ----------------
-def sat_account(person_to_account_hk, load_date):
+def sat_account(person_to_account_hk, load_date, churn_config=None):
     rows = []
     load_dt = _coerce_datetime(load_date)
     for _, hk_or_hks in person_to_account_hk.items():
         for hk in _as_list(hk_or_hks):
-            account_status = random.choices(
-                ["OPEN", "SUSPENDED", "CLOSED"],
-                weights=[0.80, 0.12, 0.08],
-            )[0]
+            account_status = _weighted_choice_from_mapping(
+                _churn_settings(churn_config).get("account_status_weights"),
+                {"OPEN": 96, "SUSPENDED": 3, "CLOSED": 1},
+            )
 
             created_anchor = load_dt - timedelta(days=random.randint(30, 365 * 3))
             last_change_dt = created_anchor + timedelta(days=random.randint(0, max(1, (load_dt - created_anchor).days)))
@@ -881,26 +1892,24 @@ def sat_account(person_to_account_hk, load_date):
 
 
 # ---------------- MARKETING PREFERENCE ----------------
-def sat_marketing_preference(person_to_mpr_hk, load_date):
+def sat_marketing_preference(person_to_mpr_hk, load_date, churn_config=None, person_marketing_engagement_by_person=None):
     rows = []
-    for _, hk_or_hks in person_to_mpr_hk.items():
+    for person_hk, hk_or_hks in person_to_mpr_hk.items():
         for hk in _as_list(hk_or_hks):
-            any_col =  random.choice(["Y", "N"])
-            if any_col == 'Y':
-                choosed_value = any_col
-            else:
-                choosed_value = random.choice(["Y", "N"])
+            flags = _sample_marketing_preference_flags(churn_config)
+            if person_marketing_engagement_by_person is not None:
+                person_marketing_engagement_by_person[person_hk] = _marketing_engagement_band_from_flags(flags)
                 
             rows.append({
                 "Marketing Preference Hash Key": hk,
                 "Load Date": load_date,
-                "SMS": choosed_value,
-                "Email": choosed_value,
-                "Email Subscriptions": choosed_value,
-                "Call": choosed_value,
-                "Any": any_col,
-                "Commercial Email": choosed_value,
-                "Postal Mail": choosed_value
+                "SMS": flags["SMS"],
+                "Email": flags["Email"],
+                "Email Subscriptions": flags["Email Subscriptions"],
+                "Call": flags["Call"],
+                "Any": flags["Any"],
+                "Commercial Email": flags["Commercial Email"],
+                "Postal Mail": flags["Postal Mail"]
             })
     return rows
 
@@ -947,6 +1956,11 @@ def sat_policy(
         policy_to_person_map=None,
         latest_lead_converted_by_person=None,
         person_account_status_by_person=None,
+        churn_config=None,
+        policy_to_motor=None,
+        motor_vehicle_profiles=None,
+        person_marketing_engagement_by_person=None,
+        person_driver_experience_by_person=None,
 ):
     """
     Drop-in replacement.
@@ -976,56 +1990,69 @@ def sat_policy(
             fallback_start = _rand_datetime_between(biz_start, as_of_dt.date())
             policy_start = min(fallback_start, load_dt)
 
-        policy_length_months = 12
-        planned_end = _add_one_year(policy_start)
-
         account_status = person_account_status_by_person.get(person_hk) if person_account_status_by_person and person_hk else None
-        if account_status == "CLOSED":
+        policy_length_months = 12
+        policy_cycle = _policy_cycle_from_dates(policy_start, as_of_dt)
+        current_term_start = _add_years(policy_start, policy_cycle)
+        current_term_end = _add_years(policy_start, policy_cycle + 1)
+        cover_option = _sample_policy_cover_option(churn_config)
+        declined_claims, active_claims, previous_claims = _sample_policy_claim_counts(churn_config)
+        total_claims = declined_claims + active_claims + previous_claims
+        renewal_current, renewal_next = _sample_renewal_premiums(churn_config)
+        vehicle_segment = ""
+        if policy_to_motor and hk in policy_to_motor:
+            vehicle_segment = _sample_vehicle_segment(churn_config)
+            motor_hks = policy_to_motor.get(hk)
+            if not isinstance(motor_hks, list):
+                motor_hks = [motor_hks]
+            profile = _vehicle_profile_for_segment(vehicle_segment)
+            if motor_vehicle_profiles is not None:
+                for motor_hk in motor_hks:
+                    motor_vehicle_profiles[motor_hk] = profile
+        marketing_engagement_band = (
+            person_marketing_engagement_by_person.get(person_hk)
+            if person_marketing_engagement_by_person and person_hk
+            else None
+        )
+        driver_experience_band = (
+            person_driver_experience_by_person.get(person_hk)
+            if person_driver_experience_by_person and person_hk
+            else None
+        )
+        status = _sample_policy_status_for_tenure(
+            policy_cycle,
+            account_status,
+            churn_config,
+            cover_option,
+            total_claims,
+            renewal_current,
+            renewal_next,
+            vehicle_segment,
+            marketing_engagement_band,
+            driver_experience_band,
+        )
+
+        if status == "LAPSED" and current_term_start > load_dt:
             status = "CANCELLED"
-            min_end = policy_start + timedelta(days=7)
-            max_end = min(planned_end - timedelta(days=1), load_dt)
+
+        if status == "ACTIVE":
+            policy_end = current_term_end
+        elif status == "LAPSED":
+            policy_end = current_term_start if policy_cycle > 0 else min(as_of_dt, load_dt)
+        else:
+            min_end = max(policy_start + timedelta(days=7), current_term_start)
+            max_end = min(current_term_end - timedelta(days=1), as_of_dt, load_dt)
             if max_end >= min_end:
                 span_seconds = int((max_end - min_end).total_seconds())
                 policy_end = min_end + timedelta(seconds=random.randint(0, span_seconds))
             else:
-                policy_end = min_end
-        elif account_status == "SUSPENDED":
-            if planned_end <= as_of_dt:
-                policy_end = planned_end
-                status = "LAPSED"
-            else:
-                status = "CANCELLED"
-                min_end = policy_start + timedelta(days=7)
-                max_end = min(planned_end - timedelta(days=1), load_dt)
-                if max_end >= min_end:
-                    span_seconds = int((max_end - min_end).total_seconds())
-                    policy_end = min_end + timedelta(seconds=random.randint(0, span_seconds))
-                else:
-                    policy_end = min_end
-        else:
-            if random.random() < 0.05:
-                status = "CANCELLED"
-                min_end = policy_start + timedelta(days=7)
-                max_end = min(planned_end - timedelta(days=1), load_dt)
-                if max_end >= min_end:
-                    span_seconds = int((max_end - min_end).total_seconds())
-                    policy_end = min_end + timedelta(seconds=random.randint(0, span_seconds))
-                else:
-                    policy_end = min_end
-            else:
-                policy_end = planned_end
-                status = "ACTIVE" if policy_end > as_of_dt else "LAPSED"
+                policy_end = min(policy_start + timedelta(days=7), load_dt)
 
         renewal_date = policy_end - timedelta(days=random.randint(0, 10))
 
-        renewal_current = round(random.uniform(200, 1500), 2)
-        renewal_next = round(renewal_current * 1.01, 2)
-        declined_claims = random.randint(0, 3)
-        active_claims = random.randint(0, 2)
-        previous_claims = random.randint(0, 5)
         gross_revenue = round(random.uniform(300, 2500), 2)
         net_revenue = round(random.uniform(200, 2000), 2)
-        sales_channel = random.choice(["ONLINE", "AGENT", "BRANCH"])
+        sales_channel = _sample_sales_channel_for_status(status, churn_config)
 
         fraud_risk_score = 0
         if declined_claims >= 2:
@@ -1048,14 +2075,14 @@ def sat_policy(
         rows.append({
             "Policy Hash Key": hk,
             "Load Date": load_date,
-            "Cover Option": random.choice(["BASIC", "FULL"]),
+            "Cover Option": cover_option,
             "Declined Claims": declined_claims,
             "Fraud Flag": fraud_flag,
             "Gross Revenue": gross_revenue,
             "Net Revenue": net_revenue,
             "Number of Active Claim": active_claims,
             "Number of Previous Claim": previous_claims,
-            "Policy Cycle": random.randint(1, 5),
+            "Policy Cycle": policy_cycle,
             "Policy End Date": policy_end.strftime("%Y-%m-%d %H:%M:%S"),
             "Policy Length": policy_length_months,
             "Policy Number": random.randint(1000000, 9999999),
@@ -1064,8 +2091,18 @@ def sat_policy(
             "Renewal Amount Current Period": renewal_current,
             "Renewal Amount Next Period": renewal_next,
             "Renewal Date": renewal_date.strftime("%Y-%m-%d %H:%M:%S"),
-            "Sales Channel": sales_channel
+            "Sales Channel": sales_channel,
+            "_Account Status": account_status,
+            "_Marketing Engagement Band": marketing_engagement_band or "",
+            "_Vehicle Segment": vehicle_segment or "",
+            "_Driver Experience Band": driver_experience_band or "",
         })
+    _calibrate_policy_churn_rows(rows, churn_config, load_dt, as_of_dt)
+    for row in rows:
+        row.pop("_Account Status", None)
+        row.pop("_Marketing Engagement Band", None)
+        row.pop("_Vehicle Segment", None)
+        row.pop("_Driver Experience Band", None)
     return rows
 
 
@@ -1125,7 +2162,7 @@ def sat_home(home_hks, load_date, home_to_addr: dict | None = None):
 
 
 # ---------------- MOTOR ----------------
-def sat_motor(motor_hks, load_date, motor_to_addr: dict | None = None):
+def sat_motor(motor_hks, load_date, motor_to_addr: dict | None = None, churn_config=None, motor_vehicle_profiles=None):
     rows = []
     for motor_hk in motor_hks:
         year = random.randint(2005, 2025)
@@ -1136,11 +2173,17 @@ def sat_motor(motor_hks, load_date, motor_to_addr: dict | None = None):
         if not addr:
             addr = _address_from_cache_by_hk(motor_hk)
 
+        body_type, vehicle_class, vehicle_model, vehicle_type = (
+            motor_vehicle_profiles.get(motor_hk)
+            if motor_vehicle_profiles and motor_hk in motor_vehicle_profiles
+            else _sample_vehicle_profile(churn_config)
+        )
+
         rows.append({
             "Motor Hash Key": motor_hk,
             "Load Date": load_date,
             "Auto Decline Vehicle": random.choice(["Y", "N"]),
-            "Body Type": random.choice(["SEDAN", "SUV", "HATCH"]),
+            "Body Type": body_type,
             "Fuel Type": random.choice(["PETROL", "DIESEL", "EV"]),
             "License Status": random.choice(["VALID", "EXPIRED"]),
             "Is Existing Motor Customer": random.choice(["Y", "N"]),
@@ -1150,9 +2193,9 @@ def sat_motor(motor_hks, load_date, motor_to_addr: dict | None = None):
             "Variant": random.choice(["BASE", "SPORT"]),
             "Vehicle Owner Type": random.choice(["SELF", "COMPANY"]),
             "Vehicle RegState": addr["State"],
-            "Vehicle Class": random.choice(["PRIVATE", "COMMERCIAL"]),
-            "Vehicle Model": random.choice(["Focus", "Corsa", "3 Series", "A3", "Corolla", "Qashqai"]),
-            "Vehicle Type": random.choice(["CAR", "BIKE"]),
+            "Vehicle Class": vehicle_class,
+            "Vehicle Model": vehicle_model,
+            "Vehicle Type": vehicle_type,
             "Motor Sum Insrd": round(random.uniform(2000, 20000), 2),
             "Vehicle Year": year,
             "Vehicle Age": 2025 - year

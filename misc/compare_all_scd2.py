@@ -102,22 +102,6 @@ if __name__ == "__main__":
     if os.path.exists(SCD2_RAW_ROOT):
         for source_name in sorted(name for name in os.listdir(SCD2_RAW_ROOT) if os.path.isdir(os.path.join(SCD2_RAW_ROOT, name))):
             source_root = os.path.join(SCD2_RAW_ROOT, source_name)
-            if source_name == "kaggle":
-                for dataset_name in sorted(name for name in os.listdir(source_root) if os.path.isdir(os.path.join(source_root, name))):
-                    dataset_root = os.path.join(source_root, dataset_name)
-                    latest_dir = latest_subdir(dataset_root)
-                    if not latest_dir:
-                        continue
-                    summary_path = os.path.join(latest_dir, "_summary.json")
-                    if not os.path.exists(summary_path):
-                        continue
-                    with open(summary_path, "r", encoding="utf-8") as f:
-                        summary = json.load(f)
-                    summary["source_label"] = f"kaggle:{dataset_name}"
-                    _print_summary(summary)
-                    printed = True
-                continue
-
             latest_dir = latest_subdir(source_root)
             if not latest_dir:
                 continue

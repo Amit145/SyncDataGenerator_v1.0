@@ -375,9 +375,15 @@ Rules:
 - `claim_settlement_date >= claim_reported_date` when settlement exists
 - claim reported, settlement, litigation, and recovery date fields must be timestamp values with time components
 - no-recovery claims use `1900-01-01T00:00:00` for `first_recovery_date` and `last_recovery_date`
-- recovery claims use lifecycle-safe recovery timestamps, and recovery numeric fields default to `0` when source values are absent
+- recovery claims use lifecycle-safe recovery timestamps, and recovery numeric fields default to `0` when recovery does not apply
 - `claim_channel` must match linked policy sales channel
 - `claim_product` must match the linked policy product family
+- claim financials are controlled by `claim_financial_settings` in `config/scenario_v1.json`
+- claim financials use populated `FactPolicy` claim rows first, then derive from linked `policy_sum_insured` if claim fact data is unavailable
+- `claim_amount`, `claims_paid`, `outstanding_reserve`, and `claims_expenses` are populated together
+- `claim_band` is derived from `claim_amount`, and `claim_band_sort` is the numeric report ordering key
+- `claims_paid` must not exceed `claim_amount`
+- `outstanding_reserve` represents the expected remaining unpaid claim amount, especially for open claims
 
 ### 11.3 Complaints
 
@@ -626,7 +632,7 @@ python .\misc\verify_all_silver.py
 Latest verified enhanced run during implementation:
 
 - full local generation and verification against the active `enhanced_360/new` DDL
-- enhanced-only verification run `data/synthetic/enhanced/20260508103525`
+- latest full verified run: `data/synthetic/enhanced/20260520182650`
 
 Verified outcomes:
 
@@ -638,10 +644,10 @@ Verified outcomes:
 - all `80` enhanced tables were generated
 - schema, primary-key, foreign-key, enum, timeline, and enhanced business checks passed
 - DDL-driven timestamp checks passed for all enhanced `TIMESTAMP` columns
+- churn and policy-date alignment remained valid in the full silver verification path
 
 
 ## 19. Operational Notes
 
-- `main.py` still prints Unicode log symbols, so on this Windows console `PYTHONUTF8=1` is recommended
 - enhanced verification is intentionally stricter than the original structural-only version
 - shared domain alignment is treated as a hard rule for enhanced, especially for channels and products

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import os
 
@@ -59,6 +60,29 @@ def _derived_ref(prefix: str, value: str) -> str:
     if not value:
         return ""
     return f"{prefix}_{value}"
+
+
+def _stable_bucket(value: str, modulo: int = 100) -> int:
+    raw = (value or "").encode("utf-8")
+    return int(hashlib.md5(raw).hexdigest(), 16) % modulo
+
+
+def _marketing_flags(seed: str) -> dict[str, str]:
+    bucket = _stable_bucket(seed)
+    if bucket < 15:
+        channel_count = 5
+    elif bucket < 45:
+        channel_count = 3
+    elif bucket < 80:
+        channel_count = 1
+    else:
+        channel_count = 0
+    channels = ["sms", "email", "email_subscriptions", "commercial_email", "postal_mail"]
+    selected = set(channels[:channel_count])
+    flags = {channel: "Y" if channel in selected else "N" for channel in channels}
+    flags["call"] = "Y" if _stable_bucket(seed + "|call") >= 45 else "N"
+    flags["any"] = "Y" if any(value == "Y" for value in flags.values()) else "N"
+    return flags
 
 
 def map_claims_to_canonical(run_id: str, claims_raw_dir: str) -> str:
@@ -183,7 +207,7 @@ def map_claims_to_canonical(run_id: str, claims_raw_dir: str) -> str:
                 "full_name": "",
                 "courtesy_title": "",
                 "occupation": "",
-                "birth_date": "",
+                "birth_date": row.get("birth_dt", ""),
                 "birth_year": "",
                 "nationality": "",
                 "gender": "",
@@ -305,13 +329,7 @@ def map_claims_to_canonical(run_id: str, claims_raw_dir: str) -> str:
             combined["crm_marketing_preference.csv"].append({**base,
                 "person_id": party_id,
                 "marketing_preference_id": _derived_ref("MPR", party_id),
-                "sms": "Y",
-                "email": "Y",
-                "email_subscriptions": "Y",
-                "call": "N",
-                "any": "Y",
-                "commercial_email": "Y",
-                "postal_mail": "N",
+                **_marketing_flags(party_id),
             })
 
         if party_id in consent_person_ids:
@@ -397,22 +415,22 @@ def map_claims_to_canonical(run_id: str, claims_raw_dir: str) -> str:
             "quote_id": row.get("claim_quote_ref", ""),
             "product_id": product_id,
             "product_code": product_code,
-            "cover_option": "",
+            "cover_option": row.get("cover_option_txt", ""),
             "declined_claims": str(declined_claims),
             "fraud_flag": "Y" if fraud_score >= 4 else "N",
             "gross_revenue": "",
             "net_revenue": "",
             "number_of_active_claim": row.get("active_claim_cnt", ""),
             "number_of_previous_claim": row.get("previous_claim_cnt", ""),
-            "policy_cycle": "",
+            "policy_cycle": row.get("policy_cycle_no", ""),
             "policy_end_date": row.get("policy_end_dt", ""),
             "policy_length": "",
             "policy_number": row.get("claim_policy_ref", ""),
             "policy_start_date": row.get("policy_start_dt", ""),
             "policy_status": row.get("policy_status_txt", ""),
-            "renewal_amount_current_period": "",
-            "renewal_amount_next_period": "",
-            "renewal_date": "",
+            "renewal_amount_current_period": row.get("renewal_amt_current", ""),
+            "renewal_amount_next_period": row.get("renewal_amt_next", ""),
+            "renewal_date": row.get("renewal_notice_dt", ""),
             "sales_channel": "",
         })
 
@@ -447,7 +465,7 @@ def map_claims_to_canonical(run_id: str, claims_raw_dir: str) -> str:
                 "product_code": product_code,
                 "motor_id": row.get("claim_asset_ref", ""),
                 "auto_decline_vehicle": "",
-                "body_type": "",
+                "body_type": row.get("body_type_txt", ""),
                 "fuel_type": "",
                 "license_status": "",
                 "is_existing_motor_customer": "",
@@ -457,9 +475,9 @@ def map_claims_to_canonical(run_id: str, claims_raw_dir: str) -> str:
                 "variant": "",
                 "vehicle_owner_type": "",
                 "vehicle_regstate": row.get("asset_state_cd", ""),
-                "vehicle_class": "",
-                "vehicle_model": "",
-                "vehicle_type": "MOTOR",
+                "vehicle_class": row.get("vehicle_class_txt", ""),
+                "vehicle_model": row.get("vehicle_model_txt", ""),
+                "vehicle_type": row.get("vehicle_type_txt", "") or "MOTOR",
                 "motor_sum_insrd": "",
                 "vehicle_year": "",
                 "vehicle_age": "",

@@ -5,8 +5,8 @@ def hub_person(n, run_id, ld):
     """
     This function creates Hub_Person records.
 
-    n       → number of persons to generate
-    run_id  → unique run identifier (used in business ID creation)
+    n       -> number of persons to generate
+    run_id  -> unique run identifier (used in business ID creation)
     """
 
     rows = []  # This will store all person records

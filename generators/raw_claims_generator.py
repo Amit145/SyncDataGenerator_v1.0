@@ -55,12 +55,14 @@ def write_raw_claims_batch(base_folder, batch_id, ctx):
     sat_identity_by_hk = _index_by(ctx["sat_eci"], "Identities Hash Key")
     sat_customer_by_hk = _index_by(ctx["sat_cus"], "Customer Hash Key")
     sat_policy_by_hk = _index_by(ctx["sat_pol"], "Policy Hash Key")
+    sat_nat_by_hk = _index_by(ctx["sat_nat"], "Natural Person Hash Key")
     sat_motor_by_hk = _index_by(ctx["sat_mot"], "Motor Hash Key")
     sat_home_by_hk = _index_by(ctx["sat_hom"], "Home Hash Key")
     sat_addr_by_hk = _index_by(ctx["sat_adr"], "Home Address Hash Key")
 
     person_by_contact_hk = _invert_multi_map(ctx["person_to_contact"])
     person_by_identity_hk = _invert_multi_map(ctx["person_to_identity"])
+    nat_by_person_hk = {person_hk: _as_list(nat_hks)[0] for person_hk, nat_hks in ctx["person_to_nat"].items() if _as_list(nat_hks)}
     person_by_customer_hk = _invert_single_map(ctx["person_to_customer"])
     person_by_policy_hk = _invert_multi_map(ctx["policy_person_map"])
     person_by_addr_hk = _invert_multi_map(ctx["person_to_home_address"])
@@ -84,18 +86,20 @@ def write_raw_claims_batch(base_folder, batch_id, ctx):
             "customer_segment_txt", "contact_ref", "email_home_txt", "email_work_txt",
             "phone_work_txt", "phone_home_txt", "identity_ref", "ecid_txt",
             "hashed_email_txt", "address_ref", "street_txt", "postal_cd", "city_nm",
-            "state_cd", "country_cd",
+            "state_cd", "country_cd", "birth_dt",
         ],
         "claims_policy_context.csv": [
             "batch_ref", "pull_ts", "origin_sys", "claim_policy_ref", "claim_customer_ref",
             "claim_party_ref", "claim_quote_ref", "claim_product_ref", "product_line",
             "policy_status_txt", "policy_start_dt", "policy_end_dt", "active_claim_cnt",
-            "previous_claim_cnt", "fraud_ind",
+            "previous_claim_cnt", "fraud_ind", "cover_option_txt", "policy_cycle_no",
+            "renewal_amt_current", "renewal_amt_next", "renewal_notice_dt",
         ],
         "claims_asset_context.csv": [
             "batch_ref", "pull_ts", "origin_sys", "claim_policy_ref", "claim_asset_ref",
             "asset_kind", "risk_address_txt", "asset_state_cd", "street_txt",
-            "postal_cd", "city_nm",
+            "postal_cd", "city_nm", "body_type_txt", "vehicle_class_txt",
+            "vehicle_model_txt", "vehicle_type_txt",
         ],
         "claims_header.csv": [
             "batch_ref", "pull_ts", "origin_sys", "claim_ref", "claim_policy_ref",
@@ -111,6 +115,8 @@ def write_raw_claims_batch(base_folder, batch_id, ctx):
     for person_hk in ctx["person_hks"]:
         hub_person = hub_person_by_hk[person_hk]
         sat_person = sat_person_by_hk.get(person_hk, {})
+        nat_hk = nat_by_person_hk.get(person_hk)
+        sat_nat = sat_nat_by_hk.get(nat_hk, {}) if nat_hk else {}
         customer_hk = ctx["person_to_customer"].get(person_hk)
         customer = hub_customer_by_hk.get(customer_hk, {})
         customer_sat = sat_customer_by_hk.get(customer_hk, {})
@@ -125,6 +131,7 @@ def write_raw_claims_batch(base_folder, batch_id, ctx):
             "paperless_ind": sat_person.get("Operational Paperless Consent", ""),
             "customer_status_txt": customer_sat.get("Customer Status", ""),
             "customer_segment_txt": customer_sat.get("Customer Segment", ""),
+            "birth_dt": sat_nat.get("Birth Date", ""),
         })
 
     for contact_hk, hub_contact in hub_contact_by_hk.items():
@@ -224,6 +231,11 @@ def write_raw_claims_batch(base_folder, batch_id, ctx):
             "active_claim_cnt": sat_policy.get("Number of Active Claim", ""),
             "previous_claim_cnt": sat_policy.get("Number of Previous Claim", ""),
             "fraud_ind": sat_policy.get("Fraud Flag", ""),
+            "cover_option_txt": sat_policy.get("Cover Option", ""),
+            "policy_cycle_no": sat_policy.get("Policy Cycle", ""),
+            "renewal_amt_current": sat_policy.get("Renewal Amount Current Period", ""),
+            "renewal_amt_next": sat_policy.get("Renewal Amount Next Period", ""),
+            "renewal_notice_dt": sat_policy.get("Renewal Date", ""),
         })
 
         home_hk = ctx["policy_to_home"].get(policy_hk)
@@ -259,6 +271,10 @@ def write_raw_claims_batch(base_folder, batch_id, ctx):
                 "street_txt": sat_motor.get("Motor Risk Address", ""),
                 "postal_cd": "",
                 "city_nm": "",
+                "body_type_txt": sat_motor.get("Body Type", ""),
+                "vehicle_class_txt": sat_motor.get("Vehicle Class", ""),
+                "vehicle_model_txt": sat_motor.get("Vehicle Model", ""),
+                "vehicle_type_txt": sat_motor.get("Vehicle Type", ""),
             })
 
         for idx in range(claims_count):

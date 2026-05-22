@@ -684,7 +684,7 @@ CREATE TABLE ""."Sat Policy"(
 	"Net Reveneu" "CHAR"(18) NULL, 
 	"Number of Active Claim" "CHAR"(18) NULL, 
 	"Number of Previous Claim" "CHAR"(18) NULL, 
-	"Policy Cicle" "CHAR"(18) NULL, 
+	"Policy Cycle" "CHAR"(18) NULL, 
 	"Policy End Date" "CHAR"(18) NULL, 
 	"Policy Length" "CHAR"(18) NULL, 
 	"Policy Number" "CHAR"(18) NULL, 

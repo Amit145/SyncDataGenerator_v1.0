@@ -30,7 +30,7 @@ def _check_policy_dates(run_dir: str) -> int:
     """
     f = os.path.join(run_dir, "Sat_Policy.csv")
     if not os.path.exists(f):
-        print("ℹ️ Sat_Policy.csv not found; skipping policy date checks")
+        print("INFO Sat_Policy.csv not found; skipping policy date checks")
         return 0
 
     df = _load(f)
@@ -38,7 +38,7 @@ def _check_policy_dates(run_dir: str) -> int:
     required = ["Policy Start Date", "Policy End Date", "Renewal Date"]
     missing_cols = [c for c in required if c not in df.columns]
     if missing_cols:
-        print(f"ℹ️ Sat_Policy.csv missing columns {missing_cols}; skipping policy date checks")
+        print(f"INFO Sat_Policy.csv missing columns {missing_cols}; skipping policy date checks")
         return 0
 
     start = _parse_date_series(df["Policy Start Date"])
@@ -52,7 +52,7 @@ def _check_policy_dates(run_dir: str) -> int:
     bad_end = end.isna().sum()
     bad_ren = ren.isna().sum()
     if bad_start or bad_end or bad_ren:
-        print(f"❌ Sat_Policy.csv has unparsable dates:"
+        print(f"ERROR Sat_Policy.csv has unparsable dates:"
               f" start={bad_start}, end={bad_end}, renewal={bad_ren}")
         errors += 1
 
@@ -60,17 +60,17 @@ def _check_policy_dates(run_dir: str) -> int:
     valid_se = (~start.isna()) & (~end.isna())
     invalid_order = (start[valid_se] > end[valid_se]).sum()
     if invalid_order:
-        print(f"❌ Sat_Policy: Policy Start Date > Policy End Date in {int(invalid_order)} rows")
+        print(f"ERROR Sat_Policy: Policy Start Date > Policy End Date in {int(invalid_order)} rows")
         errors += 1
 
     valid_re = (~ren.isna()) & (~end.isna())
     invalid_renewal = (ren[valid_re] > end[valid_re]).sum()
     if invalid_renewal:
-        print(f"❌ Sat_Policy: Renewal Date > Policy End Date in {int(invalid_renewal)} rows")
+        print(f"ERROR Sat_Policy: Renewal Date > Policy End Date in {int(invalid_renewal)} rows")
         errors += 1
 
     if errors == 0:
-        print("🎯 POLICY DATE CHECKS OK")
+        print("POLICY DATE CHECKS OK")
 
     return errors
 
@@ -91,7 +91,7 @@ def _check_lead_to_policy_timeline(run_dir: str) -> int:
 
     missing = [name for name, path in required_files.items() if not os.path.exists(path)]
     if missing:
-        print(f"ℹ️ Skipping lead-to-policy timeline checks; missing files: {missing}")
+        print(f"INFO Skipping lead-to-policy timeline checks; missing files: {missing}")
         return 0
 
     sat_lead = _load(required_files["Sat_Lead.csv"])
@@ -119,7 +119,7 @@ def _check_lead_to_policy_timeline(run_dir: str) -> int:
     for file_name, cols in required_cols.items():
         missing_cols = [c for c in cols if c not in frames[file_name].columns]
         if missing_cols:
-            print(f"ℹ️ Skipping lead-to-policy timeline checks; {file_name} missing columns {missing_cols}")
+            print(f"INFO Skipping lead-to-policy timeline checks; {file_name} missing columns {missing_cols}")
             return 0
 
     lead_dates = sat_lead[["Lead Hash Key", "Converted Date"]].copy()
@@ -145,7 +145,7 @@ def _check_lead_to_policy_timeline(run_dir: str) -> int:
     bad_lead_dates = policy_person["Converted Date"].isna().sum()
     if bad_policy_dates or bad_lead_dates:
         print(
-            f"❌ Lead/policy timeline has unparsable or missing dates:"
+            f"ERROR Lead/policy timeline has unparsable or missing dates:"
             f" policy_start={int(bad_policy_dates)}, lead_converted={int(bad_lead_dates)}"
         )
         errors += 1
@@ -155,11 +155,11 @@ def _check_lead_to_policy_timeline(run_dir: str) -> int:
         policy_person.loc[valid, "Converted Date"] >= policy_person.loc[valid, "Policy Start Date"]
     ).sum()
     if invalid_order:
-        print(f"❌ Lead.Converted Date >= Policy Start Date in {int(invalid_order)} policy rows")
+        print(f"ERROR Lead.Converted Date >= Policy Start Date in {int(invalid_order)} policy rows")
         errors += 1
 
     if errors == 0:
-        print("🎯 LEAD TO POLICY TIMELINE CHECKS OK")
+        print("LEAD TO POLICY TIMELINE CHECKS OK")
 
     return errors
 
@@ -189,7 +189,7 @@ def validate_integrity(csv_path):
                     if hub in hubs:
                         missing = set(df[col]) - hubs[hub]
                         if missing:
-                            print(f"❌ {f}.{col} -> {hub} missing {len(missing)} keys")
+                            print(f"ERROR {f}.{col} -> {hub} missing {len(missing)} keys")
                             errors += 1
 
     # Business checks (dates etc.)
@@ -201,5 +201,5 @@ def validate_integrity(csv_path):
         print("REFERENTIAL + BUSINESS INTEGRITY OK")
         return True
     else:
-        print(f"❗ Integrity errors: {errors}")
+        print(f"ERROR Integrity errors: {errors}")
         return False

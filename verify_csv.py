@@ -1,10 +1,11 @@
-import os
-import sys
 import calendar
+import os
 from decimal import Decimal, ROUND_HALF_UP
+
 import pandas as pd
 from pandas.errors import EmptyDataError
-from config.storage_paths import SILVER_REBUILT_ROOT, SILVER_API_ROOT, SILVER_KAGGLE_ROOT, SILVER_DATA_SOURCE_ROOT
+
+from config.storage_paths import SILVER_REBUILT_ROOT, SILVER_API_ROOT, SILVER_DATA_SOURCE_ROOT
 
 
 def read_csv_safe(base_path: str, file_name: str) -> pd.DataFrame:
@@ -153,10 +154,568 @@ def add_one_year(ts: pd.Timestamp) -> pd.Timestamp:
         return ts.replace(year=ts.year + 1, day=min(ts.day, last_day))
 
 
+def add_years(ts: pd.Timestamp, years: int) -> pd.Timestamp:
+    if pd.isna(ts):
+        return pd.NaT
+    try:
+        return ts.replace(year=ts.year + int(years))
+    except ValueError:
+        target_year = ts.year + int(years)
+        last_day = calendar.monthrange(target_year, ts.month)[1]
+        return ts.replace(year=target_year, day=min(ts.day, last_day))
+
+
 def currency_round(value) -> Decimal | None:
     if pd.isna(value):
         return None
     return Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def _print_rule_result(label: str, errors: list[str], sample=None):
+    if errors:
+        print(f"{label} error: {'; '.join(errors)}")
+        if sample is not None:
+            print("sample:", sample)
+        return False
+    print(f"{label} valid")
+    return True
+
+
+def _band_counts(values: pd.Series, band_fn) -> dict:
+    counts = {}
+    for value in values.dropna():
+        band = band_fn(value)
+        counts[band] = counts.get(band, 0) + 1
+    return counts
+
+
+def _require_band_coverage(label: str, counts: dict, required_bands: set, total_rows: int, min_rows: int = 100):
+    if total_rows < min_rows:
+        print(f"{label} distribution skipped: rows={total_rows}, need>={min_rows}")
+        return True
+    missing = sorted(required_bands - {band for band, count in counts.items() if count > 0})
+    if missing:
+        print(f"{label} distribution error: missing bands={missing}, counts={counts}")
+        return False
+    print(f"{label} distribution valid: {counts}")
+    return True
+
+
+def verify_churn_rule_fields(
+    sat_policy: pd.DataFrame,
+    sat_natural_person: pd.DataFrame,
+    sat_mpr: pd.DataFrame,
+    sat_motor: pd.DataFrame,
+    l_pol_customer: pd.DataFrame | None = None,
+    l_c_person: pd.DataFrame | None = None,
+    l_p_mpr: pd.DataFrame | None = None,
+    l_p_nat: pd.DataFrame | None = None,
+):
+    print("\n===== CHURN RULE FIELD VALIDATION =====\n")
+
+    if sat_policy.empty:
+        print("churn_policy_rules skipped: sat_policy empty")
+    else:
+        policy_cols = {
+            "policy_hash_key",
+            "policy_start_date",
+            "load_date",
+            "renewal_amount_current_period",
+            "renewal_amount_next_period",
+            "number_of_active_claim",
+            "number_of_previous_claim",
+            "declined_claims",
+            "policy_cycle",
+            "policy_status",
+            "cover_option",
+        }
+        missing = policy_cols - set(sat_policy.columns)
+        if missing:
+            print(f"churn_policy_rules skipped: missing columns {sorted(missing)}")
+        else:
+            policy = sat_policy[list(policy_cols)].copy()
+            policy["policy_start_date"] = parse_dt(policy["policy_start_date"])
+            policy["load_date"] = parse_dt(policy["load_date"])
+            numeric_cols = [
+                "renewal_amount_current_period",
+                "renewal_amount_next_period",
+                "number_of_active_claim",
+                "number_of_previous_claim",
+                "declined_claims",
+                "policy_cycle",
+            ]
+            for col in numeric_cols:
+                policy[col] = pd.to_numeric(policy[col], errors="coerce")
+
+            current = policy["renewal_amount_current_period"]
+            next_premium = policy["renewal_amount_next_period"]
+            pct_change = ((next_premium - current) / current) * 100
+            delta = next_premium - current
+            premium_valid = current.notna() & next_premium.notna() & (current > 0) & (next_premium >= 0)
+            bad_premium = policy[~premium_valid]
+            _print_rule_result(
+                "churn_renewal_premium_logic",
+                [f"{len(bad_premium)} rows have invalid current/next premiums"] if not bad_premium.empty else [],
+                bad_premium[["policy_hash_key", "renewal_amount_current_period", "renewal_amount_next_period"]].head(10).to_dict("records") if not bad_premium.empty else None,
+            )
+            _require_band_coverage(
+                "churn_renewal_pct",
+                _band_counts(pct_change[premium_valid], lambda v: "<0%" if v < 0 else "0-5%" if v <= 5 else "5-10%" if v <= 10 else ">10%"),
+                {"<0%", "0-5%", "5-10%", ">10%"},
+                int(premium_valid.sum()),
+            )
+            premium_pct_eval = policy[["policy_status"]].copy()
+            premium_pct_eval["premium_pct_band"] = pct_change.map(
+                lambda v: "<0%" if v < 0 else "0-5%" if v <= 5 else "5-10%" if v <= 10 else ">10%"
+            )
+            premium_pct_eval["churn_flag"] = policy["policy_status"].isin(["CANCELLED", "LAPSED"]).astype(int)
+            premium_pct_summary = (
+                premium_pct_eval.groupby("premium_pct_band")["churn_flag"]
+                .agg(["count", "mean"])
+                .reindex(["<0%", "0-5%", "5-10%", ">10%"])
+            )
+            premium_pct_ranges = {
+                "<0%": (0.08, 0.12),
+                "0-5%": (0.15, 0.20),
+                "5-10%": (0.25, 0.35),
+                ">10%": (0.45, 0.65),
+            }
+            if premium_pct_summary["count"].ge(20).all():
+                rates = premium_pct_summary["mean"]
+                premium_pct_detail = {
+                    idx: {"count": int(row["count"]), "churn_pct": round(float(row["mean"]) * 100, 2)}
+                    for idx, row in premium_pct_summary.iterrows()
+                }
+                direction_ok = rates.loc["<0%"] < rates.loc["0-5%"] < rates.loc["5-10%"] < rates.loc[">10%"]
+                ranges_ok = all(
+                    premium_pct_ranges[idx][0] <= float(rates.loc[idx]) <= premium_pct_ranges[idx][1]
+                    for idx in premium_pct_ranges
+                )
+                _print_rule_result(
+                    "churn_renewal_pct_rate",
+                    [] if direction_ok and ranges_ok else ["percentage premium increase churn rates are outside expected ranges or do not increase as percentage increase rises"],
+                    premium_pct_detail,
+                )
+            else:
+                print(f"churn_renewal_pct_rate skipped: summary={premium_pct_summary.fillna(0).to_dict('index')}")
+            _require_band_coverage(
+                "churn_renewal_abs",
+                _band_counts(delta[premium_valid], lambda v: "<=0" if v <= 0 else "1-50" if v <= 50 else "51-100" if v <= 100 else ">100"),
+                {"<=0", "1-50", "51-100", ">100"},
+                int(premium_valid.sum()),
+            )
+            premium_abs_eval = policy[["policy_status"]].copy()
+            premium_abs_eval["premium_abs_band"] = delta.map(
+                lambda v: "<=0" if v <= 0 else "1-50" if v <= 50 else "51-100" if v <= 100 else ">100"
+            )
+            premium_abs_eval["churn_flag"] = policy["policy_status"].isin(["CANCELLED", "LAPSED"]).astype(int)
+            premium_abs_summary = (
+                premium_abs_eval.groupby("premium_abs_band")["churn_flag"]
+                .agg(["count", "mean"])
+                .reindex(["<=0", "1-50", "51-100", ">100"])
+            )
+            premium_abs_ranges = {
+                "<=0": (0.08, 0.12),
+                "1-50": (0.15, 0.22),
+                "51-100": (0.25, 0.38),
+                ">100": (0.45, 0.65),
+            }
+            if premium_abs_summary["count"].ge(20).all():
+                rates = premium_abs_summary["mean"]
+                premium_abs_detail = {
+                    idx: {"count": int(row["count"]), "churn_pct": round(float(row["mean"]) * 100, 2)}
+                    for idx, row in premium_abs_summary.iterrows()
+                }
+                direction_ok = rates.loc["<=0"] < rates.loc["1-50"] < rates.loc["51-100"] < rates.loc[">100"]
+                ranges_ok = all(
+                    premium_abs_ranges[idx][0] <= float(rates.loc[idx]) <= premium_abs_ranges[idx][1]
+                    for idx in premium_abs_ranges
+                )
+                _print_rule_result(
+                    "churn_renewal_abs_rate",
+                    [] if direction_ok and ranges_ok else ["absolute premium increase churn rates are outside expected ranges or do not increase as premium increase rises"],
+                    premium_abs_detail,
+                )
+            else:
+                print(f"churn_renewal_abs_rate skipped: summary={premium_abs_summary.fillna(0).to_dict('index')}")
+            _require_band_coverage(
+                "churn_current_premium",
+                _band_counts(current[current.notna()], lambda v: "LOW" if v <= 600 else "MEDIUM" if v <= 900 else "HIGH" if v <= 1200 else "VERY_HIGH"),
+                {"LOW", "MEDIUM", "HIGH", "VERY_HIGH"},
+                int(current.notna().sum()),
+            )
+            current_premium_eval = policy[["policy_status"]].copy()
+            current_premium_eval["current_premium_band"] = current.map(
+                lambda v: "LOW" if v <= 600 else "MEDIUM" if v <= 900 else "HIGH" if v <= 1200 else "VERY_HIGH"
+            )
+            current_premium_eval["churn_flag"] = policy["policy_status"].isin(["CANCELLED", "LAPSED"]).astype(int)
+            current_premium_summary = (
+                current_premium_eval.groupby("current_premium_band")["churn_flag"]
+                .agg(["count", "mean"])
+                .reindex(["LOW", "MEDIUM", "HIGH", "VERY_HIGH"])
+            )
+            current_premium_ranges = {
+                "LOW": (0.10, 0.18),
+                "MEDIUM": (0.15, 0.25),
+                "HIGH": (0.25, 0.40),
+                "VERY_HIGH": (0.40, 0.55),
+            }
+            if current_premium_summary["count"].ge(20).all():
+                rates = current_premium_summary["mean"]
+                current_premium_detail = {
+                    idx: {"count": int(row["count"]), "churn_pct": round(float(row["mean"]) * 100, 2)}
+                    for idx, row in current_premium_summary.iterrows()
+                }
+                direction_ok = rates.loc["LOW"] < rates.loc["MEDIUM"] < rates.loc["HIGH"] < rates.loc["VERY_HIGH"]
+                ranges_ok = all(
+                    current_premium_ranges[idx][0] <= float(rates.loc[idx]) <= current_premium_ranges[idx][1]
+                    for idx in current_premium_ranges
+                )
+                _print_rule_result(
+                    "churn_current_premium_rate",
+                    [] if direction_ok and ranges_ok else ["current premium churn rates are outside expected ranges or do not increase as current premium rises"],
+                    current_premium_detail,
+                )
+            else:
+                print(f"churn_current_premium_rate skipped: summary={current_premium_summary.fillna(0).to_dict('index')}")
+
+            total_claims = (
+                policy["number_of_active_claim"].fillna(0)
+                + policy["number_of_previous_claim"].fillna(0)
+                + policy["declined_claims"].fillna(0)
+            )
+            bad_claims = policy[(total_claims < 0) | (total_claims > 5)]
+            _print_rule_result(
+                "churn_claim_count_logic",
+                [f"{len(bad_claims)} rows outside generated 0-5 claim range"] if not bad_claims.empty else [],
+                bad_claims[["policy_hash_key", "number_of_active_claim", "number_of_previous_claim", "declined_claims"]].head(10).to_dict("records") if not bad_claims.empty else None,
+            )
+            _require_band_coverage(
+                "churn_claim_count",
+                _band_counts(total_claims, lambda v: "3+" if v >= 3 else str(int(v))),
+                {"0", "1", "2", "3+"},
+                len(total_claims),
+            )
+            claim_count_eval = policy[["policy_status"]].copy()
+            claim_count_eval["claim_band"] = total_claims.map(lambda v: "3+" if v >= 3 else str(int(v)))
+            claim_count_eval["churn_flag"] = policy["policy_status"].isin(["CANCELLED", "LAPSED"]).astype(int)
+            claim_count_summary = (
+                claim_count_eval.groupby("claim_band")["churn_flag"]
+                .agg(["count", "mean"])
+                .reindex(["0", "1", "2", "3+"])
+            )
+            claim_count_ranges = {
+                "0": (0.12, 0.18),
+                "1": (0.20, 0.30),
+                "2": (0.30, 0.45),
+                "3+": (0.45, 0.60),
+            }
+            if claim_count_summary["count"].ge(20).all():
+                rates = claim_count_summary["mean"]
+                claim_count_detail = {
+                    idx: {"count": int(row["count"]), "churn_pct": round(float(row["mean"]) * 100, 2)}
+                    for idx, row in claim_count_summary.iterrows()
+                }
+                direction_ok = rates.loc["0"] < rates.loc["1"] < rates.loc["2"] < rates.loc["3+"]
+                ranges_ok = all(
+                    claim_count_ranges[idx][0] <= float(rates.loc[idx]) <= claim_count_ranges[idx][1]
+                    for idx in claim_count_ranges
+                )
+                _print_rule_result(
+                    "churn_claim_count_rate",
+                    [] if direction_ok and ranges_ok else ["claim-count churn rates are outside expected ranges or do not increase as claims increase"],
+                    claim_count_detail,
+                )
+            else:
+                print(f"churn_claim_count_rate skipped: summary={claim_count_summary.fillna(0).to_dict('index')}")
+
+            expected_cycle = pd.Series([
+                ((ld.date() - ps.date()).days // 365) if pd.notna(ld) and pd.notna(ps) else None
+                for ld, ps in zip(policy["load_date"], policy["policy_start_date"])
+            ], index=policy.index, dtype="float64")
+            cycle_valid = policy["policy_cycle"].eq(expected_cycle)
+            bad_cycle = policy[~cycle_valid.fillna(False)]
+            _print_rule_result(
+                "churn_policy_cycle_logic",
+                [f"{len(bad_cycle)} rows do not match completed annual cycles"] if not bad_cycle.empty else [],
+                bad_cycle[["policy_hash_key", "policy_start_date", "load_date", "policy_cycle"]].head(10).to_dict("records") if not bad_cycle.empty else None,
+            )
+            _require_band_coverage(
+                "churn_tenure",
+                _band_counts(policy["policy_cycle"], lambda v: "<1" if v < 1 else "1-2" if v <= 2 else "3-5" if v <= 5 else ">5"),
+                {"<1", "1-2", "3-5", ">5"},
+                len(policy),
+            )
+            tenure_eval = policy[["policy_status", "policy_cycle"]].copy()
+            tenure_eval["churn_flag"] = tenure_eval["policy_status"].isin(["CANCELLED", "LAPSED"]).astype(int)
+            tenure_eval["tenure_band"] = tenure_eval["policy_cycle"].map(
+                lambda v: "<1" if v < 1 else "1-2" if v <= 2 else "3-5" if v <= 5 else ">5"
+            )
+            tenure_summary = (
+                tenure_eval.groupby("tenure_band")["churn_flag"]
+                .agg(["count", "mean"])
+                .reindex(["<1", "1-2", "3-5", ">5"])
+            )
+            if tenure_summary["count"].ge(20).all():
+                rates = tenure_summary["mean"]
+                tenure_detail = {
+                    idx: {"count": int(row["count"]), "churn_pct": round(float(row["mean"]) * 100, 2)}
+                    for idx, row in tenure_summary.iterrows()
+                }
+                tenure_ranges = {
+                    "<1": (0.35, 0.50),
+                    "1-2": (0.25, 0.35),
+                    "3-5": (0.15, 0.25),
+                    ">5": (0.08, 0.15),
+                }
+                direction_ok = rates.loc["<1"] > rates.loc["1-2"] > rates.loc["3-5"] > rates.loc[">5"]
+                ranges_ok = all(
+                    tenure_ranges[idx][0] <= float(rates.loc[idx]) <= tenure_ranges[idx][1]
+                    for idx in tenure_ranges
+                )
+                _print_rule_result(
+                    "churn_policy_cycle_tenure_rate",
+                    [] if direction_ok and ranges_ok else ["churn rate is outside workbook ranges or does not decrease as policy_cycle tenure increases"],
+                    tenure_detail,
+                )
+            else:
+                print(f"churn_policy_cycle_tenure_rate skipped: summary={tenure_summary.fillna(0).to_dict('index')}")
+
+            cover_allowed = {"BASE_ONLY", "ONE_ADD_ON", "TWO_ADD_ONS", "THREE_PLUS_ADD_ONS"}
+            bad_cover = policy[~policy["cover_option"].isin(cover_allowed)]
+            _print_rule_result(
+                "churn_policy_addon_logic",
+                [f"{len(bad_cover)} rows have invalid cover_option values"] if not bad_cover.empty else [],
+                bad_cover[["policy_hash_key", "cover_option"]].head(10).to_dict("records") if not bad_cover.empty else None,
+            )
+            _require_band_coverage(
+                "churn_policy_addons",
+                _band_counts(policy["cover_option"], lambda v: str(v)),
+                cover_allowed,
+                len(policy),
+            )
+            addon_eval = policy[["policy_status", "cover_option"]].copy()
+            addon_eval["churn_flag"] = addon_eval["policy_status"].isin(["CANCELLED", "LAPSED"]).astype(int)
+            addon_summary = (
+                addon_eval.groupby("cover_option")["churn_flag"]
+                .agg(["count", "mean"])
+                .reindex(["BASE_ONLY", "ONE_ADD_ON", "TWO_ADD_ONS", "THREE_PLUS_ADD_ONS"])
+            )
+            addon_ranges = {
+                "BASE_ONLY": (0.25, 0.40),
+                "ONE_ADD_ON": (0.18, 0.28),
+                "TWO_ADD_ONS": (0.12, 0.22),
+                "THREE_PLUS_ADD_ONS": (0.08, 0.18),
+            }
+            if addon_summary["count"].ge(20).all():
+                rates = addon_summary["mean"]
+                addon_detail = {
+                    idx: {"count": int(row["count"]), "churn_pct": round(float(row["mean"]) * 100, 2)}
+                    for idx, row in addon_summary.iterrows()
+                }
+                direction_ok = (
+                    rates.loc["BASE_ONLY"]
+                    > rates.loc["ONE_ADD_ON"]
+                    > rates.loc["TWO_ADD_ONS"]
+                    > rates.loc["THREE_PLUS_ADD_ONS"]
+                )
+                ranges_ok = all(
+                    addon_ranges[idx][0] <= float(rates.loc[idx]) <= addon_ranges[idx][1]
+                    for idx in addon_ranges
+                )
+                _print_rule_result(
+                    "churn_policy_addon_rate",
+                    [] if direction_ok and ranges_ok else ["add-on churn rates are outside expected ranges or do not decrease as add-ons increase"],
+                    addon_detail,
+                )
+            else:
+                print(f"churn_policy_addon_rate skipped: summary={addon_summary.fillna(0).to_dict('index')}")
+
+    if sat_mpr.empty:
+        print("churn_marketing_proxy_rules skipped: sat_marketing_preference empty")
+    else:
+        mpr_cols = {"sms", "email", "email_subscriptions", "call", "any", "commercial_email", "postal_mail"}
+        missing = mpr_cols - set(sat_mpr.columns)
+        if missing:
+            print(f"churn_marketing_proxy_rules skipped: missing columns {sorted(missing)}")
+        else:
+            channels = ["sms", "email", "email_subscriptions", "commercial_email", "postal_mail"]
+            yn_values = {"Y", "N"}
+            bad_flags = sat_mpr[~sat_mpr[list(mpr_cols)].isin(yn_values).all(axis=1)]
+            _print_rule_result(
+                "churn_marketing_proxy_flag_logic",
+                [f"{len(bad_flags)} rows have non Y/N marketing flags"] if not bad_flags.empty else [],
+                bad_flags[list(mpr_cols)].head(10).to_dict("records") if not bad_flags.empty else None,
+            )
+            channel_count = sat_mpr[channels].eq("Y").sum(axis=1)
+            _require_band_coverage(
+                "churn_email_sms_engagement_proxy",
+                _band_counts(channel_count, lambda v: "NONE" if v == 0 else "LOW" if v == 1 else "MEDIUM" if v <= 3 else "HIGH"),
+                {"NONE", "LOW", "MEDIUM", "HIGH"},
+                len(channel_count),
+            )
+            _require_band_coverage(
+                "churn_service_call_proxy",
+                _band_counts(sat_mpr["call"], lambda v: str(v)),
+                {"Y", "N"},
+                len(sat_mpr),
+            )
+            if (
+                not sat_policy.empty
+                and l_pol_customer is not None and not l_pol_customer.empty
+                and l_c_person is not None and not l_c_person.empty
+                and l_p_mpr is not None and not l_p_mpr.empty
+                and {"policy_hash_key", "policy_status"}.issubset(sat_policy.columns)
+                and {"policy_hash_key", "customer_hash_key"}.issubset(l_pol_customer.columns)
+                and {"customer_hash_key", "person_hash_key"}.issubset(l_c_person.columns)
+                and {"person_hash_key", "marketing_preference_hash_key"}.issubset(l_p_mpr.columns)
+                and "marketing_preference_hash_key" in sat_mpr.columns
+            ):
+                mpr_eval = sat_mpr[["marketing_preference_hash_key"] + channels].copy()
+                mpr_eval["marketing_engagement_band"] = mpr_eval[channels].eq("Y").sum(axis=1).map(
+                    lambda v: "NONE" if v == 0 else "LOW" if v == 1 else "MEDIUM" if v <= 3 else "HIGH"
+                )
+                policy_marketing = (
+                    sat_policy[["policy_hash_key", "policy_status"]]
+                    .merge(l_pol_customer[["policy_hash_key", "customer_hash_key"]], on="policy_hash_key", how="left")
+                    .merge(l_c_person[["customer_hash_key", "person_hash_key"]], on="customer_hash_key", how="left")
+                    .merge(l_p_mpr[["person_hash_key", "marketing_preference_hash_key"]], on="person_hash_key", how="left")
+                    .merge(mpr_eval[["marketing_preference_hash_key", "marketing_engagement_band"]], on="marketing_preference_hash_key", how="left")
+                    .dropna(subset=["marketing_engagement_band"])
+                )
+                if not policy_marketing.empty:
+                    policy_marketing["churn_flag"] = policy_marketing["policy_status"].isin(["CANCELLED", "LAPSED"]).astype(int)
+                    marketing_summary = (
+                        policy_marketing.groupby("marketing_engagement_band")["churn_flag"]
+                        .agg(["count", "mean"])
+                        .reindex(["HIGH", "MEDIUM", "LOW", "NONE"])
+                    )
+                    if marketing_summary["count"].ge(20).all():
+                        rates = marketing_summary["mean"]
+                        marketing_ranges = {
+                            "HIGH": (0.08, 0.15),
+                            "MEDIUM": (0.18, 0.30),
+                            "LOW": (0.35, 0.55),
+                            "NONE": (0.50, 0.70),
+                        }
+                        marketing_detail = {
+                            idx: {"count": int(row["count"]), "churn_pct": round(float(row["mean"]) * 100, 2)}
+                            for idx, row in marketing_summary.iterrows()
+                        }
+                        direction_ok = rates.loc["HIGH"] < rates.loc["MEDIUM"] < rates.loc["LOW"] < rates.loc["NONE"]
+                        ranges_ok = all(
+                            marketing_ranges[idx][0] <= float(rates.loc[idx]) <= marketing_ranges[idx][1]
+                            for idx in marketing_ranges
+                        )
+                        _print_rule_result(
+                            "churn_marketing_engagement_rate",
+                            [] if direction_ok and ranges_ok else ["marketing engagement churn rates are outside expected ranges or do not increase as engagement decreases"],
+                            marketing_detail,
+                        )
+                    else:
+                        print(f"churn_marketing_engagement_rate skipped: summary={marketing_summary.fillna(0).to_dict('index')}")
+
+    if sat_natural_person.empty:
+        print("churn_driver_experience_proxy skipped: sat_natural_person empty")
+    elif {"birth_date", "load_date"}.issubset(sat_natural_person.columns):
+        natural = sat_natural_person[["natural_person_hash_key", "birth_date", "load_date"]].copy()
+        natural["birth_date"] = parse_dt(natural["birth_date"])
+        natural["load_date"] = parse_dt(natural["load_date"])
+        age_years = [
+            (ld.date().year - bd.date().year - ((ld.date().month, ld.date().day) < (bd.date().month, bd.date().day)))
+            if pd.notna(ld) and pd.notna(bd) else None
+            for ld, bd in zip(natural["load_date"], natural["birth_date"])
+        ]
+        driver_exp = pd.Series(age_years, index=natural.index, dtype="float64") - 17
+        bad_driver_proxy = natural[(driver_exp < 0) | driver_exp.isna()]
+        _print_rule_result(
+            "churn_driver_experience_proxy_logic",
+            [f"{len(bad_driver_proxy)} rows have invalid birth_date/load_date proxy"] if not bad_driver_proxy.empty else [],
+            bad_driver_proxy.head(10).to_dict("records") if not bad_driver_proxy.empty else None,
+        )
+        _require_band_coverage(
+            "churn_driver_experience_proxy",
+            _band_counts(driver_exp, lambda v: "<2y" if v < 2 else "2-5y" if v <= 5 else "6-10y" if v <= 10 else ">10y"),
+            {"<2y", "2-5y", "6-10y", ">10y"},
+            int(driver_exp.notna().sum()),
+        )
+        if (
+            not sat_policy.empty
+            and l_pol_customer is not None and not l_pol_customer.empty
+            and l_c_person is not None and not l_c_person.empty
+            and l_p_nat is not None and not l_p_nat.empty
+            and {"policy_hash_key", "policy_status"}.issubset(sat_policy.columns)
+            and {"policy_hash_key", "customer_hash_key"}.issubset(l_pol_customer.columns)
+            and {"customer_hash_key", "person_hash_key"}.issubset(l_c_person.columns)
+            and {"person_hash_key", "natural_person_hash_key"}.issubset(l_p_nat.columns)
+        ):
+            natural_eval = natural[["natural_person_hash_key"]].copy()
+            natural_eval["driver_experience_band"] = driver_exp.map(
+                lambda v: "<2y" if v < 2 else "2-5y" if v <= 5 else "6-10y" if v <= 10 else ">10y"
+            )
+            policy_driver = (
+                sat_policy[["policy_hash_key", "policy_status"]]
+                .merge(l_pol_customer[["policy_hash_key", "customer_hash_key"]], on="policy_hash_key", how="left")
+                .merge(l_c_person[["customer_hash_key", "person_hash_key"]], on="customer_hash_key", how="left")
+                .merge(l_p_nat[["person_hash_key", "natural_person_hash_key"]], on="person_hash_key", how="left")
+                .merge(natural_eval[["natural_person_hash_key", "driver_experience_band"]], on="natural_person_hash_key", how="left")
+                .dropna(subset=["driver_experience_band"])
+            )
+            if not policy_driver.empty:
+                policy_driver["churn_flag"] = policy_driver["policy_status"].isin(["CANCELLED", "LAPSED"]).astype(int)
+                driver_summary = (
+                    policy_driver.groupby("driver_experience_band")["churn_flag"]
+                    .agg(["count", "mean"])
+                    .reindex(["<2y", "2-5y", "6-10y", ">10y"])
+                )
+                if driver_summary["count"].ge(20).all():
+                    rates = driver_summary["mean"]
+                    driver_ranges = {
+                        "<2y": (0.25, 0.40),
+                        "2-5y": (0.18, 0.30),
+                        "6-10y": (0.15, 0.25),
+                        ">10y": (0.10, 0.18),
+                    }
+                    driver_detail = {
+                        idx: {"count": int(row["count"]), "churn_pct": round(float(row["mean"]) * 100, 2)}
+                        for idx, row in driver_summary.iterrows()
+                    }
+                    direction_ok = rates.loc["<2y"] > rates.loc["2-5y"] > rates.loc["6-10y"] > rates.loc[">10y"]
+                    ranges_ok = all(
+                        driver_ranges[idx][0] <= float(rates.loc[idx]) <= driver_ranges[idx][1]
+                        for idx in driver_ranges
+                    )
+                    _print_rule_result(
+                        "churn_driver_experience_rate",
+                        [] if direction_ok and ranges_ok else ["driver experience churn rates are outside expected ranges or do not decrease as experience increases"],
+                        driver_detail,
+                    )
+                else:
+                    print(f"churn_driver_experience_rate skipped: summary={driver_summary.fillna(0).to_dict('index')}")
+    else:
+        print("churn_driver_experience_proxy skipped: missing birth_date/load_date")
+
+    if sat_motor.empty:
+        print("churn_vehicle_model_rules skipped: sat_motor empty")
+    elif "vehicle_model" in sat_motor.columns:
+        standard = {"Focus", "Corsa", "Corolla"}
+        premium = {"Qashqai", "3 Series", "A3"}
+        high_risk = {"Sport Bike", "Superbike", "High Performance SUV"}
+        allowed = standard | premium | high_risk
+        bad_vehicle = sat_motor[~sat_motor["vehicle_model"].isin(allowed)]
+        _print_rule_result(
+            "churn_vehicle_model_logic",
+            [f"{len(bad_vehicle)} rows have unmapped vehicle_model values"] if not bad_vehicle.empty else [],
+            bad_vehicle[["vehicle_model"]].head(10).to_dict("records") if not bad_vehicle.empty else None,
+        )
+        _require_band_coverage(
+            "churn_vehicle_segment",
+            _band_counts(sat_motor["vehicle_model"], lambda v: "STANDARD" if v in standard else "PREMIUM" if v in premium else "HIGH_RISK" if v in high_risk else "UNKNOWN"),
+            {"STANDARD", "PREMIUM", "HIGH_RISK"},
+            len(sat_motor),
+        )
+    else:
+        print("churn_vehicle_model_rules skipped: missing vehicle_model")
 
 
 def main(base_path: str):
@@ -187,6 +746,8 @@ def main(base_path: str):
     sat_customer = read_csv_safe(base_path, "sat_customer.csv")
     sat_legal_person = read_csv_safe(base_path, "sat_legal_person.csv")
     sat_natural_person = read_csv_safe(base_path, "sat_natural_person.csv")
+    sat_mpr = read_csv_safe(base_path, "sat_marketing_preference.csv")
+    sat_motor = read_csv_safe(base_path, "sat_motor.csv")
 
     l_p_nat = read_csv_safe(base_path, "link_person_natural_person.csv")
     l_p_leg = read_csv_safe(base_path, "link_person_legal_person.csv")
@@ -987,14 +1548,29 @@ def main(base_path: str):
                 policy_person_dates = policy_person_dates.merge(policy_meta, on="policy_hash_key", how="left")
 
                 non_cancelled = policy_person_dates[policy_person_dates["policy_status"] != "CANCELLED"].copy()
-                non_cancelled["expected_policy_end_date"] = non_cancelled["policy_start_date"].apply(add_one_year)
+                if "policy_cycle" in sat_policy.columns:
+                    cycle_lookup = sat_policy[["policy_hash_key", "policy_cycle"]].copy()
+                    cycle_lookup["policy_cycle"] = pd.to_numeric(cycle_lookup["policy_cycle"], errors="coerce").fillna(0).astype(int)
+                    non_cancelled = non_cancelled.merge(cycle_lookup, on="policy_hash_key", how="left")
+                    non_cancelled["expected_policy_end_date"] = [
+                        add_years(start, int(cycle) if status == "LAPSED" else int(cycle) + 1)
+                        for start, cycle, status in zip(
+                            non_cancelled["policy_start_date"],
+                            non_cancelled["policy_cycle"].fillna(0),
+                            non_cancelled["policy_status"],
+                        )
+                    ]
+                    duration_label = "current annual term boundary"
+                else:
+                    non_cancelled["expected_policy_end_date"] = non_cancelled["policy_start_date"].apply(add_one_year)
+                    duration_label = "1 year"
                 bad_annual_duration = non_cancelled[
                     non_cancelled["policy_start_date"].notna()
                     & non_cancelled["policy_end_date"].notna()
                     & (non_cancelled["policy_end_date"] != non_cancelled["expected_policy_end_date"])
                 ]
                 if not bad_annual_duration.empty:
-                    print(f"policy_annual_duration error: {len(bad_annual_duration)} non-cancelled rows are not exactly 1 year")
+                    print(f"policy_annual_duration error: {len(bad_annual_duration)} non-cancelled rows do not match {duration_label}")
                     print(
                         "sample:",
                         bad_annual_duration[["policy_hash_key", "policy_start_date", "policy_end_date", "expected_policy_end_date"]]
@@ -1023,32 +1599,23 @@ def main(base_path: str):
                 else:
                     print("policy_renewal_window valid")
 
-                expected_next = policy_person_dates["renewal_amount_current_period"].apply(
-                    lambda value: currency_round(Decimal(str(value)) * Decimal("1.01")) if not pd.isna(value) else None
-                )
-                actual_next = policy_person_dates["renewal_amount_next_period"].apply(currency_round)
-                uplift_delta = [
-                    (abs(actual - expected) if actual is not None and expected is not None else None)
-                    for actual, expected in zip(actual_next, expected_next)
+                current_premium = pd.to_numeric(policy_person_dates["renewal_amount_current_period"], errors="coerce")
+                next_premium = pd.to_numeric(policy_person_dates["renewal_amount_next_period"], errors="coerce")
+                bad_renewal_premium = policy_person_dates[
+                    current_premium.notna()
+                    & next_premium.notna()
+                    & ((current_premium <= 0) | (next_premium < 0))
                 ]
-                bad_renewal_uplift = policy_person_dates[
-                    policy_person_dates["renewal_amount_current_period"].notna()
-                    & policy_person_dates["renewal_amount_next_period"].notna()
-                    & pd.Series([
-                        delta is not None and delta > Decimal("0.01")
-                        for delta in uplift_delta
-                    ], index=policy_person_dates.index)
-                ]
-                if not bad_renewal_uplift.empty:
-                    print(f"policy_renewal_uplift error: {len(bad_renewal_uplift)} rows do not have 1% uplift")
+                if not bad_renewal_premium.empty:
+                    print(f"policy_renewal_premium error: {len(bad_renewal_premium)} rows have invalid current/next premium amounts")
                     print(
                         "sample:",
-                        bad_renewal_uplift[["policy_hash_key", "renewal_amount_current_period", "renewal_amount_next_period"]]
+                        bad_renewal_premium[["policy_hash_key", "renewal_amount_current_period", "renewal_amount_next_period"]]
                         .head(10)
                         .to_dict("records")
                     )
                 else:
-                    print("policy_renewal_uplift valid")
+                    print("policy_renewal_premium valid")
 
                 bad_status = policy_person_dates[
                     policy_person_dates["policy_end_date"].notna()
@@ -1107,6 +1674,7 @@ def main(base_path: str):
             else:
                 print("lead_to_policy_window valid")
 
+    verify_churn_rule_fields(sat_policy, sat_natural_person, sat_mpr, sat_motor, l_pol_customer, l_c_person, l_p_mpr, l_p_nat)
 
     print("\n===== SUMMARY =====\n")
 
@@ -1130,7 +1698,8 @@ def main(base_path: str):
 
 
 if __name__ == "__main__":
-    dirs = [SILVER_REBUILT_ROOT,SILVER_API_ROOT,SILVER_KAGGLE_ROOT,SILVER_DATA_SOURCE_ROOT]
+    dirs = [SILVER_REBUILT_ROOT,SILVER_API_ROOT,SILVER_DATA_SOURCE_ROOT]
+    dirs = ['F:\\SyncDataGenerator_v1.0\\data\\synthetic\\base\\20260522092135']
     for target_path in dirs:
         print(target_path)
         main(target_path)

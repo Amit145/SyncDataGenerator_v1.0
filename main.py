@@ -14,7 +14,7 @@ from config.runConfig import (
     SYNTHETIC_DATA,
     SYNTHETIC_DATA_API,
 )
-from config.storage_paths import KAGGLE_INPUT_ROOT, SCD2_BASE_ROOT, SCD2_ENHANCED_ROOT, SYNTHETIC_ENHANCED_ROOT, ensure_data_roots
+from config.storage_paths import SCD2_BASE_ROOT, SCD2_ENHANCED_ROOT, SYNTHETIC_ENHANCED_ROOT, ensure_data_roots
 from generators.enhanced_synthetic_generator import build_enhanced_synthetic
 from generators.transaction_generator import (
     hub_policy,
@@ -23,7 +23,6 @@ from generators.transaction_generator import (
 from generators.raw_crm_generator import write_raw_crm_batch
 from generators.raw_api_generator import write_raw_api_batch
 from generators.raw_claims_generator import write_raw_claims_batch
-from generators.raw_kaggle_generator import discover_input_dir_for_config, write_kaggle_raw_batch
 from generators.raw_data_source_generator import generate_data_source_raw
 
 from helper.config_loader import load_config
@@ -38,8 +37,8 @@ from helper.raw_scd2_generator import generate_raw_scd2
 from helper.scd2_generator import create_scd_data
 from helper.scd2_diff_engine import previous_subdir
 from helper.source_context_builder import build_source_context
+from helper.streaming_base_generator import generate_streaming_base
 from helper.link_builder import build_links, make_link
-from modules.inference import inference_module
 from modules.module_parser import parse_ddl_module, file_ready
 from helper.pk_validator import assert_unique
 
@@ -84,6 +83,32 @@ parser.add_argument(
     action="store_true",
     help="Generate only enhanced synthetic output. Base context is still built in memory.",
 )
+parser.add_argument(
+    "--streaming-base",
+    action="store_true",
+    help="Generate base Data Vault output in chunks for very large volumes.",
+)
+parser.add_argument(
+    "--total-people",
+    type=int,
+    help="Total people to generate in --streaming-base mode.",
+)
+parser.add_argument(
+    "--chunk-size",
+    type=int,
+    default=100000,
+    help="People per chunk in --streaming-base mode. Default: 100000.",
+)
+parser.add_argument(
+    "--no-stream-normalize",
+    action="store_true",
+    help="Skip streaming normalization into data/synthetic/base for --streaming-base mode.",
+)
+parser.add_argument(
+    "--include-new-outputs-src",
+    action="store_true",
+    help="Generate data/new_outputs_src outputs and SCD2 deltas. Skipped by default to keep normal runs faster.",
+)
 args = parser.parse_args()
 enhanced_only = args.enhanced_only
 
@@ -125,12 +150,14 @@ ensure_data_roots()
 if not file_ready(PARSED_DDL_PATH):
     parse_ddl_module(RAW_DDL)
 else:
-    print(f"⏭️  Skipping parse_ddl_module: {PARSED_DDL_PATH} already exists")
+    print(f"Skipping parse_ddl_module: {PARSED_DDL_PATH} already exists")
 
 if not file_ready(ORDERED_TABLE_METADATA_PATH):
+    from modules.inference import inference_module
+
     inference_module()
 else:
-    print(f"⏭️  Skipping inference_module: {ORDERED_TABLE_METADATA_PATH} already exists")
+    print(f"Skipping inference_module: {ORDERED_TABLE_METADATA_PATH} already exists")
 
 # ---------------- Run settings ----------------
 cfg = load_config()
@@ -141,33 +168,28 @@ run_id = get_run_id(seed)
 folder_run_id = get_folder_run_id()
 out = os.path.join(OUTPUT_BASE, folder_run_id)
 
+if args.streaming_base:
+    streaming_total_people = args.total_people or cfg["run_settings"]["total_people"]
+    summary = generate_streaming_base(
+        cfg=cfg,
+        total_people=streaming_total_people,
+        chunk_size=args.chunk_size,
+        business_start_date=BUSINESS_START_DATE,
+        as_of_date=AS_OF_DATE,
+        hub_date=HUB_DATE,
+        link_date=LINK_DATE,
+        sat_date=SAT_DATE,
+        normalize_output=not args.no_stream_normalize,
+    )
+    print("STREAMING BASE DONE:", summary["output_dir"])
+    if summary["synthetic_dir"]:
+        print("STREAMING SYNTHETIC BASE:", summary["synthetic_dir"])
+    print("STREAMING TOTAL PEOPLE:", summary["total_people"])
+    print("STREAMING CHUNK SIZE:", summary["chunk_size"])
+    end_time = datetime.now()
+    print("Total time taken:", end_time - start_time)
+    raise SystemExit(0)
 
-def generate_kaggle_raw_batches():
-    configs_dir = os.path.join("config", "kaggle_mappings")
-    generated = []
-
-    if not os.path.isdir(configs_dir):
-        return generated
-
-    for file_name in sorted(os.listdir(configs_dir)):
-        if not file_name.lower().endswith(".json"):
-            continue
-
-        config_path = os.path.join(configs_dir, file_name)
-        input_dir = discover_input_dir_for_config(config_path)
-        if not input_dir:
-            print(f"KAGGLE: skipping {file_name} (no matching input folder under {KAGGLE_INPUT_ROOT})")
-            continue
-
-        raw_dir = write_kaggle_raw_batch(
-            input_dir=input_dir,
-            config_path=config_path,
-            batch_id=folder_run_id,
-        )
-        generated.append((file_name, raw_dir))
-        print(f"KAGGLE RAW: {file_name} -> {raw_dir}")
-
-    return generated
 
 # =========================================================
 # 1) HUB GENERATION
@@ -316,6 +338,28 @@ links = build_links(
 # 6) SATELLITE GENERATION
 # =========================================================
 sat_nat = sat_natural_person(person_to_nat, SAT_DATE)
+natural_to_person_map = {}
+for person_hk, natural_hks in person_to_nat.items():
+    for natural_hk in (natural_hks if isinstance(natural_hks, list) else [natural_hks]):
+        natural_to_person_map[natural_hk] = person_hk
+
+person_driver_experience_by_person = {}
+for row in sat_nat:
+    person_hk = natural_to_person_map.get(row.get("Natural Person Hash Key"))
+    if not person_hk:
+        continue
+    birth_dt = datetime.fromisoformat(str(row.get("Birth Date")))
+    load_dt = datetime.fromisoformat(str(row.get("Load Date")))
+    age_years = load_dt.year - birth_dt.year - ((load_dt.month, load_dt.day) < (birth_dt.month, birth_dt.day))
+    experience_years = max(0, age_years - 17)
+    if experience_years < 2:
+        person_driver_experience_by_person[person_hk] = "LT_2Y"
+    elif experience_years <= 5:
+        person_driver_experience_by_person[person_hk] = "Y2_5"
+    elif experience_years <= 10:
+        person_driver_experience_by_person[person_hk] = "Y6_10"
+    else:
+        person_driver_experience_by_person[person_hk] = "GT_10"
 sat_leg = sat_legal_person(person_to_leg, SAT_DATE)
 sat_per = sat_person(
     person_hks,
@@ -335,8 +379,14 @@ sat_lea = sat_lead(
 sat_eci = sat_identities(person_to_identity, SAT_DATE)
 sat_con = sat_contact(person_to_contact, SAT_DATE)
 sat_cns = sat_consent(person_to_consent, SAT_DATE)
-sat_acc = sat_account(person_to_account, SAT_DATE)
-sat_mpr = sat_marketing_preference(person_to_mpr, SAT_DATE)
+sat_acc = sat_account(person_to_account, SAT_DATE, churn_config=cfg.get("churn_settings"))
+person_marketing_engagement_by_person = {}
+sat_mpr = sat_marketing_preference(
+    person_to_mpr,
+    SAT_DATE,
+    churn_config=cfg.get("churn_settings"),
+    person_marketing_engagement_by_person=person_marketing_engagement_by_person,
+)
 sat_men = sat_marketing_engagement(person_to_men, SAT_DATE)
 sat_quo = sat_quote(person_to_quote, SAT_DATE)
 
@@ -377,6 +427,7 @@ for row in sat_lea:
         latest_lead_converted_by_person[person_hk] = converted_date
 
 all_policy_hks = [r["Policy Hash Key"] for r in hub_pol_rows]
+motor_vehicle_profiles = {}
 sat_pol = sat_policy(
     all_policy_hks,
     SAT_DATE,
@@ -385,6 +436,11 @@ sat_pol = sat_policy(
     policy_to_person_map=policy_to_person_map,
     latest_lead_converted_by_person=latest_lead_converted_by_person,
     person_account_status_by_person=person_account_status_by_person,
+    churn_config=cfg.get("churn_settings"),
+    policy_to_motor=policy_to_motor,
+    motor_vehicle_profiles=motor_vehicle_profiles,
+    person_marketing_engagement_by_person=person_marketing_engagement_by_person,
+    person_driver_experience_by_person=person_driver_experience_by_person,
 )
 sat_lea = apply_lead_interest_levels(
     sat_lea,
@@ -440,6 +496,7 @@ sat_cus = sat_customer(
     business_start_date=BUSINESS_START_DATE,
     as_of_date=AS_OF_DATE,
     earliest_policy_start_by_person=earliest_policy_start_by_person,
+    churn_config=cfg.get("churn_settings"),
 )
 sat_cus = apply_customer_segments(
     sat_cus,
@@ -480,7 +537,13 @@ fallback_addr = addr_hks[0] if addr_hks else None
 for motor_hk in motor_hks:
     motor_to_addr.setdefault(motor_hk, fallback_addr)
 
-sat_mot = sat_motor(motor_hks, SAT_DATE, motor_to_addr)
+sat_mot = sat_motor(
+    motor_hks,
+    SAT_DATE,
+    motor_to_addr,
+    churn_config=cfg.get("churn_settings"),
+    motor_vehicle_profiles=motor_vehicle_profiles,
+)
 sat_prod = sat_product(hub_prod_rows, SAT_DATE, product_code_by_hk)
 
 # =========================================================
@@ -673,21 +736,23 @@ if not enhanced_only:
     )
     generated_data_source_raw = generate_data_source_raw(folder_run_id, ctx=data_source_ctx)
     generated_data_source_canonical = map_data_source_to_canonical(folder_run_id, generated_data_source_raw)
-    generated_kaggle_raw = generate_kaggle_raw_batches()
-    generated_kaggle_raw_dirs = [path for _, path in generated_kaggle_raw]
-    generated_raw_scd2 = generate_raw_scd2(folder_run_id, crm_raw_dir=raw_out, api_raw_dir=raw_api_out, kaggle_raw_dirs=generated_kaggle_raw_dirs)
-    generated_new_outputs_src = generate_new_outputs_src(
-        run_id=folder_run_id,
-        cfg=cfg,
-        base_context=base_context,
-        base_run_id=run_id,
-        hub_date=HUB_DATE,
-        link_date=LINK_DATE,
-        sat_date=SAT_DATE,
-        business_start_date=BUSINESS_START_DATE,
-        as_of_date=AS_OF_DATE,
-    )
-    generated_new_outputs_src_scd2 = generate_new_outputs_src_scd2(folder_run_id, generated_new_outputs_src)
+    generated_raw_scd2 = generate_raw_scd2(folder_run_id, crm_raw_dir=raw_out, api_raw_dir=raw_api_out)
+    if args.include_new_outputs_src:
+        generated_new_outputs_src = generate_new_outputs_src(
+            run_id=folder_run_id,
+            cfg=cfg,
+            base_context=base_context,
+            base_run_id=run_id,
+            hub_date=HUB_DATE,
+            link_date=LINK_DATE,
+            sat_date=SAT_DATE,
+            business_start_date=BUSINESS_START_DATE,
+            as_of_date=AS_OF_DATE,
+        )
+        generated_new_outputs_src_scd2 = generate_new_outputs_src_scd2(folder_run_id, generated_new_outputs_src)
+    else:
+        generated_new_outputs_src = {}
+        generated_new_outputs_src_scd2 = []
     synthetic_data_api = os.path.join(SYNTHETIC_DATA_API, folder_run_id)
     build_api_silver(raw_api_out, synthetic_data_api)
 enhanced_synthetic = os.path.join(SYNTHETIC_ENHANCED_ROOT, folder_run_id)
@@ -721,10 +786,11 @@ if not enhanced_only:
     for domain_name in sorted(generated_data_source_raw):
         print(f"RAW DATA_SOURCE {domain_name.upper()}:", generated_data_source_raw[domain_name])
     print("RAW DATA_SOURCE CANONICAL:", generated_data_source_canonical)
-    for _, kaggle_raw_out in generated_kaggle_raw:
-        print("RAW KAGGLE:", kaggle_raw_out)
-    for source_name in sorted(generated_new_outputs_src):
-        print(f"NEW OUTPUT SRC {source_name.upper()}:", generated_new_outputs_src[source_name]["data_dir"])
+    if generated_new_outputs_src:
+        for source_name in sorted(generated_new_outputs_src):
+            print(f"NEW OUTPUT SRC {source_name.upper()}:", generated_new_outputs_src[source_name]["data_dir"])
+    else:
+        print("NEW OUTPUT SRC: skipped (use --include-new-outputs-src to generate)")
     for raw_scd2_summary in generated_raw_scd2:
         print("RAW SCD2:", raw_scd2_summary["output_dir"])
     for scd2_summary in generated_new_outputs_src_scd2:

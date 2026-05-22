@@ -121,6 +121,19 @@ def _float(value, default="") -> str:
         return default
 
 
+def _float_value(value, default: float = 0.0) -> float:
+    if value in (None, ""):
+        return default
+    try:
+        return float(str(value).replace(",", "").strip())
+    except ValueError:
+        return default
+
+
+def _truthy_text(value) -> bool:
+    return str(value or "").strip().upper() in {"Y", "YES", "TRUE", "T", "1"}
+
+
 def _yn(value, default="N") -> str:
     if value in (None, ""):
         return default
@@ -146,6 +159,194 @@ def _insured_value(policy_row: dict, product_code: str, asset_kind: str) -> str:
     if asset_kind == "home":
         return "750000" if "COMMERCIAL" in product_text or "PROPERTY" in product_text else "300000"
     return "100000"
+
+
+def _claim_financial_settings(cfg: dict | None) -> dict:
+    defaults = {
+        "enabled": True,
+        "source_priority": ["fact_policy_claim_rows", "derived_from_policy_sum_insured"],
+        "band_rules": [
+            {"band": "0-6k", "sort": 1, "min": 0, "max": 6000},
+            {"band": "6k-8k", "sort": 2, "min": 6000, "max": 8000},
+            {"band": "8k-10k", "sort": 3, "min": 8000, "max": 10000},
+            {"band": "10k-13k", "sort": 4, "min": 10000, "max": 13000},
+            {"band": "13+", "sort": 5, "min": 13000, "max": None},
+        ],
+        "severity_weights": {"0-6k": 5, "6k-8k": 25, "8k-10k": 25, "10k-13k": 15, "13+": 30},
+        "paid_ratio_by_status": {
+            "OPEN": [0.35, 0.70],
+            "CLOSED": [0.90, 1.00],
+            "REPUDIATED": [0.00, 0.20],
+            "DEFAULT": [0.45, 0.85],
+        },
+        "expense_ratio": [0.05, 0.12],
+        "recovery_received_ratio": [0.05, 0.35],
+        "compensation_ratio": [0.01, 0.08],
+        "remediation_ratio": [0.002, 0.02],
+        "fraud_amount_ratio": [0.05, 0.30],
+        "legal_expense_ratio": [0.01, 0.08],
+        "cap_claim_amount_at_policy_sum_insured": True,
+    }
+    if cfg:
+        defaults.update(cfg.get("claim_financial_settings", {}))
+    return defaults
+
+
+def _weighted_choice_from_mapping(weights: dict, rng: random.Random) -> str:
+    items = [(str(key), float(value)) for key, value in (weights or {}).items() if float(value) > 0]
+    if not items:
+        return ""
+    total = sum(weight for _, weight in items)
+    pick = rng.uniform(0, total)
+    cumulative = 0.0
+    for key, weight in items:
+        cumulative += weight
+        if pick <= cumulative:
+            return key
+    return items[-1][0]
+
+
+def _ratio_range(settings: dict, key: str, default: tuple[float, float]) -> tuple[float, float]:
+    value = settings.get(key, default)
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        return default
+    return float(value[0]), float(value[1])
+
+
+def _band_for_claim_amount(amount: int, settings: dict) -> tuple[str, str]:
+    for rule in settings.get("band_rules", []):
+        low = int(rule.get("min", 0) or 0)
+        high = rule.get("max")
+        high_int = int(high) if high not in (None, "") else None
+        if amount >= low and (high_int is None or amount < high_int):
+            return str(rule.get("band", "")), str(int(rule.get("sort", 0) or 0))
+    if settings.get("band_rules"):
+        rule = settings["band_rules"][-1]
+        return str(rule.get("band", "")), str(int(rule.get("sort", 0) or 0))
+    return "", "0"
+
+
+def _derive_claim_amount(policy_sum_insured: int, settings: dict, rng: random.Random) -> int:
+    selected_band = _weighted_choice_from_mapping(settings.get("severity_weights", {}), rng)
+    rules_by_band = {str(rule.get("band")): rule for rule in settings.get("band_rules", [])}
+    rule = rules_by_band.get(selected_band) or (settings.get("band_rules") or [{}])[0]
+    low = int(rule.get("min", 0) or 0)
+    high_value = rule.get("max")
+    high = int(high_value) if high_value not in (None, "") else max(low + 2000, int(policy_sum_insured * 0.25))
+    cap = policy_sum_insured if policy_sum_insured > 0 and settings.get("cap_claim_amount_at_policy_sum_insured", True) else high
+    high = max(1, min(high, cap))
+    low = max(1, min(low, high))
+    return int(rng.uniform(low, high))
+
+
+def _derive_claim_financials(
+    fact: dict,
+    policy_row: dict,
+    claim_sample: dict,
+    settings: dict,
+    rng: random.Random,
+) -> dict:
+    if not settings.get("enabled", True):
+        return {
+            "claim_amount": _int(fact.get("ClaimAmount")),
+            "claims_paid": _int(fact.get("ClaimsPaid")),
+            "outstanding_reserve": _int(fact.get("OutstandingReserve")),
+            "claims_expenses": _int(fact.get("Claims Expenses")),
+            "recovery_received": _int(fact.get("RecoveryReceived")),
+            "compensation_offered": _int(fact.get("CompensationOffered")),
+            "remediation_amount": _int(fact.get("RemediationAmount")),
+            "suspectd_amount": _int(fact.get("SuspectedAmount")),
+            "fraud_amount": _int(fact.get("FraudAmount")),
+            "legal_expenses": _int(fact.get("LegalExpenses")),
+            "claim_band": fact.get("ClaimBand", ""),
+            "claim_band_sort": _int(fact.get("ClaimBand Sort")),
+        }
+
+    policy_sum_insured = int(_float_value(policy_row.get("policy_sum_insured"), 0.0))
+    claim_amount = int(_float_value(fact.get("ClaimAmount"), 0.0))
+    if claim_amount <= 0:
+        claim_amount = _derive_claim_amount(policy_sum_insured, settings, rng)
+    if policy_sum_insured > 0 and settings.get("cap_claim_amount_at_policy_sum_insured", True):
+        claim_amount = min(claim_amount, policy_sum_insured)
+
+    claim_status = str(claim_sample.get("ClaimStatus", "") or "").strip().upper()
+    paid_ratios = settings.get("paid_ratio_by_status", {})
+    paid_range = paid_ratios.get(claim_status, paid_ratios.get("DEFAULT", [0.45, 0.85]))
+    paid_low, paid_high = float(paid_range[0]), float(paid_range[1])
+    claims_paid = int(_float_value(fact.get("ClaimsPaid"), -1.0))
+    if claims_paid < 0:
+        claims_paid = int(claim_amount * rng.uniform(float(paid_low), float(paid_high)))
+    claims_paid = max(0, min(claims_paid, claim_amount))
+
+    outstanding_reserve = int(_float_value(fact.get("OutstandingReserve"), -1.0))
+    if outstanding_reserve < 0:
+        outstanding_reserve = max(0, claim_amount - claims_paid)
+    if claim_status in {"CLOSED", "SETTLED"}:
+        outstanding_reserve = min(outstanding_reserve, int(claim_amount * 0.05))
+        claims_paid = claim_amount - outstanding_reserve
+
+    expense_low, expense_high = _ratio_range(settings, "expense_ratio", (0.05, 0.12))
+    claims_expenses = int(_float_value(fact.get("Claims Expenses"), -1.0))
+    if claims_expenses < 0:
+        claims_expenses = int(claim_amount * rng.uniform(expense_low, expense_high))
+
+    recovery_received = int(_float_value(fact.get("RecoveryReceived"), -1.0))
+    if recovery_received < 0:
+        if _truthy_text(claim_sample.get("Recovery_Happened")):
+            low, high = _ratio_range(settings, "recovery_received_ratio", (0.05, 0.35))
+            recovery_received = int(claim_amount * rng.uniform(low, high))
+        else:
+            recovery_received = 0
+
+    compensation_offered = int(_float_value(fact.get("CompensationOffered"), -1.0))
+    if compensation_offered < 0:
+        low, high = _ratio_range(settings, "compensation_ratio", (0.01, 0.08))
+        compensation_offered = int(claim_amount * rng.uniform(low, high))
+
+    remediation_amount = int(_float_value(fact.get("RemediationAmount"), -1.0))
+    if remediation_amount < 0:
+        low, high = _ratio_range(settings, "remediation_ratio", (0.002, 0.02))
+        remediation_amount = int(claim_amount * rng.uniform(low, high))
+
+    fraud_amount = int(_float_value(fact.get("FraudAmount"), -1.0))
+    suspected_amount = int(_float_value(fact.get("SuspectedAmount"), -1.0))
+    if _truthy_text(claim_sample.get("FraudFlag")):
+        low, high = _ratio_range(settings, "fraud_amount_ratio", (0.05, 0.30))
+        if fraud_amount < 0:
+            fraud_amount = int(claim_amount * rng.uniform(low, high))
+        if suspected_amount < 0:
+            suspected_amount = max(fraud_amount, int(claim_amount * rng.uniform(low, high)))
+    else:
+        fraud_amount = max(0, fraud_amount)
+        suspected_amount = max(0, suspected_amount)
+
+    legal_expenses = int(_float_value(fact.get("LegalExpenses"), -1.0))
+    if legal_expenses < 0:
+        if _truthy_text(claim_sample.get("LitigationIndicator")):
+            low, high = _ratio_range(settings, "legal_expense_ratio", (0.01, 0.08))
+            legal_expenses = int(claim_amount * rng.uniform(low, high))
+        else:
+            legal_expenses = 0
+
+    claim_band = str(fact.get("ClaimBand", "") or "").strip()
+    claim_band_sort = _int(fact.get("ClaimBand Sort"), default="")
+    if not claim_band or not claim_band_sort:
+        claim_band, claim_band_sort = _band_for_claim_amount(claim_amount, settings)
+
+    return {
+        "claim_amount": str(claim_amount),
+        "claims_paid": str(claims_paid),
+        "outstanding_reserve": str(outstanding_reserve),
+        "claims_expenses": str(claims_expenses),
+        "recovery_received": str(max(0, recovery_received)),
+        "compensation_offered": str(max(0, compensation_offered)),
+        "remediation_amount": str(max(0, remediation_amount)),
+        "suspectd_amount": str(max(0, suspected_amount)),
+        "fraud_amount": str(max(0, fraud_amount)),
+        "legal_expenses": str(max(0, legal_expenses)),
+        "claim_band": claim_band,
+        "claim_band_sort": claim_band_sort,
+    }
 
 
 def _customer_satisfaction_label(value) -> str:
@@ -376,7 +577,7 @@ def _augment_base_satellites(tables: dict[str, list[dict]]) -> None:
             "discount": _int(fact.get("Discount ")),
             "override_commission": _int(fact.get("Override Comission")),
             "partial_recovery_percentage": _int(fact.get("Partial Recovery%")),
-            "policy_issue_date": _timestamp(fact.get("InceptionDate")),
+            "policy_issue_date": _timestamp(row.get("policy_start_date")),
         })
 
     for idx, row in enumerate(tables.get("sat_product", [])):
@@ -444,6 +645,16 @@ def _add_enhanced_entities(tables: dict[str, list[dict]], ctx: dict, cfg: dict |
     policy_to_quote_hk = dict(ctx.get("policy_to_quote_map", {}))
     quote_to_policy_hk = {quote_hk: policy_hk for policy_hk, quote_hk in policy_to_quote_hk.items()}
     fact_policies = _read_example("FactPolicy.csv")
+    fact_claim_rows = [
+        row for row in fact_policies
+        if str(row.get("ClaimID", "") or "").strip()
+    ]
+    fact_claim_by_id = {
+        str(row.get("ClaimID", "") or "").strip(): row
+        for row in fact_claim_rows
+        if str(row.get("ClaimID", "") or "").strip()
+    }
+    claim_financial_settings = _claim_financial_settings(cfg)
     person_to_customer_hk = {}
     for person_hk, customer_hk_or_hks in ctx.get("person_to_customer", {}).items():
         if isinstance(customer_hk_or_hks, list):
@@ -739,10 +950,18 @@ def _add_enhanced_entities(tables: dict[str, list[dict]], ctx: dict, cfg: dict |
     selected_policies = rng.sample(claim_pool, claim_count) if claim_count else []
     for idx, policy_hk in enumerate(selected_policies):
         sample = _sample(claim_examples, idx)
-        fact = _sample(fact_policies, idx)
+        source_claim_id = str(sample.get("ClaimID", "") or "").strip()
+        source_priority = claim_financial_settings.get(
+            "source_priority",
+            ["fact_policy_claim_rows", "derived_from_policy_sum_insured"],
+        )
+        fact = {}
+        if source_priority and source_priority[0] == "fact_policy_claim_rows":
+            fact = fact_claim_by_id.get(source_claim_id) or _sample(fact_claim_rows, idx)
         claim_id = f"ENH_CLM_{idx + 1:07d}"
         claim_hk = md5_hasher(claim_id)
         policy_row = policy_sat_by_hk.get(policy_hk, {})
+        enhanced_policy_row = enhanced_policy_by_hk.get(policy_hk, {})
         product_code = policy_to_product_code.get(policy_hk, "")
         policy_start = _date_obj(policy_row.get("Policy Start Date"))
         policy_end = _date_obj(policy_row.get("Policy End Date"))
@@ -769,6 +988,13 @@ def _add_enhanced_entities(tables: dict[str, list[dict]], ctx: dict, cfg: dict |
         else:
             first_recovery_ts = RECOVERY_SENTINEL_TIMESTAMP
             last_recovery_ts = RECOVERY_SENTINEL_TIMESTAMP
+        claim_financials = _derive_claim_financials(
+            fact,
+            enhanced_policy_row,
+            sample,
+            claim_financial_settings,
+            rng,
+        )
         tables["hub_claim"].append({
             "claim_hash_key": claim_hk,
             "load_date": hub_date,
@@ -815,18 +1041,7 @@ def _add_enhanced_entities(tables: dict[str, list[dict]], ctx: dict, cfg: dict |
             "third_party_involved": sample.get("TPI", ""),
             "third_party_involved_overall_score": _float(sample.get("TPIOverallScore")),
             "solicitor": sample.get("Solicitor", ""),
-            "claim_amount": _int(fact.get("ClaimAmount")),
-            "claims_paid": _int(fact.get("ClaimsPaid")),
-            "outstanding_reserve": _int(fact.get("OutstandingReserve")),
-            "claims_expenses": _int(fact.get("Claims Expenses")),
-            "recovery_received": _int(fact.get("RecoveryReceived")),
-            "compensation_offered": _int(fact.get("CompensationOffered")),
-            "remediation_amount": _int(fact.get("RemediationAmount")),
-            "suspectd_amount": _int(fact.get("SuspectedAmount")),
-            "fraud_amount": _int(fact.get("FraudAmount")),
-            "legal_expenses": _int(fact.get("LegalExpenses")),
-            "claim_band": fact.get("ClaimBand", ""),
-            "claim_band_sort": _int(fact.get("ClaimBand Sort")),
+            **claim_financials,
         })
         tables["link_claim_policy"].append(_link_row(
             "link_claim_policy",

@@ -10,11 +10,9 @@ from config.storage_paths import (
     RAW_CLAIMS_ROOT,
     RAW_CRM_CANONICAL_ROOT,
     RAW_CRM_ROOT,
-    RAW_KAGGLE_ROOT,
     SILVER_API_ROOT,
     SILVER_CLAIMS_ROOT,
     SILVER_DATA_SOURCE_ROOT,
-    SILVER_KAGGLE_ROOT,
     SILVER_REBUILT_ROOT,
     ensure_data_roots,
 )
@@ -65,18 +63,6 @@ def transform_all():
         build_silver(claims_canonical, claims_silver)
         results.append(("claims", claims_canonical, claims_silver))
 
-    if os.path.exists(RAW_KAGGLE_ROOT):
-        for dataset_name in sorted(os.listdir(RAW_KAGGLE_ROOT)):
-            dataset_root = os.path.join(RAW_KAGGLE_ROOT, dataset_name)
-            if not os.path.isdir(dataset_root):
-                continue
-            kaggle_raw = latest_subdir(dataset_root)
-            if not kaggle_raw:
-                continue
-            kaggle_silver = os.path.join(SILVER_KAGGLE_ROOT, os.path.basename(kaggle_raw))
-            build_silver(kaggle_raw, kaggle_silver)
-            results.append((f"kaggle:{dataset_name}", kaggle_raw, kaggle_silver))
-
     if crm_raw:
         run_id = os.path.basename(crm_raw)
         cfg = load_config()
@@ -92,6 +78,7 @@ def transform_all():
 
 if __name__ == "__main__":
     outputs = transform_all()
+    print(outputs)
     if not outputs:
         raise SystemExit("No raw batches found to transform.")
 

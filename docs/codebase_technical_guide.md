@@ -1,5 +1,8 @@
 # SyncDataGenerator Technical Guide
 
+For the consolidated current rules across base, raw, silver, enhanced, churn, and SCD2 outputs, see [current_rules_reference.md](F:/SyncDataGenerator_v1.0/docs/current_rules_reference.md).
+For scenario config key meanings, see [scenario_config_reference.md](F:/SyncDataGenerator_v1.0/docs/scenario_config_reference.md).
+
 This document explains how the codebase works, what it generates, how to run it, and the main business rules enforced by the current implementation.
 
 ## 1. Purpose
@@ -80,7 +83,6 @@ Configuration:
 - `config/scenario_v1.json`
 - `config/cardinality.json`
 - `config/storage_paths.py`
-- `config/kaggle_mappings/*.json`
 
 Main generation code:
 
@@ -109,7 +111,7 @@ Generated runtime data:
 - `data/synthetic`
 - `data/silver`
 - `data/scd2`
-- `data/new_outputs_src`
+- optional `data/new_outputs_src` when `--include-new-outputs-src` is passed
 
 ## 4. Key File Responsibilities
 
@@ -140,7 +142,6 @@ Raw, silver, and source outputs:
 - `generators/raw_api_generator.py`: writes raw API extracts from an independent source context
 - `generators/raw_claims_generator.py`: writes raw claims extracts from an independent source context
 - `generators/raw_data_source_generator.py`: writes source-native home and motor extracts
-- `generators/raw_kaggle_generator.py`: writes configured Kaggle raw extracts
 - `helper/crm_mapper.py`: maps raw CRM to canonical raw
 - `helper/data_source_mapper.py`: maps source-native home/motor extracts to canonical raw
 - `helper/api_silver_builder.py`: builds API silver output
@@ -177,7 +178,6 @@ Raw source outputs:
 - `data/raw/data_source/motor/<run_id>`
 - `data/raw/data_source/home/<run_id>`
 - `data/raw/data_source_canonical/<run_id>`
-- `data/raw/kaggle/<dataset>/<run_id>`
 
 Silver outputs:
 
@@ -185,7 +185,6 @@ Silver outputs:
 - `data/silver/api/<run_id>`
 - `data/silver/claims/<run_id>`
 - `data/silver/data_source/<run_id>`
-- `data/silver/kaggle/<run_id>`
 
 SCD2 outputs:
 
@@ -193,8 +192,7 @@ SCD2 outputs:
 - `data/scd2/enhanced/<run_id>`
 - `data/scd2/raw/crm/<run_id>`
 - `data/scd2/raw/api/<run_id>`
-- `data/scd2/raw/kaggle/<dataset>/<run_id>`
-- `data/new_outputs_src/<source>/scd2/<run_id>`
+- optional `data/new_outputs_src/<source>/scd2/<run_id>`
 
 ## 6. Runtime Flow in `main.py`
 
@@ -219,15 +217,14 @@ High-level sequence:
 15. Generate independent raw claims context and raw claims.
 16. Generate independent `data_source` context and data source raw extracts.
 17. Map data source raw to canonical raw.
-18. Generate Kaggle raw if configured input data exists.
-19. Generate raw SCD2 for eligible raw sources.
-20. Generate `new_outputs_src` source-specific outputs and SCD2.
-21. Build API silver.
-22. Generate enhanced synthetic output.
-23. Generate enhanced SCD2 if prior enhanced history exists.
-24. Validate base output structure and integrity.
-25. Normalize base output into `data/synthetic/base/<run_id>`.
-26. Generate base SCD2 if prior base history exists.
+18. Generate raw SCD2 for eligible raw sources.
+19. Generate optional `new_outputs_src` source-specific outputs and SCD2 only when `--include-new-outputs-src` is passed.
+20. Build API silver.
+21. Generate enhanced synthetic output.
+22. Generate enhanced SCD2 if prior enhanced history exists.
+23. Validate base output structure and integrity.
+24. Normalize base output into `data/synthetic/base/<run_id>`.
+25. Generate base SCD2 if prior base history exists.
 
 ## 7. Base Synthetic Model
 
@@ -268,8 +265,11 @@ Important base rule:
 - natural/legal person split
 - lifecycle distribution
 - sales channel distribution
+- churn distributions under `churn_settings`
 - conversion rates
 - enhanced settings
+
+See `docs/scenario_config_reference.md` for the meaning of every scenario config key.
 
 `config/cardinality.json` controls relationship counts for selected links.
 
@@ -306,7 +306,7 @@ Policy rules:
 - policy-to-product inherits from quote-to-product
 - policy holder persons get customers and accounts
 - `policy_start_date < policy_end_date`
-- non-cancelled policies are annual policies
+- active and lapsed policies use annual term boundaries
 - renewal date is near policy end date
 - account state can force policy out of active status
 
@@ -358,10 +358,25 @@ Policy and renewal:
 
 - policy start date is generated after the lead conversion date
 - policy end date is after policy start date
-- non-cancelled policies are annual policies
+- active and lapsed policies use annual term boundaries; long-tenure policies use the current annual term, not always `policy_start + 1 year`
+- lapsed status is used only after a completed renewal cycle; sub-one-year churn is cancelled
 - renewal date is a field on `sat_policy`, not a separate renewal-policy row
 - renewal date is near policy end date and must not be after policy end date
+- renewal current/next amounts follow churn movement bands rather than a fixed uplift
 - account state can force a policy out of active status
+- policy cycle is standardized as `policy_cycle`; it means completed annual tenure and the legacy misspelled column name is not used
+- churn decreases as completed `policy_cycle` tenure increases
+- completed-tenure churn is tuned to the workbook ranges: `<1 year 35-50%`, `1-2 years 25-35%`, `3-5 years 15-25%`, and `>5 years 8-15%`
+- sales-channel churn variance uses existing values only; `AGENT` carries broker/aggregator-like higher churn behavior and `AGGREGATOR` is not emitted; the workbook does not define a sales-channel benchmark range
+- churn distributions are read from `config/scenario_v1.json` `churn_settings`
+- churn-available and proxy fields are generated once in base satellites and reused by CRM, API, data-source, canonical raw, silver, and enhanced outputs
+
+Large-volume generation:
+
+- `main.py --streaming-base --total-people <n> --chunk-size <n>` generates base Data Vault output in bounded chunks and appends rows to the same output files
+- streaming mode reuses the same base hub/link/satellite builders per chunk, then drops the chunk context before generating the next chunk
+- streaming normalization writes `data/synthetic/base/<run_id>` row by row and avoids pandas full-file reads
+- the normal `main.py` path is unchanged and remains the full-output path for raw, silver, enhanced, SCD2, and detailed validation runs
 
 Campaign:
 
@@ -660,11 +675,7 @@ Raw data source:
 - writes motor and home source-native extracts
 - mapped to canonical raw by `helper/data_source_mapper.py`
 
-Raw Kaggle:
 
-- generated by `generators/raw_kaggle_generator.py`
-- driven by external files under `data/input/kaggle`
-- configured by JSON files under `config/kaggle_mappings`
 
 ## 17. Silver Generation
 
@@ -727,7 +738,6 @@ Raw SCD2:
 
 - compares prior and current raw folders
 - writes changed and new raw records
-- currently covers CRM, API, and Kaggle
 
 Important distinction:
 
@@ -809,6 +819,5 @@ Change enhanced business rules:
 - `main.py` is a script with top-level execution, not a function-based CLI entry point.
 - The old root enhanced DDL remains as a historical reference, but active enhanced generation uses the `enhanced_360/new` DDL.
 - Synthetic SCD2 is sampled mutation-based, not complete CDC.
-- Kaggle ingestion is mapping-config-driven and depends on external input shape.
 - Some raw source contexts are independent, so business IDs can differ between CRM/API/data_source outputs for the same run.
 - Full 25,000-person runs can take time and produce large output folders.

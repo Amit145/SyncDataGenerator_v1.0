@@ -57,14 +57,14 @@ def main():
                     if hub in hubs:
                         missing = set(df[col]) - hubs[hub]
                         if missing:
-                            print(f"❌ {f}.{col} -> {hub} missing {len(missing)} keys")
+                            print(f"ERROR {f}.{col} -> {hub} missing {len(missing)} keys")
                             errors += 1
 
     print("\n====================")
     if errors == 0:
-        print("🎯 REFERENTIAL INTEGRITY OK")
+        print("REFERENTIAL INTEGRITY OK")
     else:
-        print(f"❗ RI errors: {errors}")
+        print(f"ERROR RI errors: {errors}")
     print("====================")
 
 
