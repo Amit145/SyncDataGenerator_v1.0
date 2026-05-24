@@ -83,6 +83,8 @@ The current detailed rule set for base, raw, silver, enhanced, churn, and SCD2 o
 
 The latest generated-run validation summary, including expected vs current churn ratios, is documented in [docs/latest_run_validation.md](F:/SyncDataGenerator_v1.0/docs/latest_run_validation.md).
 
+The new MLOps Data Vault output is written under `data/synthetic/mlops/<run_id>`, with SCD2 deltas under `data/scd2/mlops/<run_id>` when a prior MLOps run exists. The DDL schema review, column delta, and validation command are documented in [docs/mlops_gen_schema_review.md](F:/SyncDataGenerator_v1.0/docs/mlops_gen_schema_review.md).
+
 Enhanced claim financials are configurable through `claim_financial_settings`. They populate enhanced `sat_claim` amount, paid, reserve, expense, recovery/fraud/legal financials, `claim_band`, and `claim_band_sort`.
 
 ## Churn Rules

@@ -21,6 +21,7 @@ from helper.key_factory import md5_hasher
 
 ROOT = Path(__file__).resolve().parents[1]
 ENHANCED_EXAMPLE_DIR = ROOT / "enhanced_360" / "data_example"
+MLOPS_DDL_PATH = ROOT / "mlops" / "mlops_gen" / "Enhanced_Customer360_DataVault_Model_DDL.sql"
 RS = "CRM"
 RECOVERY_SENTINEL_TIMESTAMP = "1900-01-01T00:00:00"
 
@@ -108,6 +109,15 @@ def _int(value, default="") -> str:
         return default
     try:
         return str(int(float(str(value).replace(",", "").strip())))
+    except ValueError:
+        return default
+
+
+def _int_value(value, default: int = 0) -> int:
+    if value in (None, ""):
+        return default
+    try:
+        return int(float(str(value).replace(",", "").strip()))
     except ValueError:
         return default
 
@@ -392,12 +402,20 @@ STRING_BOOLEAN_COLUMNS = {
         "is_litigation",
         "is_recovery_opportunity",
         "is_recovery_happened",
+        "is_fault_claim",
     },
     "sat_complaint": {"is_financial_ombudsman_service_referral"},
     "sat_home": {"is_existing_home_customer"},
     "sat_motor": {"is_existing_motor_customer"},
     "sat_person": {"is_lead"},
-    "sat_policy": {"fraud_flag", "is_policy_renewal"},
+    "sat_policy": {
+        "fraud_flag",
+        "is_policy_renewal",
+        "is_auto_renew_enabled",
+        "is_direct_debit_cancellation",
+        "loyalty_discount_usage",
+        "is_installment_default",
+    },
     "sat_regulation": {"is_regulation_on_time"},
 }
 
@@ -435,6 +453,172 @@ def _normalize_blank_numeric_columns(tables: dict[str, list[dict]], column_types
             for column_name, default_value in numeric_columns.items():
                 if row.get(column_name) in (None, ""):
                     row[column_name] = default_value
+
+
+def _policy_churn_flag(row: dict) -> bool:
+    return str(row.get("policy_status") or "").strip().upper() in {"CANCELLED", "LAPSED"}
+
+
+def _policy_payment_profile(row: dict) -> dict:
+    churned = _policy_churn_flag(row)
+    status = str(row.get("policy_status") or "").strip().upper()
+    cycle = _int_value(row.get("policy_cycle"), 0)
+    active_claims = _int_value(row.get("number_of_active_claim"), 0)
+    previous_claims = _int_value(row.get("number_of_previous_claim"), 0)
+    declined_claims = _int_value(row.get("declined_claims"), 0)
+    total_claims = active_claims + previous_claims + declined_claims
+    risk_score = _float_value(row.get("policy_risk_score"), 0.0)
+    payment_method = "DIRECT_DEBIT" if (cycle >= 2 and not churned) else random.choice(["CARD", "BANK_TRANSFER", "DIRECT_DEBIT"])
+    if churned and random.random() < 0.45:
+        payment_method = "DIRECT_DEBIT"
+    is_direct_debit = payment_method == "DIRECT_DEBIT"
+    missed_payment_count = 0
+    if churned:
+        missed_payment_count = random.choices([0, 1, 2, 3, 4], weights=[35, 28, 20, 12, 5], k=1)[0]
+    elif risk_score >= 70 or total_claims >= 3:
+        missed_payment_count = random.choices([0, 1, 2], weights=[78, 17, 5], k=1)[0]
+    else:
+        missed_payment_count = random.choices([0, 1], weights=[93, 7], k=1)[0]
+    auto_renew_enabled = "N" if churned and random.random() < 0.75 else "Y"
+    direct_debit_cancel = "Y" if churned and is_direct_debit and missed_payment_count > 0 else "N"
+    installment_default = "Y" if missed_payment_count >= 2 else "N"
+    ncd_years = max(0, min(cycle, 9) - min(total_claims, 3))
+    loyalty_discount_usage = "Y" if cycle >= 3 and not churned and random.random() < 0.75 else "N"
+    if status == "CANCELLED" and random.random() < 0.30:
+        loyalty_discount_usage = "N"
+    return {
+        "is_auto_renew_enabled": auto_renew_enabled,
+        "no_claims_discount_years": str(ncd_years),
+        "payment_method": payment_method,
+        "is_direct_debit_cancellation": direct_debit_cancel,
+        "missed_payment_count": str(missed_payment_count),
+        "loyalty_discount_usage": loyalty_discount_usage,
+        "is_installment_default": installment_default,
+    }
+
+
+def _driver_experience_from_nat(row: dict) -> int:
+    birth = _date_obj(row.get("birth_date"))
+    load = _date_obj(row.get("load_date")) or date.today()
+    if not birth:
+        return 0
+    age = load.year - birth.year - ((load.month, load.day) < (birth.month, birth.day))
+    return max(0, age - 17)
+
+
+def _claim_satisfaction_score(row: dict) -> str:
+    score = 8
+    status = str(row.get("claim_status") or "").upper()
+    if status in {"OPEN", "PENDING"}:
+        score -= 1
+    if _yn(row.get("is_claim_fraud")) == "Y" or _yn(row.get("is_claim_suspicious")) == "Y":
+        score -= 3
+    if _yn(row.get("is_litigation")) == "Y":
+        score -= 2
+    if _yn(row.get("is_fault_claim")) == "Y":
+        score -= 1
+    amount = _int_value(row.get("claim_amount"), 0)
+    if amount >= 13000:
+        score -= 1
+    if _int_value(row.get("outstanding_reserve"), 0) > 0:
+        score -= 1
+    return str(max(1, min(10, score)))
+
+
+def _apply_mlops_columns(tables: dict[str, list[dict]], ctx: dict) -> None:
+    for row in tables.get("sat_address", []):
+        row["region"] = row.get("state") or row.get("city") or ""
+
+    for row in tables.get("sat_claim", []):
+        suspected_amount = max(0, _int_value(row.get("suspected_amount") or row.get("suspectd_amount"), 0))
+        claim_amount = max(0, _int_value(row.get("claim_amount"), 0))
+        row["suspected_amount"] = str(min(suspected_amount, claim_amount))
+        row.pop("suspectd_amount", None)
+        fault_claim = (
+            _yn(row.get("is_claim_fraud")) == "Y"
+            or _yn(row.get("is_claim_suspicious")) == "Y"
+            or str(row.get("third_party_involved") or "").strip().upper() in {"Y", "YES", "TRUE", "1"}
+            or _float_value(row.get("third_party_involved_overall_score"), 0.0) >= 70
+        )
+        row["is_fault_claim"] = "Y" if fault_claim else "N"
+        row["claim_satisfaction_score"] = _claim_satisfaction_score(row)
+
+    natural_by_person = {}
+    for link in tables.get("link_person_natural_person", []):
+        person_hk = link.get("person_hash_key")
+        natural_hk = link.get("natural_person_hash_key")
+        if person_hk and natural_hk:
+            natural_by_person[person_hk] = natural_hk
+    driver_experience_by_person = {
+        row.get("natural_person_hash_key"): _driver_experience_from_nat(row)
+        for row in tables.get("sat_natural_person", [])
+        if row.get("natural_person_hash_key")
+    }
+    customer_person = {
+        row.get("customer_hash_key"): row.get("person_hash_key")
+        for row in tables.get("link_customer_person", [])
+        if row.get("customer_hash_key") and row.get("person_hash_key")
+    }
+    policy_person_by_policy = {}
+    for lpc in tables.get("link_policy_customer", []):
+        policy_hk = lpc.get("policy_hash_key")
+        customer_hk = lpc.get("customer_hash_key")
+        if not policy_hk or not customer_hk:
+            continue
+        person_hk = customer_person.get(customer_hk)
+        if person_hk:
+            policy_person_by_policy[policy_hk] = person_hk
+
+    motor_by_hk = {row.get("motor_hash_key"): row for row in tables.get("sat_motor", []) if row.get("motor_hash_key")}
+    motor_to_person = {}
+    for lpio in tables.get("link_policy_insured_object", []):
+        policy_hk = lpio.get("policy_hash_key")
+        insured_object_hk = lpio.get("insured_object_hash_key")
+        person_hk = policy_person_by_policy.get(policy_hk)
+        if not person_hk:
+            continue
+        for liom in tables.get("link_insured_object_motor", []):
+            if liom.get("insured_object_hash_key") == insured_object_hk:
+                motor_to_person[liom.get("motor_hash_key")] = person_hk
+                break
+    for motor_hk, row in motor_by_hk.items():
+        person_hk = motor_to_person.get(motor_hk)
+        natural_hk = natural_by_person.get(person_hk)
+        row["driver_experience_years"] = str(driver_experience_by_person.get(natural_hk, 0))
+
+    policy_by_hk = {row.get("policy_hash_key"): row for row in tables.get("sat_policy", []) if row.get("policy_hash_key")}
+    for row in policy_by_hk.values():
+        row.update(_policy_payment_profile(row))
+
+    churn_by_person = {}
+    for policy_hk, person_hk in policy_person_by_policy.items():
+        policy = policy_by_hk.get(policy_hk, {})
+        if not person_hk:
+            continue
+        churn_by_person[person_hk] = churn_by_person.get(person_hk, False) or _policy_churn_flag(policy)
+    men_person = {
+        link.get("marketing_engagement_hash_key"): link.get("person_hash_key")
+        for link in tables.get("link_person_marketing_engagement", [])
+    }
+    for row in tables.get("sat_marketing_engagement", []):
+        person_hk = men_person.get(row.get("marketing_engagement_hash_key"))
+        churned = bool(churn_by_person.get(person_hk, False))
+        opened = _yn(row.get("opened_email")) == "Y"
+        status = str(row.get("marketing_status") or "").upper()
+        score = 70 if opened else 35
+        if status == "ACTIVE":
+            score += 15
+        if churned:
+            score -= 20
+        retention = "Y" if churned or score < 45 else "N"
+        call_frequency = random.choices([0, 1, 2, 3, 4, 5, 6], weights=[10, 15, 20, 20, 16, 12, 7], k=1)[0] if churned else random.choices([0, 1, 2, 3], weights=[55, 30, 12, 3], k=1)[0]
+        sentiment = "NEGATIVE" if call_frequency >= 4 or score < 35 else "NEUTRAL" if call_frequency >= 2 or score < 65 else "POSITIVE"
+        row.update({
+            "has_retention_team_interaction": retention,
+            "customer_service_call_frequency": str(call_frequency),
+            "average_call_sentiment": sentiment,
+            "engagement_score": str(max(0, min(100, score))),
+        })
 
 
 def _id_from_hub(row: dict, id_col: str) -> str:
@@ -1199,8 +1383,14 @@ def _add_enhanced_entities(tables: dict[str, list[dict]], ctx: dict, cfg: dict |
             ))
 
 
-def build_enhanced_synthetic(ctx: dict, output_dir: str, cfg: dict | None = None) -> str:
-    ddl = parse_enhanced_ddl()
+def build_enhanced_synthetic(
+    ctx: dict,
+    output_dir: str,
+    cfg: dict | None = None,
+    ddl_path: str | Path | None = None,
+    apply_mlops_rules: bool = False,
+) -> str:
+    ddl = parse_enhanced_ddl(ddl_path) if ddl_path else parse_enhanced_ddl()
     schemas = ddl["tables"]
     tables = {table_name: [] for table_name in schemas}
     tables.update(_build_base_tables(ctx))
@@ -1208,6 +1398,8 @@ def build_enhanced_synthetic(ctx: dict, output_dir: str, cfg: dict | None = None
 
     _augment_base_satellites(tables)
     _add_enhanced_entities(tables, ctx, cfg)
+    if apply_mlops_rules:
+        _apply_mlops_columns(tables, ctx)
     _normalize_string_boolean_columns(tables)
     _normalize_blank_numeric_columns(tables, ddl["column_types"])
 
@@ -1217,3 +1409,13 @@ def build_enhanced_synthetic(ctx: dict, output_dir: str, cfg: dict | None = None
         write_csv(output_dir, f"{table_name}.csv", rows, fieldnames=columns)
 
     return output_dir
+
+
+def build_mlops_synthetic(ctx: dict, output_dir: str, cfg: dict | None = None) -> str:
+    return build_enhanced_synthetic(
+        ctx,
+        output_dir,
+        cfg=cfg,
+        ddl_path=MLOPS_DDL_PATH,
+        apply_mlops_rules=True,
+    )
