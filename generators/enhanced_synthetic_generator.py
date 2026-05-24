@@ -413,7 +413,6 @@ STRING_BOOLEAN_COLUMNS = {
         "is_policy_renewal",
         "is_auto_renew_enabled",
         "is_direct_debit_cancellation",
-        "loyalty_discount_usage",
         "is_installment_default",
     },
     "sat_regulation": {"is_regulation_on_time"},
@@ -468,24 +467,32 @@ def _policy_payment_profile(row: dict) -> dict:
     declined_claims = _int_value(row.get("declined_claims"), 0)
     total_claims = active_claims + previous_claims + declined_claims
     risk_score = _float_value(row.get("policy_risk_score"), 0.0)
-    payment_method = "DIRECT_DEBIT" if (cycle >= 2 and not churned) else random.choice(["CARD", "BANK_TRANSFER", "DIRECT_DEBIT"])
-    if churned and random.random() < 0.45:
-        payment_method = "DIRECT_DEBIT"
-    is_direct_debit = payment_method == "DIRECT_DEBIT"
-    missed_payment_count = 0
     if churned:
-        missed_payment_count = random.choices([0, 1, 2, 3, 4], weights=[35, 28, 20, 12, 5], k=1)[0]
-    elif risk_score >= 70 or total_claims >= 3:
-        missed_payment_count = random.choices([0, 1, 2], weights=[78, 17, 5], k=1)[0]
+        payment_method = random.choices(["BANK_TRANSFER", "DIRECT_DEBIT", "CARD"], weights=[15, 35, 50], k=1)[0]
     else:
-        missed_payment_count = random.choices([0, 1], weights=[93, 7], k=1)[0]
-    auto_renew_enabled = "N" if churned and random.random() < 0.75 else "Y"
-    direct_debit_cancel = "Y" if churned and is_direct_debit and missed_payment_count > 0 else "N"
+        payment_method = random.choices(["BANK_TRANSFER", "DIRECT_DEBIT", "CARD"], weights=[45, 40, 15], k=1)[0]
+    is_direct_debit = payment_method == "DIRECT_DEBIT"
+    if churned:
+        missed_payment_count = random.choices([0, 1, 2, 3, 4], weights=[15, 25, 30, 22, 8], k=1)[0]
+    elif risk_score >= 70 or total_claims >= 3:
+        missed_payment_count = random.choices([0, 1, 2, 3], weights=[60, 28, 10, 2], k=1)[0]
+    else:
+        missed_payment_count = random.choices([0, 1, 2, 3], weights=[72, 20, 6, 2], k=1)[0]
+    auto_renew_enabled = "Y" if random.random() < (0.08 if churned else 0.58) else "N"
+    dd_cancel_probability = 0.60 if churned else 0.08
+    direct_debit_cancel = "Y" if is_direct_debit and missed_payment_count > 0 and random.random() < dd_cancel_probability else "N"
     installment_default = "Y" if missed_payment_count >= 2 else "N"
     ncd_years = max(0, min(cycle, 9) - min(total_claims, 3))
-    loyalty_discount_usage = "Y" if cycle >= 3 and not churned and random.random() < 0.75 else "N"
-    if status == "CANCELLED" and random.random() < 0.30:
-        loyalty_discount_usage = "N"
+    if not churned and cycle >= 5 and total_claims == 0 and random.random() < 0.35:
+        ncd_years = random.choice([9, 10, 11])
+    elif churned and ncd_years >= 5 and random.random() < 0.45:
+        ncd_years = random.randint(2, 4)
+    if churned:
+        loyalty_discount_usage = random.choices(["RETAINED", "NOT_APPLIED", "REMOVED"], weights=[15, 35, 50], k=1)[0]
+    else:
+        loyalty_discount_usage = random.choices(["RETAINED", "NOT_APPLIED", "REMOVED"], weights=[55, 40, 5], k=1)[0]
+    if status == "CANCELLED" and random.random() < 0.20:
+        loyalty_discount_usage = "REMOVED"
     return {
         "is_auto_renew_enabled": auto_renew_enabled,
         "no_claims_discount_years": str(ncd_years),
@@ -523,6 +530,166 @@ def _claim_satisfaction_score(row: dict) -> str:
     if _int_value(row.get("outstanding_reserve"), 0) > 0:
         score -= 1
     return str(max(1, min(10, score)))
+
+
+def _assign_mlops_bands(rows: list[dict], is_churned, bands: list[tuple[str, float, int]]) -> dict[int, str]:
+    """Assign rows to bands with approximate target churn rates without changing churn itself."""
+    if not rows:
+        return {}
+    total_weight = sum(weight for _, _, weight in bands) or 1
+    total_rows = len(rows)
+    band_specs = []
+    allocated = 0
+    for band_idx, (band, target_rate, weight) in enumerate(bands):
+        if band_idx == len(bands) - 1:
+            size = total_rows - allocated
+        else:
+            size = round(total_rows * weight / total_weight)
+            allocated += size
+        band_specs.append({"band": band, "target_rate": target_rate, "size": max(0, size)})
+
+    total_churn = sum(1 for row in rows if is_churned(row))
+    for spec in band_specs:
+        spec["churn_quota"] = min(spec["size"], round(spec["size"] * spec["target_rate"]))
+
+    quota_sum = sum(spec["churn_quota"] for spec in band_specs)
+    if quota_sum < total_churn:
+        remaining = total_churn - quota_sum
+        for spec in sorted(band_specs, key=lambda item: item["target_rate"], reverse=True):
+            room = spec["size"] - spec["churn_quota"]
+            add = min(room, remaining)
+            spec["churn_quota"] += add
+            remaining -= add
+            if remaining <= 0:
+                break
+    elif quota_sum > total_churn:
+        excess = quota_sum - total_churn
+        for spec in sorted(band_specs, key=lambda item: item["target_rate"]):
+            remove = min(spec["churn_quota"], excess)
+            spec["churn_quota"] -= remove
+            excess -= remove
+            if excess <= 0:
+                break
+
+    shuffled = list(enumerate(rows))
+    random.shuffle(shuffled)
+    churned_rows = [(idx, row) for idx, row in shuffled if is_churned(row)]
+    retained_rows = [(idx, row) for idx, row in shuffled if not is_churned(row)]
+    assignments: dict[int, str] = {}
+
+    for spec in sorted(band_specs, key=lambda item: item["target_rate"], reverse=True):
+        selected = []
+        for _ in range(spec["churn_quota"]):
+            if churned_rows:
+                selected.append(churned_rows.pop())
+        retained_quota = max(0, spec["size"] - len(selected))
+        for _ in range(retained_quota):
+            if retained_rows:
+                selected.append(retained_rows.pop())
+        while len(selected) < spec["size"] and churned_rows:
+            selected.append(churned_rows.pop())
+        while len(selected) < spec["size"] and retained_rows:
+            selected.append(retained_rows.pop())
+        for idx, _ in selected:
+            assignments[idx] = spec["band"]
+
+    for idx, _ in churned_rows + retained_rows:
+        assignments[idx] = bands[-1][0]
+    return assignments
+
+
+def _apply_mlops_policy_churn_calibration(policy_rows: list[dict]) -> None:
+    if not policy_rows:
+        return
+
+    def churned(row):
+        return _policy_churn_flag(row)
+
+    auto = _assign_mlops_bands(policy_rows, churned, [("ON", 0.08, 45), ("OFF", 0.45, 55)])
+    ncd = _assign_mlops_bands(policy_rows, churned, [("0_1", 0.33, 65), ("2_4", 0.24, 25), ("5_8", 0.19, 7), ("9_PLUS", 0.14, 3)])
+    dd_cancel = _assign_mlops_bands(policy_rows, churned, [("NO", 0.18, 72), ("YES", 0.55, 28)])
+    missed = _assign_mlops_bands(policy_rows, churned, [("0", 0.16, 50), ("1", 0.32, 25), ("2", 0.50, 15), ("3_PLUS", 0.68, 10)])
+    loyalty = _assign_mlops_bands(policy_rows, churned, [("RETAINED", 0.14, 42), ("NOT_APPLIED", 0.27, 36), ("REMOVED", 0.55, 22)])
+    installment = _assign_mlops_bands(policy_rows, churned, [("NO", 0.16, 70), ("YES", 0.62, 30)])
+
+    ncd_values = {"0_1": ["0", "1"], "2_4": ["2", "3", "4"], "5_8": ["5", "6", "7", "8"], "9_PLUS": ["9", "10", "11"]}
+    missed_values = {"0": "0", "1": "1", "2": "2", "3_PLUS": random.choice(["3", "4"])}
+    for idx, row in enumerate(policy_rows):
+        row["is_auto_renew_enabled"] = "Y" if auto.get(idx) == "ON" else "N"
+        row["no_claims_discount_years"] = random.choice(ncd_values[ncd.get(idx, "0_1")])
+        missed_band = missed.get(idx, "0")
+        row["missed_payment_count"] = missed_values[missed_band] if missed_band != "3_PLUS" else random.choice(["3", "4"])
+        row["is_installment_default"] = "Y" if installment.get(idx) == "YES" else "N"
+        if row["is_installment_default"] == "Y" and _int_value(row["missed_payment_count"], 0) < 2:
+            row["missed_payment_count"] = random.choice(["2", "3"])
+        if row["is_installment_default"] == "N" and _int_value(row["missed_payment_count"], 0) >= 2:
+            row["missed_payment_count"] = random.choice(["0", "1"])
+        row["loyalty_discount_usage"] = loyalty.get(idx, "NOT_APPLIED")
+        row["is_direct_debit_cancellation"] = "Y" if dd_cancel.get(idx) == "YES" else "N"
+        if row["is_direct_debit_cancellation"] == "Y":
+            row["payment_method"] = "DIRECT_DEBIT"
+        elif churned(row):
+            row["payment_method"] = random.choices(["BANK_TRANSFER", "DIRECT_DEBIT", "CARD"], weights=[8, 42, 50], k=1)[0]
+        else:
+            row["payment_method"] = random.choices(["BANK_TRANSFER", "DIRECT_DEBIT", "CARD"], weights=[45, 45, 10], k=1)[0]
+        if row["is_direct_debit_cancellation"] == "Y":
+            if _int_value(row["missed_payment_count"], 0) < 1:
+                row["missed_payment_count"] = "1"
+
+
+def _apply_mlops_marketing_churn_calibration(marketing_rows: list[dict], men_person: dict, churn_by_person: dict) -> None:
+    rows = [row for row in marketing_rows if row.get("marketing_engagement_hash_key") in men_person]
+    if not rows:
+        return
+
+    def churned(row):
+        return bool(churn_by_person.get(men_person.get(row.get("marketing_engagement_hash_key")), False))
+
+    retention = _assign_mlops_bands(rows, churned, [("NO", 0.17, 62), ("YES", 0.45, 38)])
+    sentiment = _assign_mlops_bands(rows, churned, [("POSITIVE", 0.12, 34), ("NEUTRAL", 0.24, 44), ("NEGATIVE", 0.52, 22)])
+    engagement = _assign_mlops_bands(rows, churned, [("HIGH", 0.12, 22), ("MEDIUM", 0.24, 32), ("LOW", 0.45, 34), ("VERY_LOW", 0.60, 12)])
+    score_values = {
+        "HIGH": ["80", "85", "90"],
+        "MEDIUM": ["60", "65", "70"],
+        "LOW": ["35", "45", "50"],
+        "VERY_LOW": ["10", "15", "20"],
+    }
+    call_frequency_values = {"POSITIVE": ["0", "1"], "NEUTRAL": ["1", "2", "3"], "NEGATIVE": ["4", "5", "6"]}
+    for idx, row in enumerate(rows):
+        retention_band = retention.get(idx, "NO")
+        sentiment_band = sentiment.get(idx, "NEUTRAL")
+        engagement_band = engagement.get(idx, "LOW")
+        row["has_retention_team_interaction"] = "Y" if retention_band == "YES" else "N"
+        row["average_call_sentiment"] = sentiment_band
+        row["engagement_score"] = random.choice(score_values[engagement_band])
+        row["customer_service_call_frequency"] = random.choice(call_frequency_values[sentiment_band])
+
+
+def _apply_mlops_claim_churn_calibration(tables: dict[str, list[dict]], policy_by_hk: dict[str, dict]) -> None:
+    claim_by_hk = {
+        row.get("claim_hash_key"): row
+        for row in tables.get("sat_claim", [])
+        if row.get("claim_hash_key")
+    }
+    claim_policy = {
+        link.get("claim_hash_key"): link.get("policy_hash_key")
+        for link in tables.get("link_claim_policy", [])
+        if link.get("claim_hash_key") and link.get("policy_hash_key")
+    }
+    rows = [row for claim_hk, row in claim_by_hk.items() if claim_hk in claim_policy]
+    if not rows:
+        return
+
+    def churned(row):
+        policy_hk = claim_policy.get(row.get("claim_hash_key"))
+        return _policy_churn_flag(policy_by_hk.get(policy_hk, {}))
+
+    fault = _assign_mlops_bands(rows, churned, [("NO", 0.16, 70), ("YES", 0.40, 30)])
+    satisfaction = _assign_mlops_bands(rows, churned, [("HIGH", 0.12, 30), ("NEUTRAL", 0.24, 45), ("LOW", 0.52, 25)])
+    score_values = {"HIGH": ["8", "9", "10"], "NEUTRAL": ["5", "6", "7"], "LOW": ["1", "2", "3", "4"]}
+    for idx, row in enumerate(rows):
+        row["is_fault_claim"] = "Y" if fault.get(idx) == "YES" else "N"
+        row["claim_satisfaction_score"] = random.choice(score_values[satisfaction.get(idx, "NEUTRAL")])
 
 
 def _apply_mlops_columns(tables: dict[str, list[dict]], ctx: dict) -> None:
@@ -589,6 +756,8 @@ def _apply_mlops_columns(tables: dict[str, list[dict]], ctx: dict) -> None:
     policy_by_hk = {row.get("policy_hash_key"): row for row in tables.get("sat_policy", []) if row.get("policy_hash_key")}
     for row in policy_by_hk.values():
         row.update(_policy_payment_profile(row))
+    _apply_mlops_policy_churn_calibration(list(policy_by_hk.values()))
+    _apply_mlops_claim_churn_calibration(tables, policy_by_hk)
 
     churn_by_person = {}
     for policy_hk, person_hk in policy_person_by_policy.items():
@@ -619,6 +788,7 @@ def _apply_mlops_columns(tables: dict[str, list[dict]], ctx: dict) -> None:
             "average_call_sentiment": sentiment,
             "engagement_score": str(max(0, min(100, score))),
         })
+    _apply_mlops_marketing_churn_calibration(tables.get("sat_marketing_engagement", []), men_person, churn_by_person)
 
 
 def _id_from_hub(row: dict, id_col: str) -> str:
@@ -1129,7 +1299,7 @@ def _add_enhanced_entities(tables: dict[str, list[dict]], ctx: dict, cfg: dict |
                 ))
 
     claim_examples = _read_example("DimClaim.csv")
-    claim_pool = active_policy_hks or policy_hks
+    claim_pool = policy_hks
     claim_count = min(len(claim_pool), max(1, int(len(claim_pool) * float(settings["claim_policy_rate"])))) if claim_pool else 0
     selected_policies = rng.sample(claim_pool, claim_count) if claim_count else []
     for idx, policy_hk in enumerate(selected_policies):

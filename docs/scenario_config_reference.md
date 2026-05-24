@@ -395,6 +395,25 @@ Controls status split for churned policies not forced by account closure.
 
 For policies with less than one completed cycle, churn is represented as `CANCELLED` because `LAPSED` requires a completed renewal cycle.
 
+### mlops_churn_expected_ranges
+
+Validator target ranges for the MLOps-only churn KPIs that became coverable with the new MLOps DDL.
+
+These ranges are used by `misc/verify_mlops_churn_kpis.py`; they do not change base or enhanced schemas.
+
+- `auto_renew_enabled`: ON `5-12%`, OFF `35-55%`
+- `fault_claim`: NO `12-20%`, YES `30-50%`
+- `ncd_years`: `0_1` `25-40%`, `2_4` `18-30%`, `5_8` `15-25%`, `9_PLUS` `10-18%`
+- `payment_method`: ANNUAL `8-15%`, MONTHLY_DD `15-25%`, CARD_MANUAL `25-40%`
+- `direct_debit_cancellation`: NO `10-18%`, YES `55-75%`
+- `missed_payments`: `0` `10-18%`, `1` `25-35%`, `2` `40-55%`, `3_PLUS` `60-75%`
+- `retention_contacted`: NO `12-22%`, YES `35-55%`
+- `claim_satisfaction`: HIGH `8-15%`, NEUTRAL `18-30%`, LOW `40-65%`
+- `loyalty_discount`: RETAINED `8-18%`, NOT_APPLIED `18-30%`, REMOVED `40-60%`
+- `installment_default`: NO `10-18%`, YES `50-75%`
+- `call_sentiment`: POSITIVE `8-15%`, NEUTRAL `18-30%`, NEGATIVE `40-65%`
+- `engagement_score`: HIGH `8-15%`, MEDIUM `18-30%`, LOW `35-55%`, VERY_LOW `50-70%`
+
 ## lifecycle_mode
 
 - `initial_then_convert`: Current lifecycle mode. The generator creates an initial lifecycle population and then converts eligible leads through quote, policy, customer, and account stages.

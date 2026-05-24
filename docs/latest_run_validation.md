@@ -1,144 +1,120 @@
 # Latest Run Validation
 
-Run validated: `20260524132817`
+Run validated: `20260524214157`
 
-Base folder: `data/synthetic/base/20260524132817`
+Base folder: `data/synthetic/base/20260524214157`
 
-Enhanced folder: `data/synthetic/enhanced/20260524132817`
+Enhanced folder: `data/synthetic/enhanced/20260524214157`
 
-MLOps folder: `data/synthetic/mlops/20260524132817`
+MLOps folder: `data/synthetic/mlops/20260524214157`
 
 ## Summary
 
-- Base structural, relationship, account, and timeline rules: pass.
-- Enhanced structural, primary-key, and foreign-key rules: pass.
-- MLOps Data Vault schema and MLOps-only column rules: pass.
-- SCD2 validation: not run because `data/scd2` has no CSV files.
-- Enhanced claim financial checks: pass.
-- Churn workbook ratio checks: 6 rule groups still fail, mostly by small margins.
+| Area | Expected | Current | Status |
+|---|---|---|---|
+| Base churn KPI source fields | Required fields populated and valid | Source-field checks passed | Pass |
+| Base churn workbook ratios | Directional and within workbook ranges | Directional, with 6 close-boundary failures | Partial |
+| Enhanced synthetic Data Vault | 80 tables, valid schema, PK/FK, business rules | Enhanced validator passed | Pass |
+| MLOps synthetic Data Vault | MLOps DDL schema and new columns valid | MLOps schema validator passed | Pass |
+| MLOps churn workbook ratios | New MLOps KPI ratios within workbook ranges | 9 ratio issues | Partial |
+| Enhanced claim financials | Non-null, non-negative, paid amount not above claim amount | Financial checks passed | Pass |
+| SCD2 | Created only when prior comparable history exists | No latest SCD2 run folder found | Not available |
+| Raw/canonical/silver outputs | Optional | Skipped by default; use `--include-raw-silver` when needed | Skipped |
 
-## Configured Distribution Ratios
+## Base Churn Ratios
 
-These ratios compare configured source/input distribution weights with the latest generated current ratios.
-
-| Rule | Band | Expected ratio | Current ratio | Current rows |
-|---|---:|---:|---:|---:|
-| Current premium source mix | LOW | 35.00% | 33.94% | 857 |
-| Current premium source mix | MEDIUM | 35.00% | 35.96% | 908 |
-| Current premium source mix | HIGH | 20.00% | 19.60% | 495 |
-| Current premium source mix | VERY_HIGH | 10.00% | 10.50% | 265 |
-| Renewal movement source mix | DECREASE | 10.00% | 10.97% | 277 |
-| Renewal movement source mix | 0_5 | 18.00% | 18.34% | 463 |
-| Renewal movement source mix | 5_10 | 30.00% | 28.59% | 722 |
-| Renewal movement source mix | GT_10 | 42.00% | 42.10% | 1063 |
-| Claim count source mix | 0 | workbook band | 19.33% | 488 |
-| Claim count source mix | 1 | workbook band | 24.24% | 612 |
-| Claim count source mix | 2 | workbook band | 24.44% | 617 |
-| Claim count source mix | 3+ | workbook band | 32.00% | 808 |
-| Add-on source mix | BASE_ONLY | 35.00% | 35.80% | 904 |
-| Add-on source mix | ONE_ADD_ON | 30.00% | 28.95% | 731 |
-| Add-on source mix | TWO_ADD_ONS | 22.00% | 21.54% | 544 |
-| Add-on source mix | THREE_PLUS_ADD_ONS | 13.00% | 13.70% | 346 |
-| Marketing engagement source mix | HIGH | 15.00% | 8.72% | 218 |
-| Marketing engagement source mix | MEDIUM | 30.00% | 29.04% | 726 |
-| Marketing engagement source mix | LOW | 35.00% | 33.52% | 838 |
-| Marketing engagement source mix | NONE | 20.00% | 28.72% | 718 |
-| Driver experience source mix | LT_2Y | 12.00% | 12.26% | 981 |
-| Driver experience source mix | Y2_5 | 20.00% | 20.85% | 1668 |
-| Driver experience source mix | Y6_10 | 25.00% | 25.00% | 2000 |
-| Driver experience source mix | GT_10 | 43.00% | 41.89% | 3351 |
-| Vehicle segment source mix | STANDARD | 65.00% | 66.02% | 579 |
-| Vehicle segment source mix | PREMIUM | 25.00% | 22.46% | 197 |
-| Vehicle segment source mix | HIGH_RISK | 10.00% | 11.52% | 101 |
-| Service call proxy source mix | NONE | 45.00% | 43.76% | 1094 |
-| Service call proxy source mix | CALL | 55.00% | 56.24% | 1406 |
-
-## Churn Ratios
-
-These ratios compare configured workbook churn ranges with the latest generated churned-policy ratios.
-
-| Rule | Band | Expected | Current | Status |
+| Rule | Band | Expected churn | Current churn | Status |
 |---|---:|---:|---:|---|
-| Current premium | LOW | 10-18% | 20.07% | Fail |
-| Current premium | MEDIUM | 15-25% | 27.09% | Fail |
-| Current premium | HIGH | 25-40% | 40.81% | Fail |
-| Current premium | VERY_HIGH | 40-55% | 55.09% | Fail |
-| Premium % increase | <0% | 8-12% | 10.47% | Pass |
-| Premium % increase | 0-5% | 15-20% | 16.41% | Pass |
-| Premium % increase | 5-10% | 25-35% | 25.76% | Pass |
-| Premium % increase | >10% | 45-65% | 44.68% | Fail |
-| Absolute premium increase | <=0 | 8-12% | 10.47% | Pass |
-| Absolute premium increase | 1-50 | 15-22% | 16.94% | Pass |
-| Absolute premium increase | 51-100 | 25-38% | 29.93% | Pass |
-| Absolute premium increase | >100 | 45-65% | 48.50% | Pass |
-| Claim count | 0 | 12-18% | 15.57% | Pass |
-| Claim count | 1 | 20-30% | 21.24% | Pass |
-| Claim count | 2 | 30-45% | 32.09% | Pass |
-| Claim count | 3+ | 45-60% | 44.80% | Fail |
-| Add-ons | 0 | 25-40% | 40.93% | Fail |
-| Add-ons | 1 | 18-28% | 28.73% | Fail |
-| Add-ons | 2 | 12-22% | 22.61% | Fail |
-| Add-ons | 3+ | 8-18% | 18.21% | Fail |
-| Tenure | <1 year | 35-50% | 40.63% | Pass |
-| Tenure | 1-2 years | 25-35% | 29.71% | Pass |
-| Tenure | 3-5 years | 15-25% | 23.04% | Pass |
-| Tenure | >5 years | 8-15% | 14.91% | Pass |
-| Marketing engagement | HIGH | 8-15% | 7.66% | Fail |
-| Marketing engagement | MEDIUM | 18-30% | 16.15% | Fail |
-| Marketing engagement | LOW | 35-55% | 32.49% | Fail |
-| Marketing engagement | NONE | 50-70% | 47.65% | Fail |
-| Driver experience | <2y | 25-40% | 33.64% | Pass |
-| Driver experience | 2-5y | 18-30% | 27.89% | Pass |
-| Driver experience | 6-10y | 15-25% | 24.90% | Pass |
+| Current premium | LOW | 10-18% | 20.11% | Fail |
+| Current premium | MEDIUM | 15-25% | 26.84% | Fail |
+| Current premium | HIGH | 25-40% | 40.64% | Fail |
+| Current premium | VERY_HIGH | 40-55% | 54.72% | Pass |
+| Premium % increase | <0% | 8-12% | 9.70% | Pass |
+| Premium % increase | 0-5% | 15-20% | 15.32% | Pass |
+| Premium % increase | 5-10% | 25-35% | 25.03% | Pass |
+| Premium % increase | >10% | 45-65% | 44.29% | Fail |
+| Absolute premium increase | <=0 | 8-12% | 9.70% | Pass |
+| Absolute premium increase | 1-50 | 15-22% | 16.10% | Pass |
+| Absolute premium increase | 51-100 | 25-38% | 30.08% | Pass |
+| Absolute premium increase | >100 | 45-65% | 48.24% | Pass |
+| Claim count | 0 | 12-18% | 13.96% | Pass |
+| Claim count | 1 | 20-30% | 21.05% | Pass |
+| Claim count | 2 | 30-45% | 31.70% | Pass |
+| Claim count | 3+ | 45-60% | 44.82% | Fail |
+| Add-ons | 0 | 25-40% | 40.69% | Fail |
+| Add-ons | 1 | 18-28% | 28.85% | Fail |
+| Add-ons | 2 | 12-22% | 22.54% | Fail |
+| Add-ons | 3+ | 8-18% | 18.27% | Fail |
+| Tenure | <1 year | 35-50% | 39.19% | Pass |
+| Tenure | 1-2 years | 25-35% | 30.16% | Pass |
+| Tenure | 3-5 years | 15-25% | 21.74% | Pass |
+| Tenure | >5 years | 8-15% | 13.94% | Pass |
+| Marketing engagement | HIGH | 8-15% | 7.73% | Fail |
+| Marketing engagement | MEDIUM | 18-30% | 16.46% | Fail |
+| Marketing engagement | LOW | 35-55% | 32.79% | Fail |
+| Marketing engagement | NONE | 50-70% | 48.17% | Fail |
+| Driver experience | <2y | 25-40% | 33.11% | Pass |
+| Driver experience | 2-5y | 18-30% | 26.86% | Pass |
+| Driver experience | 6-10y | 15-25% | 25.00% | Pass |
 | Driver experience | >10y | 10-18% | 18.24% | Fail |
-| Vehicle segment | STANDARD | 12-22% | 20.74% | Pass |
-| Vehicle segment | PREMIUM | 20-35% | 27.66% | Pass |
-| Vehicle segment | HIGH_RISK | 30-50% | 40.10% | Pass |
+| Sales channel variance | AGENT > BRANCH/ONLINE, no workbook target | AGENT 48.16%, BRANCH 27.85%, ONLINE 21.64% | Pass |
 
-Sales-channel churn variance passes:
+## Enhanced And Claim Rules
 
-| Channel | Current churn |
-|---|---:|
-| AGENT | 48.17% |
-| BRANCH | 29.13% |
-| ONLINE | 21.09% |
+| Rule | Expected | Current | Status |
+|---|---|---|---|
+| Enhanced table count | 80 tables | 80 tables | Pass |
+| Enhanced group count | 25 hubs, 30 links, 25 sats | 25 hubs, 30 links, 25 sats | Pass |
+| Enhanced schema order | Matches enhanced DDL | All table columns ok | Pass |
+| Enhanced primary keys | Unique and present | All PK checks ok | Pass |
+| Enhanced foreign keys | Child keys resolve to parent hubs | All FK checks ok | Pass |
+| Enhanced business rules | Date, claim, vehicle, and relationship checks | Enhanced validator passed | Pass |
+| Enhanced claim rows | Generated claims linked to policy coverage | Validated | Pass |
+| Claim amount logic | Amounts derived from configured severity/coverage rules | Claim financial checks passed | Pass |
 
-## Claim Financial Checks
+## MLOps Churn Ratios
 
-Enhanced `sat_claim.csv` has `140` rows.
-
-| Check | Result |
-|---|---|
-| Null claim amounts | 0 |
-| Zero claim amounts | 0 |
-| Negative claim amounts | 0 |
-| `claims_paid > claim_amount` | 0 |
-| Negative reserves | 0 |
-| Null reserves | 0 |
-| Negative expenses | 0 |
-| Null expenses | 0 |
-
-Claim band distribution:
-
-| Claim band | Rows |
-|---|---:|
-| 6k-8k | 24 |
-| 8k-10k | 28 |
-| 10k-13k | 16 |
-| 13+ | 72 |
-
-Claim band sort distribution:
-
-| Claim band sort | Rows |
-|---:|---:|
-| 2 | 24 |
-| 3 | 28 |
-| 4 | 16 |
-| 5 | 72 |
+| Rule | Band | Expected churn | Current churn | Status |
+|---|---:|---:|---:|---|
+| Auto-renew enabled | ON | 5-12% | 8.01% | Pass |
+| Auto-renew enabled | OFF | 35-55% | 48.31% | Pass |
+| NCD years | 0-1 | 25-40% | 34.49% | Pass |
+| NCD years | 2-4 | 18-30% | 23.93% | Pass |
+| NCD years | 5-8 | 15-25% | 19.21% | Pass |
+| NCD years | 9+ | 10-18% | 14.47% | Pass |
+| Payment method | Annual | 8-15% | 4.12% | Fail |
+| Payment method | Monthly DD | 15-25% | 37.14% | Fail |
+| Payment method | Card/Manual | 25-40% | 55.52% | Fail |
+| Direct debit cancellation | No | 10-18% | 17.99% | Pass |
+| Direct debit cancellation | Yes | 55-75% | 61.53% | Pass |
+| Missed payments | 0 | 10-18% | 6.68% | Fail |
+| Missed payments | 1 | 25-35% | 25.63% | Pass |
+| Missed payments | 2 | 40-55% | 59.90% | Fail |
+| Missed payments | 3+ | 60-75% | 67.35% | Pass |
+| Loyalty discount | Retained | 8-18% | 13.96% | Pass |
+| Loyalty discount | Not Applied | 18-30% | 26.95% | Pass |
+| Loyalty discount | Removed | 40-60% | 66.37% | Fail |
+| Installment default | No | 10-18% | 16.01% | Pass |
+| Installment default | Yes | 50-75% | 63.28% | Pass |
+| Fault claim | No | 12-20% | 16.31% | Pass |
+| Fault claim | Yes | 30-50% | 55.74% | Fail |
+| Claim satisfaction | High | 8-15% | 11.48% | Pass |
+| Claim satisfaction | Neutral | 18-30% | 24.18% | Pass |
+| Claim satisfaction | Low | 40-65% | 56.00% | Pass |
+| Retention contacted | No | 12-22% | 15.11% | Pass |
+| Retention contacted | Yes | 35-55% | 48.03% | Pass |
+| Call sentiment | Positive | 8-15% | 8.94% | Pass |
+| Call sentiment | Neutral | 18-30% | 29.34% | Pass |
+| Call sentiment | Negative | 40-65% | 52.39% | Pass |
+| Engagement score | High | 8-15% | 0.00% | Fail |
+| Engagement score | Medium | 18-30% | 8.44% | Fail |
+| Engagement score | Low | 35-55% | 48.32% | Pass |
+| Engagement score | Very Low | 50-70% | 56.88% | Pass |
 
 ## Notes
 
-- Base and enhanced churn ratios are the same for shared policy-driven dimensions.
-- MLOps validation passes for the latest run and uses `data/synthetic/mlops/<run_id>`.
-- Vehicle segment churn can only be fully validated where enhanced direct policy-to-motor links exist.
-- SCD2 output was not available in this run, so SCD2 rules were not validated.
+- Enhanced and MLOps schema/business validation pass on this run.
+- Claim satisfaction is present and passes all workbook ranges.
+- Base churn rules are directionally aligned, but a few bands are outside the workbook range by small margins.
+- MLOps churn has 9 ratio issues. The remaining misses are mostly coupled fields: payment method with direct-debit cancellation, missed payments with installment/default behavior, removed loyalty discount, fault-claim yes, and high/medium engagement score.
+- Default `main.py` generation now focuses on synthetic, enhanced, MLOps, and SCD2 outputs. Raw/canonical/silver and `new_outputs_src` are opt-in because they add significant runtime.

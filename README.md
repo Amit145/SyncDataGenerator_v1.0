@@ -1,6 +1,6 @@
 # SyncDataGenerator
 
-This repo generates synthetic insurance data across multiple raw sources, maps selected sources into a common raw contract, builds vault-compatible silver tables, and creates SCD2 outputs.
+This repo generates synthetic insurance Data Vault outputs for base, enhanced, and MLOps use cases. Raw, canonical, and silver source outputs are still available, but they are optional because they add significant runtime.
 
 ## Current Outputs
 
@@ -9,15 +9,13 @@ Default `main.py` output:
 - base Data Vault CSVs under `data/output/<run_id>`
 - normalized synthetic base under `data/synthetic/base/<run_id>`
 - enhanced 360 under `data/synthetic/enhanced/<run_id>`
-- raw CRM/API/claims/data_source outputs
-- canonical raw for CRM and data_source
-- API silver under `data/silver/api/<run_id>`
-- raw CRM/API SCD2 when prior raw batches exist
-- base/enhanced SCD2 when prior synthetic runs exist
+- MLOps synthetic Data Vault under `data/synthetic/mlops/<run_id>`
+- base/enhanced/MLOps SCD2 when prior synthetic runs exist
 
 Optional output:
 
-- `data/new_outputs_src/<source>/data/<run_id>` and `data/new_outputs_src/<source>/scd2/<run_id>` are generated only when `--include-new-outputs-src` is passed.
+- raw CRM/API/claims/data_source, canonical raw, API silver, and raw SCD2 are generated only when `--include-raw-silver` is passed.
+- `data/new_outputs_src/<source>/data/<run_id>` and `data/new_outputs_src/<source>/scd2/<run_id>` are generated only when `--include-raw-silver --include-new-outputs-src` is passed.
 
 ## Sources
 
@@ -45,10 +43,16 @@ Run normal generation:
 .\venv\Scripts\python.exe .\main.py
 ```
 
+Run normal generation plus optional raw/canonical/silver outputs:
+
+```powershell
+.\venv\Scripts\python.exe .\main.py --include-raw-silver
+```
+
 Run normal generation plus optional source-specific outputs:
 
 ```powershell
-.\venv\Scripts\python.exe .\main.py --include-new-outputs-src
+.\venv\Scripts\python.exe .\main.py --include-raw-silver --include-new-outputs-src
 ```
 
 Transform latest raw sources to silver:
@@ -84,6 +88,8 @@ The current detailed rule set for base, raw, silver, enhanced, churn, and SCD2 o
 The latest generated-run validation summary, including expected vs current churn ratios, is documented in [docs/latest_run_validation.md](F:/SyncDataGenerator_v1.0/docs/latest_run_validation.md).
 
 The new MLOps Data Vault output is written under `data/synthetic/mlops/<run_id>`, with SCD2 deltas under `data/scd2/mlops/<run_id>` when a prior MLOps run exists. The DDL schema review, column delta, and validation command are documented in [docs/mlops_gen_schema_review.md](F:/SyncDataGenerator_v1.0/docs/mlops_gen_schema_review.md).
+
+MLOps-only churn KPI ratios from the workbook are validated with `misc/verify_mlops_churn_kpis.py`.
 
 Enhanced claim financials are configurable through `claim_financial_settings`. They populate enhanced `sat_claim` amount, paid, reserve, expense, recovery/fraud/legal financials, `claim_band`, and `claim_band_sort`.
 
@@ -146,11 +152,17 @@ Policy date rules are validated in base and silver checks:
 
 ## Output Folders
 
-Main normalized output:
+Base working output:
 
 - `data/output/<run_id>`
 
-Raw folders:
+Synthetic folders:
+
+- `data/synthetic/base/<run_id>`
+- `data/synthetic/enhanced/<run_id>`
+- `data/synthetic/mlops/<run_id>`
+
+Optional raw folders, generated with `--include-raw-silver`:
 
 - `data/raw/crm/<run_id>`
 - `data/raw/crm_canonical/<run_id>`
@@ -161,36 +173,31 @@ Raw folders:
 - `data/raw/data_source/home/<run_id>`
 - `data/raw/data_source_canonical/<run_id>`
 
-Silver folders:
+Optional silver folders, generated with `--include-raw-silver` or follow-up silver tools:
 
 - `data/silver/rebuild/<run_id>` for CRM
 - `data/silver/api/<run_id>`
 - `data/silver/claims/<run_id>`
 - `data/silver/data_source/<run_id>`
 
-Synthetic folders:
-
-- `data/synthetic/base/<run_id>`
-- `data/synthetic/enhanced/<run_id>`
-
 SCD2 folders:
 
 - `data/scd2/base/<run_id>`
 - `data/scd2/enhanced/<run_id>`
-- `data/scd2/raw/crm/<run_id>`
-- `data/scd2/raw/api/<run_id>`
-- optional `data/new_outputs_src/<source>/scd2/<run_id>`
+- `data/scd2/mlops/<run_id>`
+- optional `data/scd2/raw/crm/<run_id>` and `data/scd2/raw/api/<run_id>` with `--include-raw-silver`
+- optional `data/new_outputs_src/<source>/scd2/<run_id>` with `--include-raw-silver --include-new-outputs-src`
 
 ## SCD2 Coverage
 
-Synthetic base/enhanced SCD2 uses sampled satellite mutations.
+Synthetic base/enhanced/MLOps SCD2 uses sampled satellite mutations.
 
 Raw SCD2 currently covers:
 
 - `crm`
 - `api`
 
-Optional source-specific SCD2 covers `new_outputs_src` only when `--include-new-outputs-src` is used.
+Optional source-specific SCD2 covers `new_outputs_src` only when `--include-raw-silver --include-new-outputs-src` is used.
 
 ## Large Runs
 
@@ -200,4 +207,4 @@ For large base-only generation:
 .\venv\Scripts\python.exe .\main.py --streaming-base --total-people 10000000 --chunk-size 100000
 ```
 
-The streaming path is intended for large unique base output. Full raw/silver/churn/SCD2 validation is still intended for the normal full workflow.
+The streaming path is intended for large unique base output. Raw/silver validation requires `--include-raw-silver`; the default normal workflow focuses on synthetic base, enhanced, MLOps, churn, and synthetic SCD2.

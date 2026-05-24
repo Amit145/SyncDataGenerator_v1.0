@@ -112,12 +112,19 @@ parser.add_argument(
     help="Skip streaming normalization into data/synthetic/base for --streaming-base mode.",
 )
 parser.add_argument(
+    "--include-raw-silver",
+    action="store_true",
+    help="Generate raw, canonical, silver API, and raw SCD2 outputs. Skipped by default for faster synthetic-only runs.",
+)
+parser.add_argument(
     "--include-new-outputs-src",
     action="store_true",
-    help="Generate data/new_outputs_src outputs and SCD2 deltas. Skipped by default to keep normal runs faster.",
+    help="Generate data/new_outputs_src outputs and SCD2 deltas. Requires --include-raw-silver.",
 )
 args = parser.parse_args()
 enhanced_only = args.enhanced_only
+include_raw_silver = args.include_raw_silver
+include_new_outputs_src = include_raw_silver and args.include_new_outputs_src
 
 # ---------------- Inputs ----------------
 BUSINESS_START_DATE = "2020-01-01"
@@ -697,7 +704,9 @@ base_context = {
     "sat_product_rows": sat_prod,
     "extract_ts": extract_ts,
 }
-if not enhanced_only:
+# Raw/canonical/silver outputs are optional because they are expensive and not
+# needed for the normal synthetic + SCD2 MLOps workflow.
+if include_raw_silver and not enhanced_only:
     raw_out = write_raw_crm_batch(RAW_BASE, folder_run_id, base_context)
     generated_crm_canonical = map_crm_raw_to_canonical(folder_run_id, raw_out)
 
@@ -744,7 +753,7 @@ if not enhanced_only:
     generated_data_source_raw = generate_data_source_raw(folder_run_id, ctx=data_source_ctx)
     generated_data_source_canonical = map_data_source_to_canonical(folder_run_id, generated_data_source_raw)
     generated_raw_scd2 = generate_raw_scd2(folder_run_id, crm_raw_dir=raw_out, api_raw_dir=raw_api_out)
-    if args.include_new_outputs_src:
+    if include_new_outputs_src:
         generated_new_outputs_src = generate_new_outputs_src(
             run_id=folder_run_id,
             cfg=cfg,
@@ -762,6 +771,17 @@ if not enhanced_only:
         generated_new_outputs_src_scd2 = []
     synthetic_data_api = os.path.join(SYNTHETIC_DATA_API, folder_run_id)
     build_api_silver(raw_api_out, synthetic_data_api)
+else:
+    raw_out = None
+    generated_crm_canonical = None
+    raw_api_out = None
+    raw_claims_out = None
+    generated_data_source_raw = {}
+    generated_data_source_canonical = None
+    generated_raw_scd2 = []
+    generated_new_outputs_src = {}
+    generated_new_outputs_src_scd2 = []
+    synthetic_data_api = None
 enhanced_synthetic = os.path.join(SYNTHETIC_ENHANCED_ROOT, folder_run_id)
 build_enhanced_synthetic(base_context, enhanced_synthetic, cfg=cfg)
 mlops_synthetic = os.path.join(MLOPS_ROOT, folder_run_id)
@@ -797,23 +817,26 @@ assert_unique(hub_quo_rows, "Quote Hash Key")
 print("Basic PK validation OK")
 if not enhanced_only:
     print("DONE:", out)
-    print("RAW CRM:", raw_out)
-    print("RAW CRM CANONICAL:", generated_crm_canonical)
-    print("RAW API:", raw_api_out)
-    print("RAW CLAIMS:", raw_claims_out)
-    for domain_name in sorted(generated_data_source_raw):
-        print(f"RAW DATA_SOURCE {domain_name.upper()}:", generated_data_source_raw[domain_name])
-    print("RAW DATA_SOURCE CANONICAL:", generated_data_source_canonical)
-    if generated_new_outputs_src:
-        for source_name in sorted(generated_new_outputs_src):
-            print(f"NEW OUTPUT SRC {source_name.upper()}:", generated_new_outputs_src[source_name]["data_dir"])
+    if include_raw_silver:
+        print("RAW CRM:", raw_out)
+        print("RAW CRM CANONICAL:", generated_crm_canonical)
+        print("RAW API:", raw_api_out)
+        print("RAW CLAIMS:", raw_claims_out)
+        for domain_name in sorted(generated_data_source_raw):
+            print(f"RAW DATA_SOURCE {domain_name.upper()}:", generated_data_source_raw[domain_name])
+        print("RAW DATA_SOURCE CANONICAL:", generated_data_source_canonical)
+        if generated_new_outputs_src:
+            for source_name in sorted(generated_new_outputs_src):
+                print(f"NEW OUTPUT SRC {source_name.upper()}:", generated_new_outputs_src[source_name]["data_dir"])
+        else:
+            print("NEW OUTPUT SRC: skipped (use --include-raw-silver --include-new-outputs-src to generate)")
+        for raw_scd2_summary in generated_raw_scd2:
+            print("RAW SCD2:", raw_scd2_summary["output_dir"])
+        for scd2_summary in generated_new_outputs_src_scd2:
+            print(f"NEW OUTPUT SRC SCD2 {scd2_summary['source_label'].upper()}:", scd2_summary["output_dir"])
+        print("SILVER API:", synthetic_data_api)
     else:
-        print("NEW OUTPUT SRC: skipped (use --include-new-outputs-src to generate)")
-    for raw_scd2_summary in generated_raw_scd2:
-        print("RAW SCD2:", raw_scd2_summary["output_dir"])
-    for scd2_summary in generated_new_outputs_src_scd2:
-        print(f"NEW OUTPUT SRC SCD2 {scd2_summary['source_label'].upper()}:", scd2_summary["output_dir"])
-    print("SILVER API:", synthetic_data_api)
+        print("RAW/CANONICAL/SILVER: skipped (use --include-raw-silver to generate)")
 print("SYNTHETIC ENHANCED:", enhanced_synthetic)
 print("MLOPS:", mlops_synthetic)
 if previous_enhanced_run:
@@ -829,6 +852,7 @@ if not enhanced_only:
             print("Data is valid and maintains Referential Integrity. Data can be loaded")
             synthetic_data = os.path.join(SYNTHETIC_DATA, folder_run_id)
             normalize_csv(out, synthetic_data)
+            print("SYNTHETIC BASE:", synthetic_data)
 
             if prev_run_path:
                 scd2_input = SYNTHETIC_DATA

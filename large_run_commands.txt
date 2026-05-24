@@ -10,24 +10,30 @@ Detailed current rules are documented in docs/current_rules_reference.md.
 Scenario config meanings are documented in docs/scenario_config_reference.md.
 
 
-Example A: normal full base load, full rule validation, SCD2 generation, SCD2 validation
----------------------------------------------------------------------------------------
+Example A: normal synthetic base load, rule validation, SCD2 generation, SCD2 validation
+--------------------------------------------------------------------------------------
 
 Run #1 creates the first base load:
 
   .\venv\Scripts\python.exe .\main.py
 
-By default, this skips data/new_outputs_src generation to keep runs faster.
-It still creates base output, synthetic/base, raw CRM/API/claims/data_source, enhanced synthetic, and SCD2 where prior runs exist.
+By default, this skips raw/canonical/silver and data/new_outputs_src generation to keep runs faster.
+It creates base output, synthetic/base, synthetic/enhanced, synthetic/mlops, and synthetic SCD2 where prior runs exist.
 
-To include the skipped optional outputs:
+To include raw/canonical/silver outputs:
 
-  .\venv\Scripts\python.exe .\main.py --include-new-outputs-src
+  .\venv\Scripts\python.exe .\main.py --include-raw-silver
+
+To include raw/canonical/silver plus new_outputs_src:
+
+  .\venv\Scripts\python.exe .\main.py --include-raw-silver --include-new-outputs-src
 
 Validate all rules and churn rules for Run #1:
 
-  .\venv\Scripts\python.exe .\misc\transform_all_raw_to_silver.py
-  .\venv\Scripts\python.exe .\misc\verify_all_silver.py
+  .\venv\Scripts\python.exe .\validate_churn_kpis.py
+  .\venv\Scripts\python.exe .\misc\verify_enhanced_synthetic.py
+  .\venv\Scripts\python.exe .\misc\verify_mlops_synthetic.py
+  .\venv\Scripts\python.exe .\misc\verify_mlops_churn_kpis.py
 
 Run #2 creates the next base load and generates SCD2 outputs by comparing against Run #1:
 
@@ -35,8 +41,10 @@ Run #2 creates the next base load and generates SCD2 outputs by comparing agains
 
 Validate all rules and churn rules for Run #2:
 
-  .\venv\Scripts\python.exe .\misc\transform_all_raw_to_silver.py
-  .\venv\Scripts\python.exe .\misc\verify_all_silver.py
+  .\venv\Scripts\python.exe .\validate_churn_kpis.py
+  .\venv\Scripts\python.exe .\misc\verify_enhanced_synthetic.py
+  .\venv\Scripts\python.exe .\misc\verify_mlops_synthetic.py
+  .\venv\Scripts\python.exe .\misc\verify_mlops_churn_kpis.py
 
 Validate SCD2 deltas:
 
@@ -53,7 +61,7 @@ main.py checks base output:
   - policy date rules
   - lead-to-policy timeline rules
 
-verify_all_silver.py checks full silver rules:
+verify_all_silver.py checks full silver rules only when raw/silver outputs were generated with --include-raw-silver:
 
   - relationship and uniqueness rules
   - person/contact/identity/address rules
@@ -75,8 +83,10 @@ Each config key is explained in docs/scenario_config_reference.md.
 
 compare_all_scd2.py checks SCD2:
 
-  - source raw SCD2 deltas
   - synthetic base SCD2 deltas
+  - synthetic enhanced SCD2 deltas
+  - synthetic MLOps SCD2 deltas
+  - source raw SCD2 deltas when --include-raw-silver was used
   - changed rows
   - changed columns per file
   - whether only expected SCD2 mutation columns changed
@@ -111,4 +121,4 @@ Or validate a specific base run folder:
 
   .\venv\Scripts\python.exe .\validate_churn_kpis.py --path .\data\synthetic\base\<run_id>
 
-Note: full raw/silver/churn/SCD2 validation at 10M is not streaming-safe yet. Use Example A for the complete full-rule and SCD2 workflow.
+Note: full raw/silver validation at 10M is not streaming-safe yet. Use Example A for the complete synthetic and SCD2 workflow.

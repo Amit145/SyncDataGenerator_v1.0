@@ -8,19 +8,17 @@ For the latest generated-run validation results and expected-vs-current churn ra
 
 ## Output Scope
 
-Default `main.py` generation creates:
+Default `main.py` generation creates the synthetic workflow only:
 
 - base vault output under `data/output/<run_id>`
 - normalized synthetic base output under `data/synthetic/base/<run_id>`
-- raw source extracts for `crm`, `api`, `claims`, and `data_source`
-- canonical raw outputs such as `data/raw/crm_canonical/<run_id>`, `data/raw/claims_canonical/<run_id>`, and `data/raw/data_source_canonical/<run_id>`
-- silver vault rebuilds under source folders such as `data/silver/api/<run_id>`, `data/silver/claims/<run_id>`, and `data/silver/data_source/<run_id>`
 - enhanced synthetic output under `data/synthetic/enhanced/<run_id>`
 - MLOps synthetic output under `data/synthetic/mlops/<run_id>`
-- raw SCD2 outputs when prior raw CRM/API runs exist
 - synthetic base/enhanced/MLOps SCD2 outputs when prior synthetic history exists
 
-`new_outputs_src` is disabled by default. It is generated only when `--include-new-outputs-src` is passed.
+Raw, canonical, silver, and raw SCD2 outputs are disabled by default. Generate them only when needed with `--include-raw-silver`.
+
+`new_outputs_src` is also disabled by default. It is generated only when `--include-raw-silver --include-new-outputs-src` is passed.
 
 ## Scenario Rules
 
@@ -245,9 +243,13 @@ MLOps rules:
 - `sat_policy.payment_method` is one of `DIRECT_DEBIT`, `CARD`, or `BANK_TRANSFER`, with direct debit more common for stable policies.
 - `sat_policy.is_direct_debit_cancellation` can be `Y` only when `payment_method` is `DIRECT_DEBIT`, the policy is churned, and missed payments exist.
 - `sat_policy.missed_payment_count` is higher for churned or higher-risk policy context and lower for active/stable policies.
-- `sat_policy.loyalty_discount_usage` is more likely for non-churned policies with at least three completed cycles.
+- `sat_policy.loyalty_discount_usage` uses `RETAINED`, `NOT_APPLIED`, or `REMOVED`; retained is more common for stable policies, removed is more common for churned policies.
 - `sat_policy.is_installment_default` is `Y` when `missed_payment_count >= 2`.
 - MLOps schema and MLOps-only column rules are validated by `misc/verify_mlops_synthetic.py`.
+- MLOps churn KPI ratios are validated by `misc/verify_mlops_churn_kpis.py` against workbook ranges configured in `churn_settings.mlops_churn_expected_ranges`.
+- Newly coverable MLOps churn KPIs include auto-renew enabled, at-fault claim, NCD years, payment method, direct debit cancellation, missed payments, retention interaction, claim satisfaction, loyalty discount status, installment default, call sentiment, and engagement score.
+- `sat_policy.loyalty_discount_usage` uses workbook-aligned status values: `RETAINED`, `NOT_APPLIED`, and `REMOVED`.
+- Claim fault and claim satisfaction churn ratios are validated from linked claims. Claims may be linked to active, lapsed, or cancelled policies when the claim reported date remains within the policy coverage window.
 
 ## SCD2 Rules
 
@@ -274,13 +276,21 @@ First-run behavior:
 
 ## Validation Coverage
 
-Use this full normal-run validation flow:
+Use this normal synthetic-run validation flow:
 
 ```powershell
 .\venv\Scripts\python.exe .\main.py
 .\venv\Scripts\python.exe .\validate_churn_kpis.py
 .\venv\Scripts\python.exe .\misc\verify_enhanced_synthetic.py
 .\venv\Scripts\python.exe .\misc\verify_mlops_synthetic.py
+.\venv\Scripts\python.exe .\misc\verify_mlops_churn_kpis.py
+.\venv\Scripts\python.exe .\misc\compare_all_scd2.py
+```
+
+Use this optional raw/silver validation flow only when raw and silver outputs were generated:
+
+```powershell
+.\venv\Scripts\python.exe .\main.py --include-raw-silver
 .\venv\Scripts\python.exe .\misc\transform_all_raw_to_silver.py
 .\venv\Scripts\python.exe .\misc\verify_all_silver.py
 .\venv\Scripts\python.exe .\misc\compare_all_scd2.py
@@ -312,8 +322,10 @@ Use this full normal-run validation flow:
 
 `misc/verify_mlops_synthetic.py` checks the MLOps Data Vault DDL shape, required MLOps-only column population, boolean values, numeric ranges, corrected `suspected_amount` spelling, and direct-debit cancellation consistency.
 
+`misc/verify_mlops_churn_kpis.py` checks the MLOps-only churn KPI ratios enabled by the new DDL and scenario workbook ranges.
+
 ## Large-Run Note
 
-The normal `main.py` path remains the complete functional path for base, raw, silver, enhanced, churn validation, and SCD2.
+The normal `main.py` path is optimized for base synthetic, enhanced, MLOps, churn validation, and synthetic SCD2.
 
-Large unique base generation can be run through the streaming path, but full raw/silver/churn/SCD2 validation is still intended for the normal full workflow.
+Large unique base generation can be run through the streaming path. Raw/silver validation requires `--include-raw-silver`.

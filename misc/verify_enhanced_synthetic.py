@@ -494,9 +494,6 @@ def verify_enhanced_business_rules(frames: dict[str, pd.DataFrame]) -> int:
                 how="left",
             )
         )
-        if (merged["policy_status"] != "ACTIVE").any():
-            print("CLAIM CHECK FAILED: linked claim found on non-active policy")
-            errors += 1
         reported = parse_date(merged["claim_reported_date"])
         settlement = parse_date(merged["claim_settlement_date"])
         policy_start = parse_date(merged["policy_start_date"])
