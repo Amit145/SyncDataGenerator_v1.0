@@ -14,8 +14,15 @@ from config.runConfig import (
     SYNTHETIC_DATA,
     SYNTHETIC_DATA_API,
 )
-from config.storage_paths import SCD2_BASE_ROOT, SCD2_ENHANCED_ROOT, SYNTHETIC_ENHANCED_ROOT, ensure_data_roots
-from generators.enhanced_synthetic_generator import build_enhanced_synthetic
+from config.storage_paths import (
+    MLOPS_ROOT,
+    SCD2_BASE_ROOT,
+    SCD2_ENHANCED_ROOT,
+    SCD2_MLOPS_ROOT,
+    SYNTHETIC_ENHANCED_ROOT,
+    ensure_data_roots,
+)
+from generators.enhanced_synthetic_generator import build_enhanced_synthetic, build_mlops_synthetic
 from generators.transaction_generator import (
     hub_policy,
     hub_assets_from_policies,
@@ -757,12 +764,23 @@ if not enhanced_only:
     build_api_silver(raw_api_out, synthetic_data_api)
 enhanced_synthetic = os.path.join(SYNTHETIC_ENHANCED_ROOT, folder_run_id)
 build_enhanced_synthetic(base_context, enhanced_synthetic, cfg=cfg)
+mlops_synthetic = os.path.join(MLOPS_ROOT, folder_run_id)
+build_mlops_synthetic(base_context, mlops_synthetic, cfg=cfg)
 previous_enhanced_run = previous_subdir(SYNTHETIC_ENHANCED_ROOT, exclude_name=folder_run_id)
 if previous_enhanced_run:
     enhanced_scd2_output = os.path.join(SCD2_ENHANCED_ROOT, folder_run_id)
     create_scd_data(
         SYNTHETIC_ENHANCED_ROOT,
         enhanced_scd2_output,
+        SAT_DATE,
+        exclude_run_name=folder_run_id,
+    )
+previous_mlops_run = previous_subdir(MLOPS_ROOT, exclude_name=folder_run_id)
+if previous_mlops_run:
+    mlops_scd2_output = os.path.join(SCD2_MLOPS_ROOT, folder_run_id)
+    create_scd_data(
+        MLOPS_ROOT,
+        mlops_scd2_output,
         SAT_DATE,
         exclude_run_name=folder_run_id,
     )
@@ -797,8 +815,11 @@ if not enhanced_only:
         print(f"NEW OUTPUT SRC SCD2 {scd2_summary['source_label'].upper()}:", scd2_summary["output_dir"])
     print("SILVER API:", synthetic_data_api)
 print("SYNTHETIC ENHANCED:", enhanced_synthetic)
+print("MLOPS:", mlops_synthetic)
 if previous_enhanced_run:
     print("SCD2 ENHANCED:", enhanced_scd2_output)
+if previous_mlops_run:
+    print("SCD2 MLOPS:", mlops_scd2_output)
 
 if not enhanced_only:
     are_files_checked = check_file_and_cols(DDL_JSON_PATH, OUTPUT_BASE)

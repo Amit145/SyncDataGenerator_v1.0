@@ -1,6 +1,6 @@
 # Current Rules Reference
 
-This document describes the currently implemented generation and validation rules for the base synthetic vault, raw/source outputs, silver rebuilds, enhanced outputs, churn KPI fields, and SCD2 outputs.
+This document describes the currently implemented generation and validation rules for the base synthetic vault, raw/source outputs, silver rebuilds, enhanced outputs, MLOps outputs, churn KPI fields, and SCD2 outputs.
 
 For scenario configuration meanings, see [scenario_config_reference.md](F:/SyncDataGenerator_v1.0/docs/scenario_config_reference.md).
 
@@ -16,8 +16,9 @@ Default `main.py` generation creates:
 - canonical raw outputs such as `data/raw/crm_canonical/<run_id>`, `data/raw/claims_canonical/<run_id>`, and `data/raw/data_source_canonical/<run_id>`
 - silver vault rebuilds under source folders such as `data/silver/api/<run_id>`, `data/silver/claims/<run_id>`, and `data/silver/data_source/<run_id>`
 - enhanced synthetic output under `data/synthetic/enhanced/<run_id>`
+- MLOps synthetic output under `data/synthetic/mlops/<run_id>`
 - raw SCD2 outputs when prior raw CRM/API runs exist
-- synthetic base/enhanced SCD2 outputs when prior synthetic history exists
+- synthetic base/enhanced/MLOps SCD2 outputs when prior synthetic history exists
 
 `new_outputs_src` is disabled by default. It is generated only when `--include-new-outputs-src` is passed.
 
@@ -223,16 +224,41 @@ Enhanced rules:
 - `claim_band_sort` is the numeric ordering key for `claim_band`
 - some claim financial fields can validly remain zero when recovery, fraud, or litigation does not apply
 
+MLOps rules:
+
+- MLOps output is built from the same base context as enhanced output and is written under `data/synthetic/mlops/<run_id>`.
+- MLOps uses the DDL in `mlops/mlops_gen/Enhanced_Customer360_DataVault_Model_DDL.sql`.
+- MLOps preserves the same 80-table Data Vault structure as enhanced output, with additional MLOps-facing columns.
+- Base and enhanced DDLs are not changed to add these MLOps-only columns.
+- MLOps enrichment runs after base/enhanced entities are assembled, so policy, customer, account, claim, channel, churn, and product relationships remain inherited from the existing generation flow.
+- `sat_address.region` is derived from existing `state`, falling back to `city`.
+- `sat_claim.suspected_amount` is the corrected spelling for old enhanced `suspectd_amount`; it is nonnegative and capped at `claim_amount`.
+- `sat_claim.is_fault_claim` is derived from fraud, suspicious-claim, third-party, and third-party score indicators.
+- `sat_claim.claim_satisfaction_score` is a `1-10` score reduced by open/pending claim status, fraud/suspicion, litigation, fault, high claim amount, or outstanding reserve.
+- `sat_marketing_engagement.has_retention_team_interaction` is more likely for churned or low-engagement policy context.
+- `sat_marketing_engagement.customer_service_call_frequency` is higher for churned customers and lower for stable customers.
+- `sat_marketing_engagement.average_call_sentiment` is `NEGATIVE`, `NEUTRAL`, or `POSITIVE` based on service-call frequency and engagement score.
+- `sat_marketing_engagement.engagement_score` is a `0-100` score derived from opened-email, marketing status, and churn context.
+- `sat_motor.driver_experience_years` is derived from linked `sat_natural_person.birth_date` as `max(age - 17, 0)`.
+- `sat_policy.is_auto_renew_enabled` is more likely for active and longer-tenure policies, and less likely for churned policies.
+- `sat_policy.no_claims_discount_years` is derived from completed `policy_cycle`, reduced by claim pressure, and clipped to nonnegative years.
+- `sat_policy.payment_method` is one of `DIRECT_DEBIT`, `CARD`, or `BANK_TRANSFER`, with direct debit more common for stable policies.
+- `sat_policy.is_direct_debit_cancellation` can be `Y` only when `payment_method` is `DIRECT_DEBIT`, the policy is churned, and missed payments exist.
+- `sat_policy.missed_payment_count` is higher for churned or higher-risk policy context and lower for active/stable policies.
+- `sat_policy.loyalty_discount_usage` is more likely for non-churned policies with at least three completed cycles.
+- `sat_policy.is_installment_default` is `Y` when `missed_payment_count >= 2`.
+- MLOps schema and MLOps-only column rules are validated by `misc/verify_mlops_synthetic.py`.
+
 ## SCD2 Rules
 
 SCD2 outputs are generated only when prior comparable history exists.
 
-Synthetic base/enhanced SCD2:
+Synthetic base/enhanced/MLOps SCD2:
 
 - uses prior normalized synthetic history
 - samples about `10%` of eligible rows per configured satellite
 - mutates configured satellite attributes only
-- writes changed rows to `data/scd2/base/<run_id>` or `data/scd2/enhanced/<run_id>`
+- writes changed rows to `data/scd2/base/<run_id>`, `data/scd2/enhanced/<run_id>`, or `data/scd2/mlops/<run_id>`
 - preserves satellite schema compatibility
 - is a sampled synthetic change feed, not complete CDC
 
@@ -253,6 +279,8 @@ Use this full normal-run validation flow:
 ```powershell
 .\venv\Scripts\python.exe .\main.py
 .\venv\Scripts\python.exe .\validate_churn_kpis.py
+.\venv\Scripts\python.exe .\misc\verify_enhanced_synthetic.py
+.\venv\Scripts\python.exe .\misc\verify_mlops_synthetic.py
 .\venv\Scripts\python.exe .\misc\transform_all_raw_to_silver.py
 .\venv\Scripts\python.exe .\misc\verify_all_silver.py
 .\venv\Scripts\python.exe .\misc\compare_all_scd2.py
@@ -281,6 +309,8 @@ Use this full normal-run validation flow:
 - enhanced inherited consistency where applicable
 
 `misc/compare_all_scd2.py` checks SCD2 outputs where comparable prior/current outputs exist.
+
+`misc/verify_mlops_synthetic.py` checks the MLOps Data Vault DDL shape, required MLOps-only column population, boolean values, numeric ranges, corrected `suspected_amount` spelling, and direct-debit cancellation consistency.
 
 ## Large-Run Note
 

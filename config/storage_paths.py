@@ -21,6 +21,8 @@ OUTPUT_ROOT = os.path.join(DATA_ROOT, "output")
 SYNTHETIC_ROOT = os.path.join(DATA_ROOT, "synthetic")
 SYNTHETIC_BASE_ROOT = os.path.join(SYNTHETIC_ROOT, "base")
 SYNTHETIC_ENHANCED_ROOT = os.path.join(SYNTHETIC_ROOT, "enhanced")
+SYNTHETIC_MLOPS_ROOT = os.path.join(SYNTHETIC_ROOT, "mlops")
+MLOPS_ROOT = SYNTHETIC_MLOPS_ROOT
 
 SILVER_ROOT = os.path.join(DATA_ROOT, "silver")
 SILVER_REBUILT_ROOT = os.path.join(SILVER_ROOT, "rebuild")
@@ -31,6 +33,7 @@ SILVER_DATA_SOURCE_ROOT = os.path.join(SILVER_ROOT, "data_source")
 SCD2_ROOT = os.path.join(DATA_ROOT, "scd2")
 SCD2_BASE_ROOT = os.path.join(SCD2_ROOT, "base")
 SCD2_ENHANCED_ROOT = os.path.join(SCD2_ROOT, "enhanced")
+SCD2_MLOPS_ROOT = os.path.join(SCD2_ROOT, "mlops")
 SCD2_UPDATED_ROOT = os.path.join(SCD2_ROOT, "updated")
 SCD2_RAW_ROOT = os.path.join(SCD2_ROOT, "raw")
 SCD2_REPORT_ROOT = os.path.join(SCD2_ROOT, "reports")
@@ -53,6 +56,8 @@ def ensure_data_roots():
         SYNTHETIC_ROOT,
         SYNTHETIC_BASE_ROOT,
         SYNTHETIC_ENHANCED_ROOT,
+        SYNTHETIC_MLOPS_ROOT,
+        MLOPS_ROOT,
         SILVER_ROOT,
         SILVER_REBUILT_ROOT,
         SILVER_API_ROOT,
@@ -61,6 +66,7 @@ def ensure_data_roots():
         SCD2_ROOT,
         SCD2_BASE_ROOT,
         SCD2_ENHANCED_ROOT,
+        SCD2_MLOPS_ROOT,
         SCD2_UPDATED_ROOT,
         SCD2_RAW_ROOT,
         SCD2_REPORT_ROOT,
