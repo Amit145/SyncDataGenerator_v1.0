@@ -93,7 +93,7 @@ def verify_mlops(folder: str) -> bool:
 
     bool_checks = {
         "sat_claim": ["is_fault_claim"],
-        "sat_policy": ["is_auto_renew_enabled", "is_direct_debit_cancellation", "loyalty_discount_usage", "is_installment_default"],
+        "sat_policy": ["is_auto_renew_enabled", "is_direct_debit_cancellation", "is_installment_default"],
         "sat_marketing_engagement": ["has_retention_team_interaction"],
     }
     for table_name, columns in bool_checks.items():
@@ -149,6 +149,11 @@ def verify_mlops(folder: str) -> bool:
         )
         if int(bad_dd_cancel.sum()):
             print(f"POLICY FAILED: direct debit cancellation without DIRECT_DEBIT rows={int(bad_dd_cancel.sum())}")
+            errors += 1
+        allowed_loyalty = {"RETAINED", "NOT_APPLIED", "REMOVED", "Y", "N"}
+        bad_loyalty = ~policy["loyalty_discount_usage"].astype(str).str.upper().isin(allowed_loyalty)
+        if int(bad_loyalty.sum()):
+            print(f"POLICY FAILED: invalid loyalty_discount_usage rows={int(bad_loyalty.sum())}")
             errors += 1
 
     if errors:

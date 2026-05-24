@@ -76,7 +76,7 @@ The MLOps columns are not generated independently from the rest of the vault. Th
 | `sat_policy` | `payment_method` | Uses policy stability context. `DIRECT_DEBIT` is more common for stable policies; churned policies can still use any allowed method. |
 | `sat_policy` | `is_direct_debit_cancellation` | Can be `Y` only when payment method is `DIRECT_DEBIT`, policy is churned, and missed payments exist. |
 | `sat_policy` | `missed_payment_count` | Uses churn, risk score, and claim pressure. Churned or higher-risk policies get higher counts. |
-| `sat_policy` | `loyalty_discount_usage` | Uses completed cycle and churn context. Long-tenure active policies are more likely to use loyalty discount. |
+| `sat_policy` | `loyalty_discount_usage` | Uses `RETAINED`, `NOT_APPLIED`, or `REMOVED` from completed cycle and churn context. |
 | `sat_policy` | `is_installment_default` | Derived directly from missed payments; `Y` when missed payments are at least two. |
 
 ## Output Implication
@@ -109,8 +109,35 @@ Validation command:
 | `sat_policy` | `payment_method` | One of `DIRECT_DEBIT`, `CARD`, or `BANK_TRANSFER`; direct debit is more common for stable policies. |
 | `sat_policy` | `is_direct_debit_cancellation` | `Y` only when payment method is `DIRECT_DEBIT`, policy is churned, and missed payments exist. |
 | `sat_policy` | `missed_payment_count` | Higher for churned or higher-risk policies; lower for active/stable policies. |
-| `sat_policy` | `loyalty_discount_usage` | More likely `Y` for non-churned policies with at least three completed cycles. |
+| `sat_policy` | `loyalty_discount_usage` | Uses `RETAINED`, `NOT_APPLIED`, or `REMOVED`; retained is more common for stable policies, removed is more common for churned policies. |
 | `sat_policy` | `is_installment_default` | `Y` when `missed_payment_count >= 2`. |
+
+## MLOps Churn KPI Coverage
+
+The new DDL makes 12 workbook rows coverable that were previously marked `NA` because the fields did not exist. Their expected churn ranges are configured in `config/scenario_v1.json` under `churn_settings.mlops_churn_expected_ranges`.
+
+Validation command:
+
+```powershell
+.\venv\Scripts\python.exe misc\verify_mlops_churn_kpis.py
+```
+
+| KPI | MLOps source | Workbook range |
+|---|---|---|
+| Auto-renew enabled | `sat_policy.is_auto_renew_enabled` | ON `5-12%`, OFF `35-55%` |
+| Fault claim | `sat_claim.is_fault_claim` via `link_claim_policy` | No `12-20%`, Yes `30-50%` |
+| NCD years | `sat_policy.no_claims_discount_years` | `0-1` `25-40%`, `2-4` `18-30%`, `5-8` `15-25%`, `9+` `10-18%` |
+| Payment method | `sat_policy.payment_method` | Annual `8-15%`, Monthly DD `15-25%`, Card/Manual `25-40%` |
+| Direct debit cancellation | `sat_policy.is_direct_debit_cancellation` | No `10-18%`, Yes `55-75%` |
+| Missed payments | `sat_policy.missed_payment_count` | `0` `10-18%`, `1` `25-35%`, `2` `40-55%`, `3+` `60-75%` |
+| Retention interaction | `sat_marketing_engagement.has_retention_team_interaction` | No `12-22%`, Yes `35-55%` |
+| Claim satisfaction | `sat_claim.claim_satisfaction_score` | High `8-15%`, Neutral `18-30%`, Low `40-65%` |
+| Loyalty discount | `sat_policy.loyalty_discount_usage` | Retained `8-18%`, Not Applied `18-30%`, Removed `40-60%` |
+| Installment default | `sat_policy.is_installment_default` | No `10-18%`, Yes `50-75%` |
+| Call sentiment | `sat_marketing_engagement.average_call_sentiment` | Positive `8-15%`, Neutral `18-30%`, Negative `40-65%` |
+| Engagement score | `sat_marketing_engagement.engagement_score` | High `8-15%`, Medium `18-30%`, Low `35-55%`, Very Low `50-70%` |
+
+Claim fault and claim satisfaction churn ratios are validated by the MLOps churn validator. Claims may be linked to active, lapsed, or cancelled policies when the claim reported date remains inside the linked policy coverage window.
 
 ## Workbook Note
 
