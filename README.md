@@ -89,7 +89,11 @@ The latest generated-run validation summary, including expected vs current churn
 
 The new MLOps Data Vault output is written under `data/synthetic/mlops/<run_id>`, with SCD2 deltas under `data/scd2/mlops/<run_id>` when a prior MLOps run exists. The DDL schema review, column delta, and validation command are documented in [docs/mlops_gen_schema_review.md](F:/SyncDataGenerator_v1.0/docs/mlops_gen_schema_review.md).
 
-MLOps-only churn KPI ratios from the workbook are validated with `misc/verify_mlops_churn_kpis.py`.
+MLOps-only churn KPI ratios from the workbook are validated with `misc/verify_mlops_churn_kpis.py`. The MLOps generator calibrates coupled KPI families together, so policy type/policy renewal, payment method/direct-debit cancellation/missed payments/installment default, claim fault/satisfaction, customer satisfaction, complaint resolution days, and marketing sentiment/engagement fields stay logically consistent while targeting workbook churn bands.
+
+NPS workbook features from `new_rules/nps/npsn.xlsx` are validated with `misc/verify_nps_features.py`. This validator uses existing generated columns and derived proxies only, so it does not add or change Data Vault schemas, PKs, FKs, date rules, churn rules, or claim financial rules.
+
+Some MLOps workbook ratios are marginal KPI targets over fields that are dependent in the generated model. The main examples are `policy_type` versus `is_policy_renewal`, `payment_method` versus direct-debit cancellation, missed payments versus installment default, and engagement score versus policy-linked churn. Policy renewal is separate from auto-renew: `is_policy_renewal` is renewal/new-business context, while `is_auto_renew_enabled` is automatic renewal enrollment. Engagement keeps the workbook direction, where high engagement is lower churn and low engagement is higher churn.
 
 Enhanced claim financials are configurable through `claim_financial_settings`. They populate enhanced `sat_claim` amount, paid, reserve, expense, recovery/fraud/legal financials, `claim_band`, and `claim_band_sort`.
 
@@ -132,7 +136,7 @@ Important churn behavior:
 - Marketing engagement churn follows workbook ranges: high `8-15%`, medium `18-30%`, low `35-55%`, and none `50-70%`, using existing marketing flags as the proxy.
 - Driver experience churn follows workbook ranges: `<2y` `25-40%`, `2-5y` `18-30%`, `6-10y` `15-25%`, and `>10y` `10-18%`, using existing `birth_date` as the proxy when licence issue date is unavailable.
 - Vehicle segment churn follows workbook ranges: standard `12-22%`, premium `20-35%`, and high-risk `30-50%`; enhanced validation checks the rate through direct policy-to-motor links.
-- Policy status uses the configured churn factors first, then applies a narrow calibration pass so premium, claim-count, and add-on marginal bands stay close to the workbook ranges without changing output columns.
+- Policy status uses the configured churn factors first, then applies a calibration pass so premium, claim-count, add-on, marketing, driver, vehicle, current-premium, and tenure bands target workbook ranges without changing output columns.
 - Sales-channel churn variance is preserved using existing channel values: `AGENT` carries broker/aggregator-like higher churn behavior; `AGGREGATOR` is not emitted. The workbook does not define a sales-channel benchmark range, so this variance is scenario-config driven.
 
 Validation coverage:
@@ -191,6 +195,7 @@ SCD2 folders:
 ## SCD2 Coverage
 
 Synthetic base/enhanced/MLOps SCD2 uses sampled satellite mutations.
+SCD2 now skips sampled rows that do not produce a real business-value change, and stable reference satellites such as `sat_channel` are not emitted unless a meaningful mutable field is added.
 
 Raw SCD2 currently covers:
 

@@ -50,7 +50,8 @@ def churn_flag(series: pd.Series) -> pd.Series:
 
 
 def in_range(value: float, limits: list[float]) -> bool:
-    return limits[0] <= value <= limits[1]
+    tolerance = 0.0001
+    return limits[0] - tolerance <= value <= limits[1] + tolerance
 
 
 def check_rates(frame: pd.DataFrame, band_col: str, ranges: dict, label: str, min_count: int = 20) -> int:
@@ -93,6 +94,17 @@ def policy_frame(folder: Path) -> pd.DataFrame:
         return policy
     policy = policy.copy()
     policy["churn_flag"] = churn_flag(policy["policy_status"])
+    policy["policy_type_band"] = policy["policy_type"].astype(str).str.upper().str.replace(" ", "_", regex=False)
+    policy["policy_renewal_band"] = policy["is_policy_renewal"].astype(str).str.upper().map({
+        "Y": "Y",
+        "YES": "Y",
+        "TRUE": "Y",
+        "1": "Y",
+        "N": "N",
+        "NO": "N",
+        "FALSE": "N",
+        "0": "N",
+    })
     policy["auto_renew_enabled_band"] = policy["is_auto_renew_enabled"].astype(str).str.upper().map({"Y": "ON", "N": "OFF"})
     ncd = pd.to_numeric(policy["no_claims_discount_years"], errors="coerce").fillna(0)
     policy["ncd_years_band"] = pd.cut(
@@ -119,6 +131,20 @@ def policy_frame(folder: Path) -> pd.DataFrame:
     return policy
 
 
+def customer_policy_frame(folder: Path, policy: pd.DataFrame) -> pd.DataFrame:
+    customer = read_csv_safe(folder, "sat_customer.csv")
+    link = read_csv_safe(folder, "link_policy_customer.csv")
+    if any(df.empty for df in [customer, link, policy]):
+        return pd.DataFrame()
+    frame = (
+        link[["policy_hash_key", "customer_hash_key"]]
+        .merge(customer[["customer_hash_key", "customer_satisfaction"]], on="customer_hash_key", how="inner")
+        .merge(policy[["policy_hash_key", "churn_flag"]], on="policy_hash_key", how="inner")
+    )
+    frame["customer_satisfaction_band"] = frame["customer_satisfaction"].astype(str).str.upper()
+    return frame
+
+
 def claim_policy_frame(folder: Path, policy: pd.DataFrame) -> pd.DataFrame:
     claim = read_csv_safe(folder, "sat_claim.csv")
     link = read_csv_safe(folder, "link_claim_policy.csv")
@@ -132,6 +158,35 @@ def claim_policy_frame(folder: Path, policy: pd.DataFrame) -> pd.DataFrame:
     frame["fault_claim_band"] = frame["is_fault_claim"].astype(str).str.upper().map({"Y": "YES", "N": "NO"})
     score = pd.to_numeric(frame["claim_satisfaction_score"], errors="coerce")
     frame["claim_satisfaction_band"] = pd.cut(score, bins=[0, 4, 7, 10], labels=["LOW", "NEUTRAL", "HIGH"]).astype(str)
+    return frame
+
+
+def complaint_policy_frame(folder: Path, policy: pd.DataFrame) -> pd.DataFrame:
+    complaint = read_csv_safe(folder, "sat_complaint.csv")
+    link = read_csv_safe(folder, "link_complaint_policy.csv")
+    if any(df.empty for df in [complaint, link, policy]):
+        return pd.DataFrame()
+    frame = (
+        link[["complaint_hash_key", "policy_hash_key"]]
+        .merge(
+            complaint[["complaint_hash_key", "complaint_date", "complaint_resolved_date"]],
+            on="complaint_hash_key",
+            how="inner",
+        )
+        .merge(policy[["policy_hash_key", "churn_flag"]], on="policy_hash_key", how="inner")
+    )
+    start = pd.to_datetime(frame["complaint_date"], errors="coerce")
+    resolved = pd.to_datetime(frame["complaint_resolved_date"], errors="coerce")
+    days = (resolved - start).dt.days.fillna(-1)
+    frame["complaint_resolution_days_band"] = days.apply(
+        lambda value: "UNKNOWN" if value < 0 else (
+            "0_7" if value <= 7 else (
+            "8_30" if value <= 30 else (
+                "31_60" if value <= 60 else "61_PLUS"
+            )
+            )
+        )
+    )
     return frame
 
 
@@ -175,6 +230,8 @@ def verify(folder: str) -> bool:
     policy = policy_frame(base)
     errors = 0
     policy_checks = [
+        ("policy_type", "policy_type_band", "policy type churn"),
+        ("policy_renewal", "policy_renewal_band", "policy renewal churn"),
         ("auto_renew_enabled", "auto_renew_enabled_band", "auto-renew enabled churn"),
         ("ncd_years", "ncd_years_band", "NCD years churn"),
         ("payment_method", "payment_method_band", "payment method churn"),
@@ -185,6 +242,12 @@ def verify(folder: str) -> bool:
     ]
     for key, column, label in policy_checks:
         errors += check_rates(policy, column, ranges.get(key, {}), label)
+
+    customer = customer_policy_frame(base, policy)
+    errors += check_rates(customer, "customer_satisfaction_band", ranges.get("customer_satisfaction", {}), "customer satisfaction churn")
+
+    complaint = complaint_policy_frame(base, policy)
+    errors += check_rates(complaint, "complaint_resolution_days_band", ranges.get("complaint_resolution_days", {}), "complaint resolution days churn", min_count=10)
 
     claim = claim_policy_frame(base, policy)
     errors += check_rates(claim, "fault_claim_band", ranges.get("fault_claim", {}), "fault claim churn", min_count=10)

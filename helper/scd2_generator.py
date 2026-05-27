@@ -33,12 +33,21 @@ MUTATION_COLUMNS = {
     "sat_quote.csv": ["renewal_amt_next_period"],
     "sat_broker.csv": ["agent_net_promoter_score"],
     "sat_campaign.csv": ["campaign_status"],
-    "sat_channel.csv": ["channel_type"],
+    "sat_channel.csv": [],
     "sat_claim.csv": ["claim_status"],
     "sat_complaint.csv": ["complaint_status"],
     "sat_override.csv": ["override_reason"],
     "sat_regulation.csv": ["regulation_compliance_status"],
     "sat_insured_object.csv": ["insured_object_current_status"],
+}
+
+SAFE_VALUE_CHOICES = {
+    "campaign_status": ["Planned", "Active", "Paused", "Completed"],
+    "claim_status": ["Open", "Pending", "In Review", "Settled", "Closed"],
+    "complaint_status": ["Open", "In Review", "Resolved", "Closed"],
+    "regulation_compliance_status": ["Compliant", "Under Review", "Remediation Required", "Non-Compliant"],
+    "insured_object_current_status": ["ACTIVE", "INACTIVE", "SUSPENDED"],
+    "channel_type": ["ONLINE", "AGENT", "BRANCH"],
 }
 
 
@@ -51,10 +60,23 @@ def _mutate_value(series: pd.Series, value, column_name: str, csv_file: Path):
             return random.choice(choices)
         return value
 
+    safe_choices = SAFE_VALUE_CHOICES.get(column_name)
+    if safe_choices:
+        choices = [item for item in safe_choices if str(item) != str(value)]
+        if choices:
+            return random.choice(choices)
+        return value
+
     if "email" in str(column_name):
         return fake.email()
     if "phone" in str(column_name):
         return fake.phone_number()
+    if column_name in {"street", "insured_object_description"}:
+        return fake.street_address().replace("\n", " ")
+    if column_name == "postcode":
+        return fake.postcode()
+    if column_name == "city":
+        return fake.city()
 
     if pd.api.types.is_numeric_dtype(series):
         if pd.notna(value):
@@ -65,6 +87,13 @@ def _mutate_value(series: pd.Series, value, column_name: str, csv_file: Path):
         if pd.notna(value):
             return value + pd.Timedelta(days=1)
         return pd.Timestamp.now()
+
+    observed_values = [
+        item for item in series.dropna().astype(str).unique().tolist()
+        if item != str(value) and item.strip() != ""
+    ]
+    if observed_values and len(str(value).strip()) <= 80:
+        return random.choice(observed_values)
 
     return value
 
@@ -100,6 +129,16 @@ def _get_key_column(df: pd.DataFrame) -> str | None:
         if normalized.endswith("hash key") or normalized.endswith("hash_key"):
             return column
     return None
+
+
+def _row_changed(before: pd.Series, after: pd.Series) -> bool:
+    for column in after.index:
+        normalized = str(column).strip().lower()
+        if normalized == "load_date":
+            continue
+        if str(before.get(column, "")) != str(after.get(column, "")):
+            return True
+    return False
 
 
 def _load_latest_versions_from_history(history_root: Path, exclude_run_name: str | None = None) -> dict[str, pd.DataFrame]:
@@ -188,16 +227,24 @@ def create_scd_data(input_folder: str, output_folder: str, sat_date: str, exclud
             old_row = df.loc[idx].copy()
             new_row = old_row.copy()
 
-            col_to_modify = random.choice(mutation_targets)
-            if isinstance(new_row[col_to_modify], float):
-                new_row[col_to_modify] = new_row[col_to_modify] + 10.0
-            else:
-                new_row[col_to_modify] = _mutate_value(
-                    df[col_to_modify],
-                    new_row[col_to_modify],
-                    col_to_modify,
-                    csv_file_ref,
-                )
+            random_targets = random.sample(mutation_targets, k=len(mutation_targets))
+            for col_to_modify in random_targets:
+                if col_to_modify not in new_row.index:
+                    continue
+                if isinstance(new_row[col_to_modify], float):
+                    new_row[col_to_modify] = new_row[col_to_modify] + 10.0
+                else:
+                    new_row[col_to_modify] = _mutate_value(
+                        df[col_to_modify],
+                        new_row[col_to_modify],
+                        col_to_modify,
+                        csv_file_ref,
+                    )
+                if _row_changed(old_row, new_row):
+                    break
+
+            if not _row_changed(old_row, new_row):
+                continue
 
             if "load_date" in new_row.index:
                 new_row["load_date"] = sat_date

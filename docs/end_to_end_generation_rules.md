@@ -401,7 +401,7 @@ Dependency direction:
 
 ### Churn feature source fields
 
-Available and proxy churn-rule fields from `new_rules/Data Req Churn NPS.xlsx` are generated at the base satellite layer so CRM, API, data-source, canonical raw, silver, and enhanced outputs inherit the same values.
+Available and proxy churn-rule fields from `new_rules/Data Req Churn NPS.xlsx` are generated at the base satellite layer so default synthetic base, enhanced, and MLOps outputs inherit the same values. Optional raw, canonical raw, silver, and `new_outputs_src` outputs inherit them only when those optional outputs are generated with `--include-raw-silver` and, for `new_outputs_src`, `--include-new-outputs-src`.
 
 The active churn distributions are configured in `config/scenario_v1.json` under `churn_settings`.
 

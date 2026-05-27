@@ -402,6 +402,8 @@ Validator target ranges for the MLOps-only churn KPIs that became coverable with
 These ranges are used by `misc/verify_mlops_churn_kpis.py`; they do not change base or enhanced schemas.
 
 - `auto_renew_enabled`: ON `5-12%`, OFF `35-55%`
+- `policy_type`: NEW_BUSINESS `35-55%`, RENEWAL `8-18%`
+- `policy_renewal`: Y `8-18%`, N `35-55%`
 - `fault_claim`: NO `12-20%`, YES `30-50%`
 - `ncd_years`: `0_1` `25-40%`, `2_4` `18-30%`, `5_8` `15-25%`, `9_PLUS` `10-18%`
 - `payment_method`: ANNUAL `8-15%`, MONTHLY_DD `15-25%`, CARD_MANUAL `25-40%`
@@ -409,10 +411,23 @@ These ranges are used by `misc/verify_mlops_churn_kpis.py`; they do not change b
 - `missed_payments`: `0` `10-18%`, `1` `25-35%`, `2` `40-55%`, `3_PLUS` `60-75%`
 - `retention_contacted`: NO `12-22%`, YES `35-55%`
 - `claim_satisfaction`: HIGH `8-15%`, NEUTRAL `18-30%`, LOW `40-65%`
+- `customer_satisfaction`: VERY_SATISFIED `8-15%`, SATISFIED `15-25%`, NEUTRAL `25-40%`, DISSATISFIED `45-65%`
+- `complaint_resolution_days`: `0_7` `8-15%`, `8_30` `18-30%`, `31_60` `35-50%`, `61_PLUS` `50-70%`
 - `loyalty_discount`: RETAINED `8-18%`, NOT_APPLIED `18-30%`, REMOVED `40-60%`
 - `installment_default`: NO `10-18%`, YES `50-75%`
 - `call_sentiment`: POSITIVE `8-15%`, NEUTRAL `18-30%`, NEGATIVE `40-65%`
 - `engagement_score`: HIGH `8-15%`, MEDIUM `18-30%`, LOW `35-55%`, VERY_LOW `50-70%`
+
+`policy_renewal` is intentionally separate from `auto_renew_enabled`: `policy_renewal` describes whether the policy is a renewal/new-business policy, while `auto_renew_enabled` describes whether the policy is enrolled for automatic renewal. Engagement score keeps the workbook direction: higher engagement has lower expected churn, and lower engagement has higher expected churn.
+
+### mlops_churn_band_weights
+
+Controls generated band sizes for configurable MLOps KPI calibration where the workbook gives churn ranges but not row-count distribution.
+
+- `policy_type`: NEW_BUSINESS `45`, RENEWAL `55`
+- `policy_renewal`: Y `55`, N `45`
+- `customer_satisfaction`: VERY_SATISFIED `20`, SATISFIED `35`, NEUTRAL `25`, DISSATISFIED `20`
+- `complaint_resolution_days`: `0_7` `35`, `8_30` `35`, `31_60` `20`, `61_PLUS` `10`
 
 ## lifecycle_mode
 

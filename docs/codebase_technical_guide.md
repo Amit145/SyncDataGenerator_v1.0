@@ -376,7 +376,7 @@ Large-volume generation:
 - `main.py --streaming-base --total-people <n> --chunk-size <n>` generates base Data Vault output in bounded chunks and appends rows to the same output files
 - streaming mode reuses the same base hub/link/satellite builders per chunk, then drops the chunk context before generating the next chunk
 - streaming normalization writes `data/synthetic/base/<run_id>` row by row and avoids pandas full-file reads
-- the normal `main.py` path is unchanged and remains the full-output path for raw, silver, enhanced, SCD2, and detailed validation runs
+- the normal `main.py` path now focuses on synthetic base, enhanced, MLOps, synthetic SCD2 when history exists, and detailed validation. Raw/canonical/silver outputs require `--include-raw-silver`, and `new_outputs_src` additionally requires `--include-new-outputs-src`.
 
 Campaign:
 

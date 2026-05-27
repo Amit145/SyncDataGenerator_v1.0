@@ -229,6 +229,9 @@ MLOps rules:
 - MLOps preserves the same 80-table Data Vault structure as enhanced output, with additional MLOps-facing columns.
 - Base and enhanced DDLs are not changed to add these MLOps-only columns.
 - MLOps enrichment runs after base/enhanced entities are assembled, so policy, customer, account, claim, channel, churn, and product relationships remain inherited from the existing generation flow.
+- MLOps churn KPI fields are calibrated by coupled KPI family instead of as isolated columns. Payment/DD/missed/default/loyalty fields, claim fault/satisfaction fields, and marketing sentiment/engagement/retention fields are assigned together so workbook ranges can be targeted while preserving dependent business rules.
+- MLOps payment and engagement ratios are especially sensitive because the workbook defines marginal churn bands, while the model stores dependent fields on the same policy/customer. For example, direct-debit cancellation must remain a `DIRECT_DEBIT` payment case, installment default must follow missed payments of `2+`, and engagement score is validated through policy-to-person-to-marketing joins rather than raw marketing rows.
+- Best-effort deterministic rebalancing is applied after initial MLOps assignment for payment method, missed-payment/default behavior, and engagement score. This keeps hard business rules intact first, then moves eligible retained/churned rows between bands to target workbook ranges.
 - `sat_address.region` is derived from existing `state`, falling back to `city`.
 - `sat_claim.suspected_amount` is the corrected spelling for old enhanced `suspectd_amount`; it is nonnegative and capped at `claim_amount`.
 - `sat_claim.is_fault_claim` is derived from fraud, suspicious-claim, third-party, and third-party score indicators.
@@ -238,6 +241,8 @@ MLOps rules:
 - `sat_marketing_engagement.average_call_sentiment` is `NEGATIVE`, `NEUTRAL`, or `POSITIVE` based on service-call frequency and engagement score.
 - `sat_marketing_engagement.engagement_score` is a `0-100` score derived from opened-email, marketing status, and churn context.
 - `sat_motor.driver_experience_years` is derived from linked `sat_natural_person.birth_date` as `max(age - 17, 0)`.
+- `sat_policy.policy_type` is calibrated separately from auto-renew: `NEW_BUSINESS` carries higher churn than `RENEWAL`.
+- `sat_policy.is_policy_renewal` is calibrated separately from auto-renew: `N` carries higher churn than `Y`.
 - `sat_policy.is_auto_renew_enabled` is more likely for active and longer-tenure policies, and less likely for churned policies.
 - `sat_policy.no_claims_discount_years` is derived from completed `policy_cycle`, reduced by claim pressure, and clipped to nonnegative years.
 - `sat_policy.payment_method` is one of `DIRECT_DEBIT`, `CARD`, or `BANK_TRANSFER`, with direct debit more common for stable policies.
@@ -247,9 +252,33 @@ MLOps rules:
 - `sat_policy.is_installment_default` is `Y` when `missed_payment_count >= 2`.
 - MLOps schema and MLOps-only column rules are validated by `misc/verify_mlops_synthetic.py`.
 - MLOps churn KPI ratios are validated by `misc/verify_mlops_churn_kpis.py` against workbook ranges configured in `churn_settings.mlops_churn_expected_ranges`.
-- Newly coverable MLOps churn KPIs include auto-renew enabled, at-fault claim, NCD years, payment method, direct debit cancellation, missed payments, retention interaction, claim satisfaction, loyalty discount status, installment default, call sentiment, and engagement score.
+- Newly coverable MLOps churn KPIs include policy type, policy renewal, auto-renew enabled, at-fault claim, NCD years, payment method, direct debit cancellation, missed payments, retention interaction, claim satisfaction, customer satisfaction, complaint resolution days, loyalty discount status, installment default, call sentiment, and engagement score.
 - `sat_policy.loyalty_discount_usage` uses workbook-aligned status values: `RETAINED`, `NOT_APPLIED`, and `REMOVED`.
 - Claim fault and claim satisfaction churn ratios are validated from linked claims. Claims may be linked to active, lapsed, or cancelled policies when the claim reported date remains within the policy coverage window.
+- Complaint resolution churn ratios are generated from a mixed retained/churned policy complaint sample so short-resolution bands still contain some churned policies, while longer-resolution bands retain higher churn.
+- Engagement score follows the workbook direction: `HIGH` engagement is a lower-churn band, while `LOW` and `VERY_LOW` engagement are higher-churn bands.
+
+NPS feature rules:
+
+- NPS features are validated by `misc/verify_nps_features.py` against the latest NPS workbook, `new_rules/nps/npsn.xlsx`.
+- The older `new_rules/nps/Data Req Churn NPS.xlsx` workbook is retained for comparison only.
+- The NPS layer uses existing Data Vault columns and derived proxies only; it does not add columns or change PK/FK/date/churn/claim rules.
+- `sat_customer.nps_score` is generated as a `0-10` score with a bimodal shape: detractor-side scores around `2-4` and promoter-side scores around `9-10`.
+- `sat_customer.net_promotor_code_segment` is derived from `nps_score`: `0-6` is `DETRACTORS`, `7-8` is `PASSIVE`, and `9-10` is `PROMOTERS`.
+- Digital onboarding is proxied from `sat_account.account_creation_type`.
+- Policy issuance turnaround time is derived from `sat_policy.policy_issue_date` and `sat_policy.policy_start_date` and must remain within the existing date rule window.
+- Premium increase, digital renewal, claim settlement turnaround, claim escalation, claim channel, complaint resolution turnaround, complaint escalation, and complaint outcome are validated from existing policy, claim, complaint, account, and quote fields.
+- Workbook NPS rows that require missing operational data, such as first-contact resolution or full contact-center interaction logs, remain documented as not directly derivable from the current model.
+- `npsn.xlsx` adds an `Onboarding Feedback` row, but it has no source, logic, or expected distribution filled in, so it is not actionable yet.
+
+Known MLOps ratio-calibration constraints:
+
+- A single policy status drives all KPI churn calculations, so changing one row to fix a KPI also changes every other KPI band that row belongs to.
+- `is_direct_debit_cancellation = Y` must keep `payment_method = DIRECT_DEBIT`; this can push `MONTHLY_DD` churn above range unless enough retained direct-debit rows are added.
+- Lowering `MONTHLY_DD` churn can push churned rows into `CARD_MANUAL`, causing card/manual churn to spike.
+- Moving churned rows into `missed_payment_count = 0` or `1` can conflict with `is_installment_default`, because installment default requires `missed_payment_count >= 2`.
+- High/medium engagement bands are naturally retained-heavy, but the workbook still expects non-zero churn there. The generator therefore injects a controlled number of churned policy-linked marketing rows into `HIGH` and `MEDIUM`.
+- Exact equality to every marginal workbook range is not always guaranteed for small generated claim/marketing subsets, but the generator now uses deterministic quota rebalancing to get as close as possible without breaking schema, date, relationship, or dependency rules.
 
 ## SCD2 Rules
 
@@ -263,6 +292,27 @@ Synthetic base/enhanced/MLOps SCD2:
 - writes changed rows to `data/scd2/base/<run_id>`, `data/scd2/enhanced/<run_id>`, or `data/scd2/mlops/<run_id>`
 - preserves satellite schema compatibility
 - is a sampled synthetic change feed, not complete CDC
+- writes only rows where a business value actually changes; sampled no-op rows are skipped
+- excludes stable reference satellites such as `sat_channel` from mutation unless a real mutable business attribute is later introduced
+
+Safe SCD2 mutation examples:
+
+- `sat_account.account_status`
+- `sat_contact.personal_email`
+- `sat_customer.customer_status_reason`
+- `sat_lead.preferred_contact_method`
+- `sat_motor.license_status`
+- `sat_natural_person.occupation`
+- `sat_policy.cover_option`
+- `sat_quote.renewal_amt_next_period`
+- `sat_broker.agent_net_promoter_score`
+- `sat_address.street`
+- `sat_campaign.campaign_status`
+- `sat_claim.claim_status`
+- `sat_complaint.complaint_status`
+- `sat_override.override_reason`
+- `sat_regulation.regulation_compliance_status`
+- `sat_insured_object.insured_object_current_status`
 
 Raw SCD2:
 

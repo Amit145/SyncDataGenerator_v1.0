@@ -124,6 +124,8 @@ Validation command:
 
 | KPI | MLOps source | Workbook range |
 |---|---|---|
+| Policy type | `sat_policy.policy_type` | New Business `35-55%`, Renewal `8-18%` |
+| Policy renewal | `sat_policy.is_policy_renewal` | Y `8-18%`, N `35-55%` |
 | Auto-renew enabled | `sat_policy.is_auto_renew_enabled` | ON `5-12%`, OFF `35-55%` |
 | Fault claim | `sat_claim.is_fault_claim` via `link_claim_policy` | No `12-20%`, Yes `30-50%` |
 | NCD years | `sat_policy.no_claims_discount_years` | `0-1` `25-40%`, `2-4` `18-30%`, `5-8` `15-25%`, `9+` `10-18%` |
@@ -132,10 +134,14 @@ Validation command:
 | Missed payments | `sat_policy.missed_payment_count` | `0` `10-18%`, `1` `25-35%`, `2` `40-55%`, `3+` `60-75%` |
 | Retention interaction | `sat_marketing_engagement.has_retention_team_interaction` | No `12-22%`, Yes `35-55%` |
 | Claim satisfaction | `sat_claim.claim_satisfaction_score` | High `8-15%`, Neutral `18-30%`, Low `40-65%` |
+| Customer satisfaction | `sat_customer.customer_satisfaction` via `link_policy_customer` | Very Satisfied `8-15%`, Satisfied `15-25%`, Neutral `25-40%`, Dissatisfied `45-65%` |
+| Complaint resolution days | `sat_complaint.complaint_date` to `complaint_resolved_date` via `link_complaint_policy` | `0-7` `8-15%`, `8-30` `18-30%`, `31-60` `35-50%`, `61+` `50-70%` |
 | Loyalty discount | `sat_policy.loyalty_discount_usage` | Retained `8-18%`, Not Applied `18-30%`, Removed `40-60%` |
 | Installment default | `sat_policy.is_installment_default` | No `10-18%`, Yes `50-75%` |
 | Call sentiment | `sat_marketing_engagement.average_call_sentiment` | Positive `8-15%`, Neutral `18-30%`, Negative `40-65%` |
 | Engagement score | `sat_marketing_engagement.engagement_score` | High `8-15%`, Medium `18-30%`, Low `35-55%`, Very Low `50-70%` |
+
+Policy renewal is separate from auto-renew. `is_policy_renewal` describes renewal/new-business context; `is_auto_renew_enabled` describes whether automatic renewal is enabled. Engagement score follows the workbook direction: high engagement has lower expected churn than low or very low engagement.
 
 Claim fault and claim satisfaction churn ratios are validated by the MLOps churn validator. Claims may be linked to active, lapsed, or cancelled policies when the claim reported date remains inside the linked policy coverage window.
 
