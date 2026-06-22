@@ -1,9 +1,13 @@
 # Current Run README
 
-This runbook captures the current operational flow for base, enhanced, raw, silver, churn validation, and SCD2 generation.
+This runbook captures the current operational flow for base, enhanced, MLOps, PRD raw, silver rebuilds, churn/NPS validation, and SCD2 generation.
 
-Detailed current rules are documented in `docs/current_rules_reference.md`.
-Scenario config meanings are documented in `docs/scenario_config_reference.md`.
+Detailed rules are maintained in:
+
+- `docs/current_rules_reference.md`
+- `docs/scenario_config_reference.md`
+- `docs/llm_codebase_context.md`
+- `docs/latest_run_validation.md`
 
 Run all commands from:
 
@@ -11,7 +15,7 @@ Run all commands from:
 cd F:\SyncDataGenerator_v1.0
 ```
 
-## Base Load
+## Main Generation
 
 Run:
 
@@ -21,93 +25,86 @@ Run:
 
 Default outputs:
 
-- `data/output/<run_id>`
+- `data/output/<run_id>` intermediate base build, kept by default
 - `data/synthetic/base/<run_id>`
 - `data/synthetic/enhanced/<run_id>`
-- `data/raw/crm/<run_id>`
-- `data/raw/crm_canonical/<run_id>`
-- `data/raw/api/<run_id>`
-- `data/raw/claims/<run_id>`
-- `data/raw/claims_canonical/<run_id>`
-- `data/raw/data_source/motor/<run_id>`
-- `data/raw/data_source/home/<run_id>`
-- `data/raw/data_source_canonical/<run_id>`
-- `data/silver/api/<run_id>`
-- `data/scd2/base/<run_id>` when a prior base run exists
-- `data/scd2/enhanced/<run_id>` when a prior enhanced run exists
-- `data/scd2/raw/crm/<run_id>` and `data/scd2/raw/api/<run_id>` when prior raw batches exist
+- `data/synthetic/mlops/<run_id>`
+- `data/raw/base/prd_01/<run_id>`
+- `data/raw/enhanced/prd_01/<run_id>`
+- `data/raw/enhanced/prd_02/<run_id>`
+- `data/raw/mlops/prd_01/<run_id>`
+- `data/raw/mlops/prd_02/<run_id>`
+- `data/silver/base/<run_id>`
+- `data/silver/enhanced/<run_id>`
+- `data/silver/mlops/<run_id>`
+- `data/scd2/base/<run_id>` when prior base history exists
+- `data/scd2/enhanced/<run_id>` when prior enhanced history exists
+- `data/scd2/mlops/<run_id>` when prior MLOps history exists
 
-Optional source-specific outputs:
-
-```powershell
-.\venv\Scripts\python.exe .\main.py --include-new-outputs-src
-```
-
-This adds:
-
-- `data/new_outputs_src/<source>/data/<run_id>`
-- `data/new_outputs_src/<source>/scd2/<run_id>` when prior source batches exist
-
-## Silver And Verification
-
-Transform latest raw sources to silver:
+Remove the intermediate `data/output/<run_id>` folder only when needed:
 
 ```powershell
-.\venv\Scripts\python.exe .\misc\transform_all_raw_to_silver.py
+.\venv\Scripts\python.exe .\main.py --remove-working-output
 ```
 
-Verify latest silver outputs:
+## Optional Legacy Outputs
+
+Legacy raw CRM/API/claims/data_source, canonical raw, API silver, and raw SCD2 outputs are disabled by default.
 
 ```powershell
-.\venv\Scripts\python.exe .\misc\verify_all_silver.py
+.\venv\Scripts\python.exe .\main.py --include-raw-silver
 ```
 
-Validate churn KPI fields in the latest base run:
+`new_outputs_src` is also disabled by default and requires both flags:
 
 ```powershell
-.\venv\Scripts\python.exe .\validate_churn_kpis.py
+.\venv\Scripts\python.exe .\main.py --include-raw-silver --include-new-outputs-src
 ```
 
-Validate a specific base run:
+## Verification
+
+Validate base synthetic:
+
+```powershell
+.\venv\Scripts\python.exe .\verify_csv.py .\data\synthetic\base\<run_id>
+```
+
+Validate enhanced synthetic:
+
+```powershell
+.\venv\Scripts\python.exe .\misc\verify_enhanced_synthetic.py .\data\synthetic\enhanced\<run_id>
+```
+
+Validate MLOps synthetic:
+
+```powershell
+.\venv\Scripts\python.exe .\misc\verify_mlops_synthetic.py .\data\synthetic\mlops\<run_id>
+```
+
+Validate PRD raw structure:
+
+```powershell
+.\venv\Scripts\python.exe .\misc\verify_prd_raw_mlops.py --mode base --run-id <run_id>
+.\venv\Scripts\python.exe .\misc\verify_prd_raw_mlops.py --mode enhanced --run-id <run_id>
+.\venv\Scripts\python.exe .\misc\verify_prd_raw_mlops.py --mode mlops --run-id <run_id>
+```
+
+Validate churn and NPS rules:
 
 ```powershell
 .\venv\Scripts\python.exe .\validate_churn_kpis.py --path .\data\synthetic\base\<run_id>
+.\venv\Scripts\python.exe .\misc\verify_nps_features.py .\data\synthetic\mlops\<run_id>
 ```
 
-## Churn Rules
+## Current Rule Scope
 
-The current churn behavior follows `new_rules/Data Req Churn NPS.xlsx` for available and proxy rows.
+The current data flow preserves:
 
-Tune churn distributions in `config/scenario_v1.json` under `churn_settings`.
-For the meaning of each config key, see `docs/scenario_config_reference.md`.
-
-Key points:
-
-- `Policy Cycle` means completed annual tenure from policy start date to load/snapshot date.
-- `Policy Cycle` does not mean number of policies purchased.
-- Churn decreases as completed `Policy Cycle` increases.
-- Current completed-tenure churn targets the workbook ranges: `<1 year 35-50%`, `1-2 years 25-35%`, `3-5 years 15-25%`, and `>5 years 8-15%`.
-- Sales-channel variance uses existing values only: `AGENT` carries broker/aggregator-like higher churn behavior; `AGGREGATOR` is not emitted. The workbook does not define a sales-channel benchmark range.
-- Renewal premium movement, claim counts, add-ons, marketing proxy, driver experience, and vehicle model segments are generated and validated.
-
-Policy date rules:
-
-- `Policy Start Date <= Policy End Date`
-- `Renewal Date` is within 0 to 10 days before `Policy End Date`
-- `ACTIVE`, `LAPSED`, and `CANCELLED` statuses are date-consistent
-- long-tenure active/lapsed policies use current annual term boundaries
-- `LAPSED` requires a completed renewal cycle; sub-one-year churn is `CANCELLED`
-
-## Recommended Complete Check
-
-For a normal full check:
-
-```powershell
-.\venv\Scripts\python.exe .\main.py
-.\venv\Scripts\python.exe .\validate_churn_kpis.py
-.\venv\Scripts\python.exe .\misc\transform_all_raw_to_silver.py
-.\venv\Scripts\python.exe .\misc\verify_all_silver.py
-.\venv\Scripts\python.exe .\misc\compare_all_scd2.py
-```
-
-`compare_all_scd2.py` needs prior SCD2 outputs; it may report no comparison data on a first run.
+- base, enhanced, and MLOps vault table structure
+- PRD raw to silver rebuild compatibility
+- PK/FK referential integrity
+- policy issue/start/end/renewal date rules
+- churn workbook ratios for available/proxy KPIs where supported by the model
+- NPS workbook ratios for available/proxy KPIs where supported by the model
+- claim amount, outstanding amount, claim band, claim satisfaction, and complaint feedback rules
+- SCD2 history generation from prior comparable synthetic runs

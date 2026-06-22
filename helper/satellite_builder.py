@@ -104,6 +104,56 @@ def _churn_settings(churn_config: dict | None) -> dict:
     return churn_config or {}
 
 
+def _nps_settings(nps_config: dict | None) -> dict:
+    return nps_config or {}
+
+
+def _weighted_choice_from_nps(nps_config: dict | None, key: str, default_map: dict) -> str:
+    return _weighted_choice_from_mapping(_nps_settings(nps_config).get(key), default_map)
+
+
+def _sample_nps_score(nps_config: dict | None = None) -> int:
+    band = _weighted_choice_from_nps(
+        nps_config,
+        "nps_score_distribution",
+        {"DETRACTOR": 30, "PASSIVE": 35, "PROMOTER": 35},
+    )
+    value_weights = _nps_settings(nps_config).get("nps_score_value_weights") or {}
+    if band == "PROMOTER":
+        return int(_weighted_choice_from_mapping(value_weights.get("PROMOTER"), {"9": 48, "10": 52}))
+    if band == "PASSIVE":
+        return int(_weighted_choice_from_mapping(value_weights.get("PASSIVE"), {"7": 52, "8": 48}))
+    return int(_weighted_choice_from_mapping(
+        value_weights.get("DETRACTOR"),
+        {"0": 18, "1": 18, "2": 9, "3": 8, "4": 9, "5": 19, "6": 19},
+    ))
+
+
+def _sample_account_creation_type(nps_config: dict | None = None) -> str:
+    band = _weighted_choice_from_nps(
+        nps_config,
+        "digital_onboarding_distribution",
+        {"ONLINE": 75, "BRANCH": 25},
+    )
+    return "ONLINE" if str(band).upper() in {"ONLINE", "DIGITAL", "SELF_SERVICE", "SELF-SERVICE"} else "BRANCH"
+
+
+def _sample_quote_status(nps_config: dict | None = None) -> str:
+    settings = _nps_settings(nps_config)
+    band = _weighted_choice_from_nps(
+        nps_config,
+        "quote_dropoff_distribution",
+        {"ACCEPTED": 92, "DROPOFF": 8},
+    )
+    if str(band).upper() == "ACCEPTED":
+        return "ACCEPTED"
+    status = _weighted_choice_from_mapping(
+        settings.get("quote_dropoff_status_distribution"),
+        {"CREATED": 50, "SENT": 35, "EXPIRED": 15},
+    )
+    return str(status).upper()
+
+
 def _sample_renewal_premiums(churn_config: dict | None = None) -> tuple[float, float]:
     churn_cfg = _churn_settings(churn_config)
     current_band = _weighted_choice_from_mapping(
@@ -931,6 +981,38 @@ def _calibrate_policy_churn_rows(rows: list[dict], churn_config: dict | None, lo
         if not changed:
             break
 
+    for _ in range(5000):
+        counts = _policy_churn_counts(flags, bands_by_row, targets)
+        repair_actions = []
+        for dimension, spec in targets.items():
+            for band in spec["order"]:
+                band_counts = counts.get(dimension, {}).get(band)
+                if not band_counts or band_counts["count"] < 20:
+                    continue
+                current = int(band_counts["churned"])
+                if current > int(band_counts["max"]):
+                    repair_actions.append((current - int(band_counts["max"]), dimension, band, False))
+                elif current < int(band_counts["min"]):
+                    repair_actions.append((int(band_counts["min"]) - current, dimension, band, True))
+        if not repair_actions:
+            break
+        repaired = False
+        for _, dimension, band, to_churned in sorted(repair_actions, key=lambda item: item[0], reverse=True):
+            band_counts = counts[dimension][band]
+            if to_churned:
+                candidates = [idx for idx in band_counts["indices"] if not flags[idx]]
+                candidates.sort(key=lambda idx: (_policy_flip_delta(idx, True, counts, bands_by_row, weights), -scores[idx]))
+            else:
+                candidates = [idx for idx in band_counts["indices"] if flags[idx] and not locked_churn[idx]]
+                candidates.sort(key=lambda idx: (_policy_flip_delta(idx, False, counts, bands_by_row, weights), scores[idx]))
+            if not candidates:
+                continue
+            _policy_apply_flip(candidates[0], to_churned, flags, counts, bands_by_row)
+            repaired = True
+            break
+        if not repaired:
+            break
+
     for idx, row in enumerate(rows):
         if locked_churn[idx]:
             status = "CANCELLED" if str(row.get("_Account Status") or "").upper() == "CLOSED" else (
@@ -1394,6 +1476,18 @@ def sat_natural_person(person_to_nat_hk, load_date):
 
 
 # ---------------- LEGAL PERSON ----------------
+LEGAL_JOB_TITLES = [
+    "DIRECTOR",
+    "COMPANY_SECRETARY",
+    "OWNER",
+    "PARTNER",
+    "AUTHORIZED_SIGNATORY",
+    "MANAGING_DIRECTOR",
+    "TRUSTEE",
+    "SOLE_PROPRIETOR",
+]
+
+
 def sat_legal_person(person_to_leg_hk, load_date):
     rows = []
     business_start_date = "2020-01-01"
@@ -1411,7 +1505,7 @@ def sat_legal_person(person_to_leg_hk, load_date):
                 "Legal Person Hash Key": hk,
                 "Load Date": load_date,
                 "Person Score": random.randint(1, 100),
-                "Job Title": "",
+                "Job Title": random.choice(LEGAL_JOB_TITLES),
                 "Source Id": "CRM",
                 "Source Type": "INTERNAL",
                 "Person Status": random.choice(["NEW", "QUALIFIED"]),
@@ -1557,6 +1651,7 @@ def sat_customer(
         as_of_date=None,
         earliest_policy_start_by_person=None,
         churn_config=None,
+        nps_config=None,
 ):
     """
     No new columns.
@@ -1599,7 +1694,7 @@ def sat_customer(
                 "Customer Rating": 3,
                 "Customer Segment": "STANDARD",
                 "Line Of Business": random.choice(["MOTOR", "HOME"]),
-                "NPS Score": random.randint(0, 10)
+                "NPS Score": _sample_nps_score(nps_config)
             })
     return rows
 
@@ -1851,7 +1946,7 @@ def sat_consent(person_to_consent_hk, load_date):
 
 
 # ---------------- ACCOUNT ----------------
-def sat_account(person_to_account_hk, load_date, churn_config=None):
+def sat_account(person_to_account_hk, load_date, churn_config=None, nps_config=None):
     rows = []
     load_dt = _coerce_datetime(load_date)
     for _, hk_or_hks in person_to_account_hk.items():
@@ -1885,7 +1980,7 @@ def sat_account(person_to_account_hk, load_date, churn_config=None):
                 "Account Type": random.choice(["PERSONAL", "BUSINESS"]),
                 "Account Last Access": last_access_dt.strftime("%Y-%m-%d %H:%M:%S"),
                 "Account Last Change": last_change_dt.strftime("%Y-%m-%d %H:%M:%S"),
-                "Account Creation Type": random.choice(["ONLINE", "BRANCH"]),
+                "Account Creation Type": _sample_account_creation_type(nps_config),
                 "Account Status": account_status
             })
     return rows
@@ -1930,7 +2025,7 @@ def sat_marketing_engagement(person_to_men_hk, load_date):
 
 
 # ---------------- QUOTE ----------------
-def sat_quote(person_to_quote_hk, load_date):
+def sat_quote(person_to_quote_hk, load_date, nps_config=None):
     rows = []
     for _, hk_or_hks in person_to_quote_hk.items():
         for hk in _as_list(hk_or_hks):
@@ -1940,7 +2035,7 @@ def sat_quote(person_to_quote_hk, load_date):
                 "Gross Revenue": round(random.uniform(200, 2000), 2),
                 "Net Revenue": round(random.uniform(150, 1800), 2),
                 "Quote Number": random.randint(100000, 999999),
-                "Quote Status": random.choice(["CREATED", "SENT", "EXPIRED"]),
+                "Quote Status": _sample_quote_status(nps_config),
                 "Renewal Amt Current Period": round(random.uniform(100, 1000), 2),
                 "Renewal Amt Next Period": round(random.uniform(100, 1000), 2)
             })

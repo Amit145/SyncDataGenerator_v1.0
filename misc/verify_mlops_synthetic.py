@@ -14,7 +14,7 @@ if ROOT not in sys.path:
 from config.storage_paths import MLOPS_ROOT
 from helper.enhanced_ddl import parse_enhanced_ddl
 
-MLOPS_DDL_PATH = os.path.join(ROOT, "mlops", "mlops_gen", "Enhanced_Customer360_DataVault_Model_DDL.sql")
+MLOPS_DDL_PATH = os.path.join(ROOT, "mlops", "Enhanced_Customer360_DataVault_Model_DDL.sql")
 
 
 def latest_subdir(base_dir: str) -> str | None:
@@ -67,6 +67,7 @@ def verify_mlops(folder: str) -> bool:
             "customer_service_call_frequency",
             "average_call_sentiment",
             "engagement_score",
+            "first_contact_resolution",
         ],
         "sat_motor": ["driver_experience_years"],
         "sat_policy": [
@@ -93,8 +94,13 @@ def verify_mlops(folder: str) -> bool:
 
     bool_checks = {
         "sat_claim": ["is_fault_claim"],
-        "sat_policy": ["is_auto_renew_enabled", "is_direct_debit_cancellation", "is_installment_default"],
-        "sat_marketing_engagement": ["has_retention_team_interaction"],
+        "sat_policy": [
+            "is_auto_renew_enabled",
+            "is_direct_debit_cancellation",
+            "is_installment_default",
+            "is_renewal_escalation",
+        ],
+        "sat_marketing_engagement": ["has_retention_team_interaction", "first_contact_resolution"],
     }
     for table_name, columns in bool_checks.items():
         df = frames.get(table_name)
@@ -113,6 +119,9 @@ def verify_mlops(folder: str) -> bool:
         ("sat_motor", "driver_experience_years", 0, 100),
         ("sat_policy", "no_claims_discount_years", 0, 100),
         ("sat_policy", "missed_payment_count", 0, 999),
+        ("sat_complaint", "customer_complaint_satisfaction_score", 0, 5),
+        ("sat_customer", "customer_onboarding_satisfaction_score", 0, 5),
+        ("sat_policy", "policy_renewal_satisfaction_score", 0, 5),
     ]
     for table_name, column, low, high in numeric_ranges:
         df = frames.get(table_name)
@@ -155,6 +164,52 @@ def verify_mlops(folder: str) -> bool:
         if int(bad_loyalty.sum()):
             print(f"POLICY FAILED: invalid loyalty_discount_usage rows={int(bad_loyalty.sum())}")
             errors += 1
+
+    feedback_checks = {
+        "sat_claim": ["claims_feedback"],
+        "sat_complaint": ["complaint_feedback"],
+        "sat_policy": ["policy_renewal_feedback"],
+    }
+    allowed_feedback = {"", "POSITIVE", "NEUTRAL", "NEGATIVE"}
+    for table_name, columns in feedback_checks.items():
+        df = frames.get(table_name)
+        if df is None or df.empty:
+            continue
+        for column in columns:
+            if column not in df.columns:
+                continue
+            bad = ~df[column].fillna("").astype(str).str.upper().isin(allowed_feedback)
+            if int(bad.sum()):
+                print(f"FEEDBACK FAILED: {table_name}.{column} invalid_rows={int(bad.sum())}")
+                errors += 1
+
+    complaint = frames.get("sat_complaint")
+    if complaint is not None and not complaint.empty:
+        required = ["customer_complaint_satisfaction_score", "complaint_status", "complaint_resolved_date"]
+        if all(column in complaint.columns for column in required):
+            resolved = ~complaint["complaint_resolved_date"].fillna("").astype(str).str.strip().eq("")
+            blank_score = resolved & complaint["customer_complaint_satisfaction_score"].fillna("").astype(str).str.strip().eq("")
+            if int(blank_score.sum()):
+                print(f"COMPLAINT FAILED: resolved complaints with blank customer_complaint_satisfaction_score rows={int(blank_score.sum())}")
+                errors += 1
+            open_resolved = resolved & complaint["complaint_status"].fillna("").astype(str).str.upper().isin(["OPEN", "PENDING"])
+            if int(open_resolved.sum()):
+                print(f"COMPLAINT FAILED: resolved complaints left open rows={int(open_resolved.sum())}")
+                errors += 1
+
+    customer = frames.get("sat_customer")
+    if customer is not None and not customer.empty:
+        for column in ["customer_onboarding_satisfaction_score", "customer_onboarding_feedback"]:
+            if column in customer.columns:
+                blank = customer[column].fillna("").astype(str).str.strip().eq("")
+                if int(blank.sum()):
+                    print(f"CUSTOMER FAILED: blank {column} rows={int(blank.sum())}")
+                    errors += 1
+        if "customer_onboarding_feedback" in customer.columns:
+            generic = customer["customer_onboarding_feedback"].fillna("").astype(str).str.upper().isin(allowed_feedback - {""})
+            if int(generic.sum()):
+                print(f"CUSTOMER FAILED: customer_onboarding_feedback still uses generic sentiment labels rows={int(generic.sum())}")
+                errors += 1
 
     if errors:
         print(f"MLOps verification failed with {errors} issue(s).")

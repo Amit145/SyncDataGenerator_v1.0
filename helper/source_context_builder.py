@@ -37,6 +37,404 @@ from helper.satellite_builder import (
 )
 
 
+def _align_account_creation_type_to_nps(
+    sat_acc: list[dict],
+    sat_cus: list[dict],
+    person_to_account: dict,
+    person_to_customer: dict,
+    nps_settings: dict | None,
+) -> None:
+    distribution = (nps_settings or {}).get("digital_onboarding_distribution") or {
+        "ONLINE": 75,
+        "BRANCH": 25,
+    }
+    online_weight = sum(
+        float(weight)
+        for value, weight in distribution.items()
+        if str(value).upper() in {"ONLINE", "DIGITAL", "SELF_SERVICE", "SELF-SERVICE"}
+    )
+    total_weight = sum(float(weight) for weight in distribution.values()) or 100.0
+
+    nps_by_customer = {}
+    for row in sat_cus:
+        customer_hk = row.get("Customer Hash Key")
+        if not customer_hk:
+            continue
+        try:
+            nps_by_customer[customer_hk] = int(float(row.get("NPS Score")))
+        except (TypeError, ValueError):
+            nps_by_customer[customer_hk] = 0
+
+    account_to_nps = {}
+    for person_hk, account_hks in person_to_account.items():
+        customer_hks = person_to_customer.get(person_hk, [])
+        if not isinstance(customer_hks, list):
+            customer_hks = [customer_hks]
+        person_nps = max((nps_by_customer.get(customer_hk, 0) for customer_hk in customer_hks), default=0)
+        for account_hk in account_hks if isinstance(account_hks, list) else [account_hks]:
+            account_to_nps[account_hk] = person_nps
+
+    ranked = []
+    for idx, row in enumerate(sat_acc):
+        account_hk = row.get("Account Hash Key")
+        ranked.append((account_to_nps.get(account_hk, 0), -idx, row))
+
+    online_target = round(len(ranked) * online_weight / total_weight)
+    online_rows = {
+        id(row)
+        for _, _, row in sorted(ranked, reverse=True)[:online_target]
+    }
+    for row in sat_acc:
+        row["Account Creation Type"] = "ONLINE" if id(row) in online_rows else "BRANCH"
+
+
+def _align_quote_status_to_nps(
+    sat_quo: list[dict],
+    sat_cus: list[dict],
+    person_to_quote: dict,
+    person_to_customer: dict,
+    nps_settings: dict | None,
+) -> None:
+    settings = nps_settings or {}
+    dropoff_distribution = settings.get("quote_dropoff_distribution") or {
+        "ACCEPTED": 92,
+        "DROPOFF": 8,
+    }
+    dropoff_weight = sum(
+        float(weight)
+        for value, weight in dropoff_distribution.items()
+        if str(value).upper() not in {"ACCEPTED", "CONVERTED"}
+    )
+    total_weight = sum(float(weight) for weight in dropoff_distribution.values()) or 100.0
+    dropoff_target = round(len(sat_quo) * dropoff_weight / total_weight)
+
+    status_distribution = settings.get("quote_dropoff_status_distribution") or {
+        "CREATED": 50,
+        "SENT": 35,
+        "EXPIRED": 15,
+    }
+    status_total = sum(float(weight) for weight in status_distribution.values()) or 100.0
+
+    nps_by_customer = {}
+    for row in sat_cus:
+        customer_hk = row.get("Customer Hash Key")
+        if not customer_hk:
+            continue
+        try:
+            nps_by_customer[customer_hk] = int(float(row.get("NPS Score")))
+        except (TypeError, ValueError):
+            nps_by_customer[customer_hk] = 0
+
+    quote_to_nps = {}
+    for person_hk, quote_hks in person_to_quote.items():
+        customer_hks = person_to_customer.get(person_hk, [])
+        if not isinstance(customer_hks, list):
+            customer_hks = [customer_hks]
+        person_nps = max((nps_by_customer.get(customer_hk, 0) for customer_hk in customer_hks), default=0)
+        for quote_hk in quote_hks if isinstance(quote_hks, list) else [quote_hks]:
+            quote_to_nps[quote_hk] = person_nps
+
+    ranked = []
+    for idx, row in enumerate(sat_quo):
+        quote_hk = row.get("Quote Hash Key")
+        ranked.append((quote_to_nps.get(quote_hk, 0), -idx, row))
+
+    for row in sat_quo:
+        row["Quote Status"] = "ACCEPTED"
+
+    counts = {
+        str(status).upper(): round(dropoff_target * float(weight) / status_total)
+        for status, weight in status_distribution.items()
+    }
+    while sum(counts.values()) > dropoff_target:
+        counts[max(counts, key=counts.get)] -= 1
+    while sum(counts.values()) < dropoff_target:
+        counts[max(counts, key=lambda key: status_distribution.get(key, 0))] += 1
+
+    ranked_low = sorted(ranked)
+    ranked_high = sorted(ranked, reverse=True)
+    ranked_mid = sorted(ranked, key=lambda item: (abs(item[0] - 7.5), item[1]))
+    used_rows = set()
+
+    def take_rows(candidates: list[tuple[int, int, dict]], count: int) -> list[dict]:
+        selected = []
+        for _, _, candidate in candidates:
+            row_id = id(candidate)
+            if row_id in used_rows:
+                continue
+            selected.append(candidate)
+            used_rows.add(row_id)
+            if len(selected) == count:
+                break
+        if len(selected) < count:
+            for _, _, candidate in ranked_low:
+                row_id = id(candidate)
+                if row_id in used_rows:
+                    continue
+                selected.append(candidate)
+                used_rows.add(row_id)
+                if len(selected) == count:
+                    break
+        return selected
+
+    status_rows = {
+        "EXPIRED": take_rows([item for item in ranked_low if item[0] <= 4], counts.get("EXPIRED", 0)),
+        "SENT": take_rows([item for item in ranked_mid if 7 <= item[0] <= 8], counts.get("SENT", 0)),
+        "CREATED": take_rows([item for item in ranked_high if item[0] >= 8], counts.get("CREATED", 0)),
+    }
+    for status in ["EXPIRED", "SENT", "CREATED"]:
+        for row in status_rows.get(status, []):
+            row["Quote Status"] = status
+
+
+def _align_quote_premium_increase_to_nps(
+    sat_quo: list[dict],
+    sat_cus: list[dict],
+    person_to_quote: dict,
+    person_to_customer: dict,
+    nps_settings: dict | None,
+) -> None:
+    distribution = (nps_settings or {}).get("premium_increase_distribution") or {
+        "LE_5": 70,
+        "GT_5_LE_10": 20,
+        "GT_10": 10,
+    }
+    total_weight = sum(float(weight) for weight in distribution.values()) or 100.0
+    counts = {
+        band: round(len(sat_quo) * float(weight) / total_weight)
+        for band, weight in distribution.items()
+    }
+    while sum(counts.values()) > len(sat_quo):
+        counts[max(counts, key=counts.get)] -= 1
+    while sum(counts.values()) < len(sat_quo):
+        counts[max(counts, key=lambda key: distribution.get(key, 0))] += 1
+
+    nps_by_customer = {}
+    for row in sat_cus:
+        customer_hk = row.get("Customer Hash Key")
+        if not customer_hk:
+            continue
+        try:
+            nps_by_customer[customer_hk] = int(float(row.get("NPS Score")))
+        except (TypeError, ValueError):
+            nps_by_customer[customer_hk] = 0
+
+    quote_to_nps = {}
+    for person_hk, quote_hks in person_to_quote.items():
+        customer_hks = person_to_customer.get(person_hk, [])
+        if not isinstance(customer_hks, list):
+            customer_hks = [customer_hks]
+        person_nps = max((nps_by_customer.get(customer_hk, 0) for customer_hk in customer_hks), default=0)
+        for quote_hk in quote_hks if isinstance(quote_hks, list) else [quote_hks]:
+            quote_to_nps[quote_hk] = person_nps
+
+    ranked = []
+    for idx, row in enumerate(sat_quo):
+        quote_hk = row.get("Quote Hash Key")
+        ranked.append((quote_to_nps.get(quote_hk, 0), -idx, row))
+
+    ranked_low = sorted(ranked)
+    ranked_high = sorted(ranked, reverse=True)
+    ranked_mid = sorted(ranked, key=lambda item: (abs(item[0] - 7.5), item[1]))
+    used_rows = set()
+
+    def take_rows(candidates: list[tuple[int, int, dict]], count: int) -> list[dict]:
+        selected = []
+        for _, _, candidate in candidates:
+            row_id = id(candidate)
+            if row_id in used_rows:
+                continue
+            selected.append(candidate)
+            used_rows.add(row_id)
+            if len(selected) == count:
+                break
+        if len(selected) < count:
+            for _, _, candidate in ranked_high:
+                row_id = id(candidate)
+                if row_id in used_rows:
+                    continue
+                selected.append(candidate)
+                used_rows.add(row_id)
+                if len(selected) == count:
+                    break
+        return selected
+
+    band_rows = {
+        "GT_10": take_rows([item for item in ranked_low if item[0] <= 6], counts.get("GT_10", 0)),
+        "GT_5_LE_10": take_rows([item for item in ranked_mid if 7 <= item[0] <= 8], counts.get("GT_5_LE_10", 0)),
+        "LE_5": take_rows([item for item in ranked_high if item[0] >= 9], counts.get("LE_5", 0)),
+    }
+    rate_ranges = {
+        "LE_5": (0.00, 0.05),
+        "GT_5_LE_10": (0.055, 0.10),
+        "GT_10": (0.12, 0.30),
+    }
+    for band, rows in band_rows.items():
+        low, high = rate_ranges[band]
+        spread = high - low
+        for idx, row in enumerate(rows):
+            try:
+                current = float(row.get("Renewal Amt Current Period") or 0)
+            except (TypeError, ValueError):
+                current = 0.0
+            if current <= 0:
+                current = 300.0 + (idx % 900)
+            rate = low + (spread * ((idx % 17) / 16))
+            row["Renewal Amt Current Period"] = round(current, 2)
+            row["Renewal Amt Next Period"] = round(current * (1 + rate), 2)
+
+
+def _align_digital_renewal_to_nps(
+    sat_pol: list[dict],
+    sat_cus: list[dict],
+    policy_to_person_map: dict,
+    person_to_customer: dict,
+    nps_settings: dict | None,
+) -> None:
+    distribution = (nps_settings or {}).get("digital_renewal_distribution") or {
+        "ONLINE": 70,
+        "AGENT": 20,
+        "BRANCH": 10,
+    }
+    renewal_rows = []
+    for idx, row in enumerate(sat_pol):
+        try:
+            policy_cycle = int(float(row.get("Policy Cycle") or 0))
+        except (TypeError, ValueError):
+            policy_cycle = 0
+        if policy_cycle > 1:
+            renewal_rows.append((idx, row))
+    if not renewal_rows:
+        return
+
+    total_weight = sum(float(weight) for weight in distribution.values()) or 100.0
+    counts = {
+        str(channel).upper(): round(len(renewal_rows) * float(weight) / total_weight)
+        for channel, weight in distribution.items()
+    }
+    while sum(counts.values()) > len(renewal_rows):
+        counts[max(counts, key=counts.get)] -= 1
+    while sum(counts.values()) < len(renewal_rows):
+        counts[max(counts, key=lambda key: distribution.get(key, 0))] += 1
+
+    nps_by_customer = {}
+    for row in sat_cus:
+        customer_hk = row.get("Customer Hash Key")
+        if not customer_hk:
+            continue
+        try:
+            nps_by_customer[customer_hk] = int(float(row.get("NPS Score")))
+        except (TypeError, ValueError):
+            nps_by_customer[customer_hk] = 0
+
+    ranked = []
+    for idx, row in renewal_rows:
+        person_hk = policy_to_person_map.get(row.get("Policy Hash Key"))
+        customer_hks = person_to_customer.get(person_hk, []) if person_hk else []
+        if not isinstance(customer_hks, list):
+            customer_hks = [customer_hks]
+        nps_score = max((nps_by_customer.get(customer_hk, 0) for customer_hk in customer_hks), default=0)
+        ranked.append((nps_score, -idx, row))
+
+    ranked_low = sorted(ranked)
+    ranked_high = sorted(ranked, reverse=True)
+    ranked_mid = sorted(ranked, key=lambda item: (abs(item[0] - 7.5), item[1]))
+    used_rows = set()
+
+    def take_rows(candidates: list[tuple[int, int, dict]], count: int) -> list[dict]:
+        selected = []
+        for _, _, candidate in candidates:
+            row_id = id(candidate)
+            if row_id in used_rows:
+                continue
+            selected.append(candidate)
+            used_rows.add(row_id)
+            if len(selected) == count:
+                break
+        if len(selected) < count:
+            for _, _, candidate in ranked_high:
+                row_id = id(candidate)
+                if row_id in used_rows:
+                    continue
+                selected.append(candidate)
+                used_rows.add(row_id)
+                if len(selected) == count:
+                    break
+        return selected
+
+    channel_rows = {
+        "BRANCH": take_rows([item for item in ranked_low if item[0] <= 6], counts.get("BRANCH", 0)),
+        "AGENT": take_rows([item for item in ranked_mid if 7 <= item[0] <= 8], counts.get("AGENT", 0)),
+        "ONLINE": take_rows([item for item in ranked_high if item[0] >= 9], counts.get("ONLINE", 0)),
+    }
+    for channel, rows in channel_rows.items():
+        for row in rows:
+            row["Sales Channel"] = channel
+
+
+def _align_self_service_adoption_to_nps(
+    sat_acc: list[dict],
+    sat_cus: list[dict],
+    person_to_account: dict,
+    person_to_customer: dict,
+    consented_persons: set,
+    nps_settings: dict | None,
+) -> None:
+    distribution = (nps_settings or {}).get("self_service_adoption_distribution") or {
+        "ADOPTED": 65,
+        "NOT_ADOPTED": 35,
+    }
+    adoption_weight = sum(
+        float(weight)
+        for value, weight in distribution.items()
+        if str(value).upper() in {"ADOPTED", "Y", "YES", "TRUE", "1"}
+    )
+    total_weight = sum(float(weight) for weight in distribution.values()) or 100.0
+    target = round(len(sat_acc) * adoption_weight / total_weight)
+
+    nps_by_customer = {}
+    for row in sat_cus:
+        customer_hk = row.get("Customer Hash Key")
+        if not customer_hk:
+            continue
+        try:
+            nps_by_customer[customer_hk] = int(float(row.get("NPS Score")))
+        except (TypeError, ValueError):
+            nps_by_customer[customer_hk] = 0
+
+    account_to_person = {}
+    account_to_nps = {}
+    for person_hk, account_hks in person_to_account.items():
+        customer_hks = person_to_customer.get(person_hk, [])
+        if not isinstance(customer_hks, list):
+            customer_hks = [customer_hks]
+        person_nps = max((nps_by_customer.get(customer_hk, 0) for customer_hk in customer_hks), default=0)
+        for account_hk in account_hks if isinstance(account_hks, list) else [account_hks]:
+            account_to_person[account_hk] = person_hk
+            account_to_nps[account_hk] = person_nps
+
+    ranked = []
+    account_by_hk = {}
+    for idx, row in enumerate(sat_acc):
+        account_hk = row.get("Account Hash Key")
+        account_by_hk[account_hk] = row
+        person_hk = account_to_person.get(account_hk)
+        if person_hk in consented_persons:
+            ranked.append((account_to_nps.get(account_hk, 0), -idx, row))
+
+    adopted_rows = {
+        id(row)
+        for _, _, row in sorted(ranked, reverse=True)[:target]
+    }
+    for idx, row in enumerate(sat_acc):
+        load_dt = datetime.fromisoformat(str(row.get("Load Date")).replace("Z", ""))
+        if id(row) in adopted_rows:
+            row["Account Creation Type"] = "ONLINE"
+            row["Account Last Access"] = (load_dt - timedelta(days=idx % 30)).strftime("%Y-%m-%d %H:%M:%S")
+        else:
+            row["Account Last Access"] = (load_dt - timedelta(days=45 + (idx % 180))).strftime("%Y-%m-%d %H:%M:%S")
+
+
 def build_default_source_context(
     cfg: dict,
     run_id: str,
@@ -226,7 +624,12 @@ def build_source_context(
     sat_eci = sat_identities(person_to_identity, sat_date)
     sat_con = sat_contact(person_to_contact, sat_date)
     sat_cns = sat_consent(person_to_consent, sat_date)
-    sat_acc = sat_account(person_to_account, sat_date, churn_config=cfg_local.get("churn_settings"))
+    sat_acc = sat_account(
+        person_to_account,
+        sat_date,
+        churn_config=cfg_local.get("churn_settings"),
+        nps_config=cfg_local.get("nps_settings"),
+    )
     person_marketing_engagement_by_person = {}
     sat_mpr = sat_marketing_preference(
         person_to_mpr,
@@ -235,7 +638,7 @@ def build_source_context(
         person_marketing_engagement_by_person=person_marketing_engagement_by_person,
     )
     sat_men = sat_marketing_engagement(person_to_men, sat_date)
-    sat_quo = sat_quote(person_to_quote, sat_date)
+    sat_quo = sat_quote(person_to_quote, sat_date, nps_config=cfg_local.get("nps_settings"))
 
     account_to_person_map = {}
     for person_hk, account_hks in person_to_account.items():
@@ -335,6 +738,43 @@ def build_source_context(
         as_of_date=as_of_date,
         earliest_policy_start_by_person=earliest_policy_start_by_person,
         churn_config=cfg_local.get("churn_settings"),
+        nps_config=cfg_local.get("nps_settings"),
+    )
+    _align_account_creation_type_to_nps(
+        sat_acc,
+        sat_cus,
+        person_to_account,
+        person_to_customer,
+        cfg_local.get("nps_settings"),
+    )
+    _align_quote_status_to_nps(
+        sat_quo,
+        sat_cus,
+        person_to_quote,
+        person_to_customer,
+        cfg_local.get("nps_settings"),
+    )
+    _align_quote_premium_increase_to_nps(
+        sat_quo,
+        sat_cus,
+        person_to_quote,
+        person_to_customer,
+        cfg_local.get("nps_settings"),
+    )
+    _align_digital_renewal_to_nps(
+        sat_pol,
+        sat_cus,
+        policy_to_person_map,
+        person_to_customer,
+        cfg_local.get("nps_settings"),
+    )
+    _align_self_service_adoption_to_nps(
+        sat_acc,
+        sat_cus,
+        person_to_account,
+        person_to_customer,
+        consented_persons,
+        cfg_local.get("nps_settings"),
     )
     sat_cus = apply_customer_segments(
         sat_cus,

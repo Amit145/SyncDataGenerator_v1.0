@@ -51,6 +51,33 @@ SAFE_VALUE_CHOICES = {
 }
 
 
+def _has_value(value) -> bool:
+    if pd.isna(value):
+        return False
+    return str(value).strip() != ""
+
+
+def _sync_complaint_status_after_mutation(row: pd.Series) -> pd.Series:
+    if "complaint_status" not in row.index:
+        return row
+
+    status = str(row.get("complaint_status", "")).strip().upper()
+    has_resolved_date = "complaint_resolved_date" in row.index and _has_value(row.get("complaint_resolved_date"))
+
+    if has_resolved_date and status in {"OPEN", "PENDING", "IN REVIEW"}:
+        row["complaint_status"] = "Closed"
+    elif not has_resolved_date and status in {"RESOLVED", "CLOSED"}:
+        row["complaint_status"] = "In Review"
+
+    return row
+
+
+def _sync_row_after_mutation(file_name: str, row: pd.Series) -> pd.Series:
+    if file_name == "sat_complaint.csv":
+        return _sync_complaint_status_after_mutation(row)
+    return row
+
+
 def _mutate_value(series: pd.Series, value, column_name: str, csv_file: Path):
     enum_values = SAT_ENUMS.get(csv_file.stem, {}).get(column_name)
 
@@ -245,6 +272,8 @@ def create_scd_data(input_folder: str, output_folder: str, sat_date: str, exclud
 
             if not _row_changed(old_row, new_row):
                 continue
+
+            new_row = _sync_row_after_mutation(file_name, new_row)
 
             if "load_date" in new_row.index:
                 new_row["load_date"] = sat_date

@@ -74,7 +74,7 @@ SAT_ENUMS = {
     },
 
     "sat_quote": {
-        "quote_status": ["CREATED", "SENT", "EXPIRED"],
+        "quote_status": ["CREATED", "SENT", "EXPIRED", "ACCEPTED"],
         "renewal_amt_next_period": []
     },
 

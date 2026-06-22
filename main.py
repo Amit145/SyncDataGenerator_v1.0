@@ -2,6 +2,7 @@ import random
 import os
 import csv
 import argparse
+import shutil
 from datetime import datetime, timedelta
 
 from config.runConfig import (
@@ -16,9 +17,13 @@ from config.runConfig import (
 )
 from config.storage_paths import (
     MLOPS_ROOT,
+    RAW_ROOT,
     SCD2_BASE_ROOT,
     SCD2_ENHANCED_ROOT,
     SCD2_MLOPS_ROOT,
+    SILVER_BASE_ROOT,
+    SILVER_ENHANCED_ROOT,
+    SILVER_MLOPS_ROOT,
     SYNTHETIC_ENHANCED_ROOT,
     ensure_data_roots,
 )
@@ -28,6 +33,7 @@ from generators.transaction_generator import (
     hub_assets_from_policies,
 )
 from generators.raw_crm_generator import write_raw_crm_batch
+from generators.raw_prd_generator import copy_raw_prd2_folder, write_raw_base_prd2_variant, write_raw_prd1_batch
 from generators.raw_api_generator import write_raw_api_batch
 from generators.raw_claims_generator import write_raw_claims_batch
 from generators.raw_data_source_generator import generate_data_source_raw
@@ -46,6 +52,8 @@ from helper.scd2_diff_engine import previous_subdir
 from helper.source_context_builder import build_source_context
 from helper.streaming_base_generator import generate_streaming_base
 from helper.link_builder import build_links, make_link
+from misc.build_product_combined_vault import build_product_combined
+from misc.raw_to_silver_sample import build_silver
 from modules.module_parser import parse_ddl_module, file_ready
 from helper.pk_validator import assert_unique
 
@@ -91,6 +99,11 @@ parser.add_argument(
     help="Generate only enhanced synthetic output. Base context is still built in memory.",
 )
 parser.add_argument(
+    "--mlops-only",
+    action="store_true",
+    help="Generate only MLOps synthetic output. Base context is still built in memory.",
+)
+parser.add_argument(
     "--streaming-base",
     action="store_true",
     help="Generate base Data Vault output in chunks for very large volumes.",
@@ -121,10 +134,26 @@ parser.add_argument(
     action="store_true",
     help="Generate data/new_outputs_src outputs and SCD2 deltas. Requires --include-raw-silver.",
 )
+parser.add_argument(
+    "--remove-working-output",
+    action="store_true",
+    help="Remove intermediate data/output/<run_id> files after they are normalized into data/synthetic/base. Kept by default.",
+)
 args = parser.parse_args()
+if args.enhanced_only and args.mlops_only:
+    parser.error("--enhanced-only and --mlops-only cannot be used together.")
 enhanced_only = args.enhanced_only
-include_raw_silver = args.include_raw_silver
-include_new_outputs_src = include_raw_silver and args.include_new_outputs_src
+mlops_only = args.mlops_only
+skip_base_outputs = enhanced_only or mlops_only
+cfg = load_config()
+output_settings = cfg.get("output_settings", {})
+include_raw_silver = args.include_raw_silver or bool(output_settings.get("generate_legacy_raw_silver", False))
+generate_prd_raw = (not skip_base_outputs) and bool(output_settings.get("generate_prd_raw", False))
+requested_prd_silver = (not skip_base_outputs) and bool(output_settings.get("generate_prd_silver", False))
+generate_prd_silver = generate_prd_raw and requested_prd_silver
+include_new_outputs_src = include_raw_silver and (
+    args.include_new_outputs_src or bool(output_settings.get("generate_new_outputs_src", False))
+)
 
 # ---------------- Inputs ----------------
 BUSINESS_START_DATE = "2020-01-01"
@@ -158,7 +187,13 @@ HUB_DATE = hub_dt.isoformat()
 LINK_DATE = link_dt.isoformat()
 SAT_DATE = sat_dt.isoformat()
 
-ensure_data_roots()
+ensure_data_roots(
+    include_optional_raw_silver=include_raw_silver or generate_prd_raw or generate_prd_silver,
+    include_new_outputs_src=include_new_outputs_src,
+    include_product_combined=False,
+    include_legacy_global_prd=False,
+    include_scd2_reports=False,
+)
 
 # ---------------- Create Metadata ordered Table ----------------
 if not file_ready(PARSED_DDL_PATH):
@@ -174,7 +209,6 @@ else:
     print(f"Skipping inference_module: {ORDERED_TABLE_METADATA_PATH} already exists")
 
 # ---------------- Run settings ----------------
-cfg = load_config()
 seed = cfg["run_settings"]["random_seed"]
 random.seed(seed)
 
@@ -393,7 +427,12 @@ sat_lea = sat_lead(
 sat_eci = sat_identities(person_to_identity, SAT_DATE)
 sat_con = sat_contact(person_to_contact, SAT_DATE)
 sat_cns = sat_consent(person_to_consent, SAT_DATE)
-sat_acc = sat_account(person_to_account, SAT_DATE, churn_config=cfg.get("churn_settings"))
+sat_acc = sat_account(
+    person_to_account,
+    SAT_DATE,
+    churn_config=cfg.get("churn_settings"),
+    nps_config=cfg.get("nps_settings"),
+)
 person_marketing_engagement_by_person = {}
 sat_mpr = sat_marketing_preference(
     person_to_mpr,
@@ -402,7 +441,7 @@ sat_mpr = sat_marketing_preference(
     person_marketing_engagement_by_person=person_marketing_engagement_by_person,
 )
 sat_men = sat_marketing_engagement(person_to_men, SAT_DATE)
-sat_quo = sat_quote(person_to_quote, SAT_DATE)
+sat_quo = sat_quote(person_to_quote, SAT_DATE, nps_config=cfg.get("nps_settings"))
 
 account_to_person_map = {}
 for person_hk, account_hks in person_to_account.items():
@@ -511,6 +550,7 @@ sat_cus = sat_customer(
     as_of_date=AS_OF_DATE,
     earliest_policy_start_by_person=earliest_policy_start_by_person,
     churn_config=cfg.get("churn_settings"),
+    nps_config=cfg.get("nps_settings"),
 )
 sat_cus = apply_customer_segments(
     sat_cus,
@@ -563,7 +603,7 @@ sat_prod = sat_product(hub_prod_rows, SAT_DATE, product_code_by_hk)
 # =========================================================
 # 7) WRITE OUTPUTS
 # =========================================================
-if not enhanced_only:
+if not skip_base_outputs:
     write_csv(out, "Hub_Person.csv", hub_person_rows)
     write_csv(out, "Hub_Natural_Person.csv", hub_nat)
     write_csv(out, "Hub_Legal_Person.csv", hub_leg)
@@ -614,10 +654,10 @@ for table in EXPECTED_LINKS:
     for item in rows:
         item["Load Date"] = LINK_DATE
         rows_with_load_date.append(item)
-    if not enhanced_only:
+    if not skip_base_outputs:
         write_csv(out, f"{table}.csv", rows_with_load_date)
 
-if not enhanced_only:
+if not skip_base_outputs:
     write_csv(out, "Sat_Natural_Person.csv", sat_nat)
     write_csv(out, "Sat_Legal_Person.csv", sat_leg)
     write_csv(out, "Sat_Person.csv", sat_per)
@@ -704,9 +744,18 @@ base_context = {
     "sat_product_rows": sat_prod,
     "extract_ts": extract_ts,
 }
-# Raw/canonical/silver outputs are optional because they are expensive and not
-# needed for the normal synthetic + SCD2 MLOps workflow.
-if include_raw_silver and not enhanced_only:
+# Legacy CRM/API raw-canonical-silver outputs and mode-scoped PRD raw/silver
+# rebuilds are optional because they add runtime for large synthetic runs.
+raw_base_prd1_out = None
+raw_base_prd2_out = None
+raw_enhanced_prd1_out = None
+raw_enhanced_prd2_out = None
+raw_mlops_prd1_out = None
+raw_mlops_prd2_out = None
+silver_base_out = None
+silver_enhanced_out = None
+silver_mlops_out = None
+if include_raw_silver and not skip_base_outputs:
     raw_out = write_raw_crm_batch(RAW_BASE, folder_run_id, base_context)
     generated_crm_canonical = map_crm_raw_to_canonical(folder_run_id, raw_out)
 
@@ -782,12 +831,61 @@ else:
     generated_new_outputs_src = {}
     generated_new_outputs_src_scd2 = []
     synthetic_data_api = None
-enhanced_synthetic = os.path.join(SYNTHETIC_ENHANCED_ROOT, folder_run_id)
-build_enhanced_synthetic(base_context, enhanced_synthetic, cfg=cfg)
 mlops_synthetic = os.path.join(MLOPS_ROOT, folder_run_id)
+enhanced_synthetic = None
+if not mlops_only:
+    enhanced_synthetic = os.path.join(SYNTHETIC_ENHANCED_ROOT, folder_run_id)
+    build_enhanced_synthetic(base_context, enhanced_synthetic, cfg=cfg)
 build_mlops_synthetic(base_context, mlops_synthetic, cfg=cfg)
-previous_enhanced_run = previous_subdir(SYNTHETIC_ENHANCED_ROOT, exclude_name=folder_run_id)
-if previous_enhanced_run:
+
+if generate_prd_raw:
+    raw_base_prd1_out = write_raw_prd1_batch(RAW_ROOT, folder_run_id, base_context, mode="base")
+    raw_base_prd2_out = write_raw_base_prd2_variant(raw_base_prd1_out, RAW_ROOT, folder_run_id, mode="base")
+    raw_enhanced_prd1_out = write_raw_prd1_batch(RAW_ROOT, folder_run_id, base_context, mode="enhanced")
+    raw_mlops_prd1_out = write_raw_prd1_batch(RAW_ROOT, folder_run_id, base_context, mode="mlops")
+
+if generate_prd_raw and not mlops_only and enhanced_synthetic:
+    raw_enhanced_prd2_out = copy_raw_prd2_folder(
+        enhanced_synthetic,
+        RAW_ROOT,
+        folder_run_id,
+        base_folder=out,
+        mode="enhanced",
+    )
+if generate_prd_raw and not mlops_only:
+    raw_mlops_prd2_out = copy_raw_prd2_folder(
+        mlops_synthetic,
+        RAW_ROOT,
+        folder_run_id,
+        base_folder=out,
+        mode="mlops",
+    )
+
+if generate_prd_silver and raw_base_prd1_out:
+    silver_base_out = os.path.join(SILVER_BASE_ROOT, folder_run_id)
+    build_silver(raw_base_prd1_out, silver_base_out, HUB_DATE, LINK_DATE, SAT_DATE, source_type="prd1")
+    silver_enhanced_out = str(build_product_combined(
+        run_id=folder_run_id,
+        output_run_id=folder_run_id,
+        output_root=SILVER_ENHANCED_ROOT,
+        mode="enhanced",
+        base_dir=silver_base_out,
+        schema_dir=enhanced_synthetic,
+    ))
+    silver_mlops_out = str(build_product_combined(
+        run_id=folder_run_id,
+        output_run_id=folder_run_id,
+        output_root=SILVER_MLOPS_ROOT,
+        mode="mlops",
+        base_dir=silver_base_out,
+        schema_dir=mlops_synthetic,
+    ))
+
+previous_enhanced_run = None
+enhanced_scd2_output = None
+if not mlops_only:
+    previous_enhanced_run = previous_subdir(SYNTHETIC_ENHANCED_ROOT, exclude_name=folder_run_id)
+if previous_enhanced_run and enhanced_synthetic:
     enhanced_scd2_output = os.path.join(SCD2_ENHANCED_ROOT, folder_run_id)
     create_scd_data(
         SYNTHETIC_ENHANCED_ROOT,
@@ -795,7 +893,10 @@ if previous_enhanced_run:
         SAT_DATE,
         exclude_run_name=folder_run_id,
     )
-previous_mlops_run = previous_subdir(MLOPS_ROOT, exclude_name=folder_run_id)
+previous_mlops_run = None
+mlops_scd2_output = None
+if not mlops_only:
+    previous_mlops_run = previous_subdir(MLOPS_ROOT, exclude_name=folder_run_id)
 if previous_mlops_run:
     mlops_scd2_output = os.path.join(SCD2_MLOPS_ROOT, folder_run_id)
     create_scd_data(
@@ -815,7 +916,7 @@ assert_unique(hub_pol_rows, "Policy Hash Key")
 assert_unique(hub_quo_rows, "Quote Hash Key")
 
 print("Basic PK validation OK")
-if not enhanced_only:
+if not skip_base_outputs:
     print("DONE:", out)
     if include_raw_silver:
         print("RAW CRM:", raw_out)
@@ -837,14 +938,40 @@ if not enhanced_only:
         print("SILVER API:", synthetic_data_api)
     else:
         print("RAW/CANONICAL/SILVER: skipped (use --include-raw-silver to generate)")
-print("SYNTHETIC ENHANCED:", enhanced_synthetic)
+if enhanced_synthetic:
+    print("SYNTHETIC ENHANCED:", enhanced_synthetic)
 print("MLOPS:", mlops_synthetic)
-if previous_enhanced_run:
+if raw_base_prd1_out:
+    print("RAW BASE PRD1:", raw_base_prd1_out)
+if raw_base_prd2_out:
+    print("RAW BASE PRD2:", raw_base_prd2_out)
+if raw_enhanced_prd1_out:
+    print("RAW ENHANCED PRD1:", raw_enhanced_prd1_out)
+if raw_enhanced_prd2_out:
+    print("RAW ENHANCED PRD2:", raw_enhanced_prd2_out)
+if raw_mlops_prd1_out:
+    print("RAW MLOPS PRD1:", raw_mlops_prd1_out)
+if raw_mlops_prd2_out:
+    print("RAW MLOPS PRD2:", raw_mlops_prd2_out)
+if not generate_prd_raw and not skip_base_outputs:
+    print("PRD RAW: skipped (set output_settings.generate_prd_raw=true in config/scenario_v1.json)")
+if silver_base_out:
+    print("SILVER BASE:", silver_base_out)
+if silver_enhanced_out:
+    print("SILVER ENHANCED:", silver_enhanced_out)
+if silver_mlops_out:
+    print("SILVER MLOPS:", silver_mlops_out)
+if not generate_prd_silver and not skip_base_outputs:
+    if requested_prd_silver:
+        print("PRD SILVER: skipped because output_settings.generate_prd_raw=false")
+    else:
+        print("PRD SILVER: skipped (set output_settings.generate_prd_silver=true in config/scenario_v1.json)")
+if previous_enhanced_run and enhanced_scd2_output:
     print("SCD2 ENHANCED:", enhanced_scd2_output)
-if previous_mlops_run:
+if previous_mlops_run and mlops_scd2_output:
     print("SCD2 MLOPS:", mlops_scd2_output)
 
-if not enhanced_only:
+if not skip_base_outputs:
     are_files_checked = check_file_and_cols(DDL_JSON_PATH, OUTPUT_BASE)
     if are_files_checked:
         is_valid_integrity = validate_integrity(OUTPUT_BASE)
@@ -858,6 +985,12 @@ if not enhanced_only:
                 scd2_input = SYNTHETIC_DATA
                 scd2_output = os.path.join(SATELLITE_PATH, folder_run_id)
                 create_scd_data(scd2_input, scd2_output, SAT_DATE, exclude_run_name=folder_run_id)
+
+            if args.remove_working_output and os.path.isdir(out):
+                shutil.rmtree(out)
+                print("WORKING OUTPUT REMOVED:", out)
+            else:
+                print("WORKING OUTPUT KEPT:", out)
 
 end_time = datetime.now()
 print("Total time taken:", end_time - start_time)

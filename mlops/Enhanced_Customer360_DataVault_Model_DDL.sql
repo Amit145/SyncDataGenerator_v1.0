@@ -789,7 +789,8 @@ CREATE TABLE sat_claim
 	claim_band STRING,
 	claim_band_sort INT,
 	is_fault_claim STRING,
-	claim_satisfaction_score STRING
+	claim_satisfaction_score INTEGER,
+	claims_feedback STRING
 );
 
 ALTER TABLE sat_claim
@@ -808,7 +809,9 @@ CREATE TABLE sat_complaint
 	complaint_channel STRING,
 	compensation_amount INT,
 	insurance_category STRING,
-	complaint_status STRING
+	complaint_status STRING,
+	complaint_feedback STRING,
+	customer_complaint_satisfaction_score INTEGER
 );
 
 ALTER TABLE sat_complaint
@@ -853,7 +856,9 @@ CREATE TABLE sat_customer
 	income_band STRING,
 	customer_satisfaction STRING,
 	customer_age_band STRING,
-	net_promotor_code_segment STRING
+	net_promotor_code_segment STRING,
+	customer_onboarding_satisfaction_score INTEGER,
+	customer_onboarding_feedback STRING
 );
 
 ALTER TABLE sat_customer
@@ -943,7 +948,8 @@ CREATE TABLE sat_marketing_engagement
 	has_retention_team_interaction STRING,
 	customer_service_call_frequency INTEGER,
 	average_call_sentiment STRING,
-	engagement_score STRING
+	engagement_score INTEGER,
+	first_contact_resolution STRING
 );
 
 ALTER TABLE sat_marketing_engagement
@@ -1097,7 +1103,10 @@ CREATE TABLE sat_policy
 	is_direct_debit_cancellation STRING,
 	missed_payment_count INTEGER,
 	loyalty_discount_usage STRING,
-	is_installment_default STRING
+	is_installment_default STRING,
+	policy_renewal_satisfaction_score INTEGER,
+	policy_renewal_feedback STRING,
+	is_renewal_escalation STRING
 );
 
 ALTER TABLE sat_policy

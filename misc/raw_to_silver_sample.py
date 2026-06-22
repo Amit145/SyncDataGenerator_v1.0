@@ -1,5 +1,6 @@
 import argparse
 import csv
+import hashlib
 import json
 import os
 import sys
@@ -8,12 +9,27 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from helper.csv_writer import write_csv
-from helper.key_factory import md5_hasher
 from config.storage_paths import RAW_CRM_ROOT, SILVER_REBUILT_ROOT
 
 RAW_BASE = RAW_CRM_ROOT
 SAMPLE_SILVER_BASE = SILVER_REBUILT_ROOT
+
+
+def md5_hasher(value):
+    return hashlib.md5(str(value).encode("utf-8")).hexdigest()
+
+
+def write_csv(folder, name, rows, fieldnames=None):
+    os.makedirs(folder, exist_ok=True)
+    if not rows and not fieldnames:
+        return
+    if rows and not fieldnames:
+        fieldnames = list(rows[0].keys())
+    with open(os.path.join(folder, name.lower()), "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        if rows:
+            writer.writerows(rows)
 
 
 HUB_SCHEMAS = {
@@ -106,15 +122,291 @@ def read_manifest(raw_dir):
 def first_extract_ts(raw):
     for rows in raw.values():
         if rows:
-            return rows[0].get("_extract_ts", "") or rows[0].get("extract_ts", "")
+            return rows[0].get("_extract_ts", "") or rows[0].get("extract_ts", "") or rows[0].get("pull_ts", "")
     return ""
 
 
 def first_record_source(raw, default="CRM"):
     for rows in raw.values():
         if rows:
-            return rows[0].get("_source_system", "") or rows[0].get("source_system", "") or default
+            return rows[0].get("_source_system", "") or rows[0].get("source_system", "") or rows[0].get("origin_sys", "") or default
     return default
+
+
+def _map_rows(rows, mapping):
+    return [
+        {target: row.get(source, "") for target, source in mapping.items()}
+        for row in rows
+    ]
+
+
+def read_prd1_raw(raw_dir):
+    """Convert PRD1 source extracts into the canonical raw shape used by build_silver."""
+    return {
+        "person": _map_rows(
+            read_rows(os.path.join(raw_dir, "party_master.csv")),
+            {
+                "person_id": "party_ref",
+                "tenant_id": "tenant_cd",
+                "is_lead": "lead_ind",
+                "person_type": "party_kind",
+                "operational_paperless_consent": "paperless_ind",
+                "source_id": "src_party_ref",
+                "source_type": "src_party_type",
+                "natural_person_id": "natural_ref",
+                "first_name": "given_nm",
+                "last_name": "family_nm",
+                "full_name": "display_nm",
+                "courtesy_title": "title_txt",
+                "occupation": "occupation_txt",
+                "birth_date": "dob",
+                "birth_year": "birth_yr",
+                "nationality": "nationality_txt",
+                "gender": "gender_txt",
+                "marital_status": "marital_txt",
+                "assesed_disability_degree": "disability_degree",
+                "preferred_language": "language_pref",
+                "role": "role_txt",
+                "job_title": "job_title_txt",
+                "legal_person_id": "legal_ref",
+                "company_name": "legal_name",
+                "legal_person_score": "legal_score_no",
+                "legal_person_status": "legal_status_txt",
+                "legal_person_job_title": "legal_job_title_txt",
+                "legal_source_id": "legal_src_ref",
+                "legal_source_type": "legal_src_type",
+                "date_of_constitution": "constitution_dt",
+                "lead_converted_date": "lead_conv_dt",
+                "pull_ts": "pull_ts",
+                "origin_sys": "origin_sys",
+            },
+        ),
+        "contact": _map_rows(
+            read_rows(os.path.join(raw_dir, "contact_point.csv")),
+            {
+                "person_id": "party_ref",
+                "contact_id": "contact_ref",
+                "personal_email": "email_home_txt",
+                "work_email": "email_work_txt",
+                "work_phone": "phone_work_txt",
+                "home_phone": "phone_home_txt",
+                "pull_ts": "pull_ts",
+                "origin_sys": "origin_sys",
+            },
+        ),
+        "identity": _map_rows(
+            read_rows(os.path.join(raw_dir, "identity_registry.csv")),
+            {
+                "person_id": "party_ref",
+                "identities_id": "identity_ref",
+                "ecid": "ecid_txt",
+                "hashed_email": "hashed_email_txt",
+                "pull_ts": "pull_ts",
+                "origin_sys": "origin_sys",
+            },
+        ),
+        "address": _map_rows(
+            read_rows(os.path.join(raw_dir, "address_book.csv")),
+            {
+                "person_id": "party_ref",
+                "address_id": "address_ref",
+                "street": "street_txt",
+                "postcode": "postal_cd",
+                "city": "city_nm",
+                "state": "state_cd",
+                "country": "country_cd",
+                "pull_ts": "pull_ts",
+                "origin_sys": "origin_sys",
+            },
+        ),
+        "lead": _map_rows(
+            read_rows(os.path.join(raw_dir, "lead_register.csv")),
+            {
+                "person_id": "party_ref",
+                "lead_id": "lead_ref",
+                "interested_level": "interest_bucket",
+                "preferred_contact_method": "contact_pref",
+                "person_score": "person_score_no",
+                "person_status": "person_status_txt",
+                "converted_date": "converted_dt",
+                "pull_ts": "pull_ts",
+                "origin_sys": "origin_sys",
+            },
+        ),
+        "customer": _map_rows(
+            read_rows(os.path.join(raw_dir, "customer_portfolio.csv")),
+            {
+                "person_id": "party_ref",
+                "customer_id": "customer_ref",
+                "customer_number": "customer_no",
+                "customer_status": "customer_status_txt",
+                "customer_status_reason": "customer_status_reason_txt",
+                "customer_since": "customer_since_dt",
+                "customer_rating": "customer_rating_no",
+                "customer_segment": "customer_segment_txt",
+                "line_of_business": "lob_txt",
+                "nps_score": "nps_score_no",
+                "pull_ts": "pull_ts",
+                "origin_sys": "origin_sys",
+            },
+        ),
+        "customer_lead": _map_rows(
+            read_rows(os.path.join(raw_dir, "customer_lead_bridge.csv")),
+            {
+                "customer_id": "customer_ref",
+                "lead_id": "lead_ref",
+                "pull_ts": "pull_ts",
+                "origin_sys": "origin_sys",
+            },
+        ),
+        "consent": _map_rows(
+            read_rows(os.path.join(raw_dir, "consent_snapshot.csv")),
+            {
+                "person_id": "party_ref",
+                "consent_id": "consent_ref",
+                "opt_in_validated": "opt_in_valid_ind",
+                "opt_in_legitimate_interest": "opt_in_legit_ind",
+                "pull_ts": "pull_ts",
+                "origin_sys": "origin_sys",
+            },
+        ),
+        "mpr": _map_rows(
+            read_rows(os.path.join(raw_dir, "comm_preference.csv")),
+            {
+                "person_id": "party_ref",
+                "marketing_preference_id": "preference_ref",
+                "sms": "sms_ind",
+                "email": "email_ind",
+                "email_subscriptions": "email_sub_ind",
+                "call": "call_ind",
+                "any": "any_ind",
+                "commercial_email": "commercial_email_ind",
+                "postal_mail": "postal_mail_ind",
+                "pull_ts": "pull_ts",
+                "origin_sys": "origin_sys",
+            },
+        ),
+        "men": _map_rows(
+            read_rows(os.path.join(raw_dir, "campaign_touch.csv")),
+            {
+                "person_id": "party_ref",
+                "marketing_engagement_id": "engagement_ref",
+                "promotion_code": "promo_cd",
+                "opened_email": "email_opened_ind",
+                "marketing_status": "campaign_status_txt",
+                "pull_ts": "pull_ts",
+                "origin_sys": "origin_sys",
+            },
+        ),
+        "account": _map_rows(
+            read_rows(os.path.join(raw_dir, "account_book.csv")),
+            {
+                "person_id": "party_ref",
+                "account_id": "account_ref",
+                "account_number": "account_no",
+                "account_type": "account_type_txt",
+                "account_last_access": "last_access_dt",
+                "account_last_change": "last_change_dt",
+                "account_creation_type": "account_create_type_txt",
+                "account_status": "account_status_txt",
+                "pull_ts": "pull_ts",
+                "origin_sys": "origin_sys",
+            },
+        ),
+        "product": _map_rows(
+            read_rows(os.path.join(raw_dir, "product_catalog.csv")),
+            {
+                "product_id": "product_ref",
+                "product_type": "product_line",
+                "pull_ts": "pull_ts",
+                "origin_sys": "origin_sys",
+            },
+        ),
+        "quote": _map_rows(
+            read_rows(os.path.join(raw_dir, "quote_register.csv")),
+            {
+                "person_id": "party_ref",
+                "quote_id": "quote_ref",
+                "product_id": "product_ref",
+                "gross_revenue": "gross_amt",
+                "net_revenue": "net_amt",
+                "quote_number": "quote_no",
+                "quote_status": "quote_status_txt",
+                "renewal_amt_current_period": "renewal_amt_curr",
+                "renewal_amt_next_period": "renewal_amt_next",
+                "pull_ts": "pull_ts",
+                "origin_sys": "origin_sys",
+            },
+        ),
+        "policy": _map_rows(
+            read_rows(os.path.join(raw_dir, "policy_register.csv")),
+            {
+                "policy_id": "policy_ref",
+                "customer_id": "customer_ref",
+                "product_id": "product_ref",
+                "cover_option": "cover_option_txt",
+                "declined_claims": "declined_claim_cnt",
+                "fraud_flag": "fraud_ind",
+                "gross_revenue": "gross_amt",
+                "net_revenue": "net_amt",
+                "number_of_active_claim": "active_claim_cnt",
+                "number_of_previous_claim": "previous_claim_cnt",
+                "policy_cycle": "policy_cycle_no",
+                "policy_end_date": "policy_end_dt",
+                "policy_length": "policy_term_months",
+                "policy_number": "policy_no",
+                "policy_start_date": "policy_start_dt",
+                "policy_status": "policy_status_txt",
+                "renewal_amount_current_period": "renewal_premium_curr",
+                "renewal_amount_next_period": "renewal_premium_next",
+                "renewal_date": "renewal_dt",
+                "sales_channel": "sales_channel_txt",
+                "pull_ts": "pull_ts",
+                "origin_sys": "origin_sys",
+            },
+        ),
+        "home": _map_rows(
+            read_rows(os.path.join(raw_dir, "property_asset.csv")),
+            {
+                "product_id": "product_ref",
+                "home_id": "property_ref",
+                "wall_construction": "wall_material_txt",
+                "home_risk_address": "risk_address_txt",
+                "roof_construction": "roof_material_txt",
+                "home_type": "property_type_txt",
+                "home_state": "property_state_cd",
+                "is_existing_home_customer": "existing_home_ind",
+                "pull_ts": "pull_ts",
+                "origin_sys": "origin_sys",
+            },
+        ),
+        "motor": _map_rows(
+            read_rows(os.path.join(raw_dir, "vehicle_asset.csv")),
+            {
+                "product_id": "product_ref",
+                "motor_id": "vehicle_ref",
+                "auto_decline_vehicle": "auto_decline_ind",
+                "body_type": "body_style_txt",
+                "fuel_type": "fuel_type_txt",
+                "license_status": "license_status_txt",
+                "is_existing_motor_customer": "existing_motor_ind",
+                "motor_lapsed_policies": "motor_lapse_cnt",
+                "motor_risk_address": "garage_address_txt",
+                "risk_class_code": "risk_class_cd",
+                "variant": "variant_nm",
+                "vehicle_owner_type": "owner_type_txt",
+                "vehicle_regstate": "registration_state_cd",
+                "vehicle_class": "vehicle_class_txt",
+                "vehicle_model": "model_nm",
+                "vehicle_type": "vehicle_type_txt",
+                "motor_sum_insrd": "insured_value_amt",
+                "vehicle_year": "manufacture_yr",
+                "vehicle_age": "vehicle_age_yrs",
+                "pull_ts": "pull_ts",
+                "origin_sys": "origin_sys",
+            },
+        ),
+    }
 
 
 def plus_days(ts, days):
@@ -169,7 +461,12 @@ def latest_subdir(base_dir):
 
 def build_silver(raw_dir, out_dir, hub_load_date=None, link_load_date=None, sat_load_date=None, source_type=None):
     if source_type is None:
-        source_type = "api" if os.path.exists(os.path.join(raw_dir, "person.jsonl")) else "csv"
+        if os.path.exists(os.path.join(raw_dir, "person.jsonl")):
+            source_type = "api"
+        elif os.path.exists(os.path.join(raw_dir, "party_master.csv")):
+            source_type = "prd1"
+        else:
+            source_type = "csv"
 
     if source_type == "api":
         raw = {
@@ -190,6 +487,8 @@ def build_silver(raw_dir, out_dir, hub_load_date=None, link_load_date=None, sat_
             "home": read_jsonl_rows(os.path.join(raw_dir, "home.jsonl")),
             "motor": read_jsonl_rows(os.path.join(raw_dir, "motor.jsonl")),
         }
+    elif source_type == "prd1":
+        raw = read_prd1_raw(raw_dir)
     else:
         raw = {
             "person": read_rows(os.path.join(raw_dir, "crm_person.csv")),

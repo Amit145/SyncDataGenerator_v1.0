@@ -1,4 +1,5 @@
 import calendar
+import argparse
 import os
 from decimal import Decimal, ROUND_HALF_UP
 
@@ -24,6 +25,25 @@ def read_csv_safe(base_path: str, file_name: str) -> pd.DataFrame:
         .str.replace(" ", "_")
     )
     return df
+
+
+def read_csv_first(base_path: str, file_names: list[str], rename: dict[str, str] | None = None) -> pd.DataFrame:
+    for file_name in file_names:
+        path = os.path.join(base_path, file_name)
+        if os.path.exists(path):
+            df = read_csv_safe(base_path, file_name)
+            if rename:
+                df = df.rename(columns=rename)
+            return df
+    print(f"missing file: one of {file_names}")
+    return pd.DataFrame()
+
+
+def read_csv_optional(base_path: str, file_name: str) -> pd.DataFrame:
+    path = os.path.join(base_path, file_name)
+    if not os.path.exists(path):
+        return pd.DataFrame()
+    return read_csv_safe(base_path, file_name)
 
 
 def check_exists(df: pd.DataFrame, file_name: str):
@@ -725,7 +745,11 @@ def main(base_path: str):
     hub_leg = read_csv_safe(base_path, "hub_legal_person.csv")
     hub_contact = read_csv_safe(base_path, "hub_contact.csv")
     hub_identity = read_csv_safe(base_path, "hub_identities.csv")
-    hub_address = read_csv_safe(base_path, "hub_home_address.csv")
+    hub_address = read_csv_first(
+        base_path,
+        ["hub_home_address.csv", "hub_address.csv"],
+        {"address_hash_key": "home_address_hash_key", "address_id": "home_address_id"},
+    )
     hub_consent = read_csv_safe(base_path, "hub_consent.csv")
     hub_mpr = read_csv_safe(base_path, "hub_marketing_preference.csv")
     hub_men = read_csv_safe(base_path, "hub_marketing_engagement.csv")
@@ -753,7 +777,11 @@ def main(base_path: str):
     l_p_leg = read_csv_safe(base_path, "link_person_legal_person.csv")
     l_p_contact = read_csv_safe(base_path, "link_person_contact.csv")
     l_p_identity = read_csv_safe(base_path, "link_person_identities.csv")
-    l_p_address = read_csv_safe(base_path, "link_person_home_address.csv")
+    l_p_address = read_csv_first(
+        base_path,
+        ["link_person_home_address.csv", "link_person_address.csv"],
+        {"address_hash_key": "home_address_hash_key", "person_address_hash_key": "person_home_address_hash_key"},
+    )
     l_p_consent = read_csv_safe(base_path, "link_person_consent.csv")
     l_p_lead = read_csv_safe(base_path, "link_person_lead.csv")
     l_p_account = read_csv_safe(base_path, "link_person_account.csv")
@@ -769,8 +797,8 @@ def main(base_path: str):
     l_pol_customer = read_csv_safe(base_path, "link_policy_customer.csv")
     l_pol_product = read_csv_safe(base_path, "link_policy_product.csv")
 
-    l_prod_motor = read_csv_safe(base_path, "link_product_motor.csv")
-    l_prod_home = read_csv_safe(base_path, "link_product_home.csv")
+    l_prod_motor = read_csv_optional(base_path, "link_product_motor.csv")
+    l_prod_home = read_csv_optional(base_path, "link_product_home.csv")
 
     # ---------- REQUIRED FILE CHECK ----------
     required_files = {
@@ -779,10 +807,10 @@ def main(base_path: str):
         "hub_legal_person.csv": hub_leg,
         "hub_contact.csv": hub_contact,
         "hub_identities.csv": hub_identity,
-        "hub_home_address.csv": hub_address,
+        "hub_home_address.csv or hub_address.csv": hub_address,
         "link_person_contact.csv": l_p_contact,
         "link_person_identities.csv": l_p_identity,
-        "link_person_home_address.csv": l_p_address,
+        "link_person_home_address.csv or link_person_address.csv": l_p_address,
         "link_quote_person.csv": l_q_person,
         "link_quote_product.csv": l_q_product,
         "link_policy_customer.csv": l_pol_customer,
@@ -1060,39 +1088,45 @@ def main(base_path: str):
 
     print("\n===== PRODUCT ASSET RULES =====\n")
 
-    check_fk(
-        l_prod_motor,
-        "product_hash_key",
-        hub_product,
-        "product_hash_key",
-        "product_motor_product_fk"
-    )
+    if l_prod_motor.empty and l_prod_home.empty:
+        print("product_asset_rules skipped: link_product_motor/link_product_home not present in MLOps/product-combined shape")
+    else:
+        check_fk(
+            l_prod_motor,
+            "product_hash_key",
+            hub_product,
+            "product_hash_key",
+            "product_motor_product_fk"
+        )
 
-    check_fk(
-        l_prod_motor,
-        "motor_hash_key",
-        hub_motor,
-        "motor_hash_key",
-        "product_motor_motor_fk"
-    )
+        check_fk(
+            l_prod_motor,
+            "motor_hash_key",
+            hub_motor,
+            "motor_hash_key",
+            "product_motor_motor_fk"
+        )
 
-    check_fk(
-        l_prod_home,
-        "product_hash_key",
-        hub_product,
-        "product_hash_key",
-        "product_home_product_fk"
-    )
+        check_fk(
+            l_prod_home,
+            "product_hash_key",
+            hub_product,
+            "product_hash_key",
+            "product_home_product_fk"
+        )
 
-    check_fk(
-        l_prod_home,
-        "home_hash_key",
-        hub_home,
-        "home_hash_key",
-        "product_home_home_fk"
-    )
+        check_fk(
+            l_prod_home,
+            "home_hash_key",
+            hub_home,
+            "home_hash_key",
+            "product_home_home_fk"
+        )
 
     print("\n===== POLICY -> ASSET SANITY =====\n")
+    skip_product_asset_sanity = l_prod_motor.empty and l_prod_home.empty
+    if skip_product_asset_sanity:
+        print("policy_asset_sanity skipped: link_product_motor/link_product_home not present in MLOps/product-combined shape")
 
     policy_product_map = {}
     if not l_pol_product.empty and {"policy_hash_key", "product_hash_key"}.issubset(l_pol_product.columns):
@@ -1104,7 +1138,7 @@ def main(base_path: str):
     bad_motor = []
     bad_home = []
 
-    for policy_hk, product_hk in policy_product_map.items():
+    for policy_hk, product_hk in ([] if skip_product_asset_sanity else policy_product_map.items()):
         prod_row = sat_product[sat_product["product_hash_key"] == product_hk]
         if prod_row.empty:
             continue
@@ -1124,13 +1158,17 @@ def main(base_path: str):
             if len(product_to_home) == 0:
                 bad_home.append((policy_hk, product_hk, product_id))
 
-    if bad_motor:
+    if skip_product_asset_sanity:
+        pass
+    elif bad_motor:
         print(f"policy_motor_asset error: {len(bad_motor)} motor-like policies exist but no product_motor links exist at all")
         print("sample:", bad_motor[:10])
     else:
         print("policy_motor_asset valid")
 
-    if bad_home:
+    if skip_product_asset_sanity:
+        pass
+    elif bad_home:
         print(f"policy_home_asset error: {len(bad_home)} home/property-like policies exist but no product_home links exist at all")
         print("sample:", bad_home[:10])
     else:
@@ -1697,9 +1735,15 @@ def main(base_path: str):
     print(f"hub_home rows: {len(hub_home)}")
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Verify base-like synthetic CSV rules. Accepts base or product_combined folders.")
+    parser.add_argument("folder", nargs="?", help="Folder to verify. Defaults to configured silver folders.")
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
-    dirs = [SILVER_REBUILT_ROOT,SILVER_API_ROOT,SILVER_DATA_SOURCE_ROOT]
-    dirs = ['F:\\SyncDataGenerator_v1.0\\data\\synthetic\\base\\20260522092135']
+    args = parse_args()
+    dirs = [args.folder] if args.folder else [SILVER_REBUILT_ROOT, SILVER_API_ROOT, SILVER_DATA_SOURCE_ROOT]
     for target_path in dirs:
         print(target_path)
         main(target_path)

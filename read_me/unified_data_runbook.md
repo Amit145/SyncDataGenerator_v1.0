@@ -1,9 +1,10 @@
 # Unified Data Runbook
 
-Detailed current rules are documented in `docs/current_rules_reference.md`.
-Scenario config meanings are documented in `docs/scenario_config_reference.md`.
+Detailed current rules are documented in:
 
-This runbook describes the current commands and storage layout.
+- `docs/current_rules_reference.md`
+- `docs/scenario_config_reference.md`
+- `docs/llm_codebase_context.md`
 
 ## Commands
 
@@ -13,31 +14,25 @@ Normal generation:
 .\venv\Scripts\python.exe .\main.py
 ```
 
-Normal generation with optional source-specific outputs:
+Normal generation keeps `data/output/<run_id>`. Remove that intermediate folder only when explicitly requested:
 
 ```powershell
-.\venv\Scripts\python.exe .\main.py --include-new-outputs-src
+.\venv\Scripts\python.exe .\main.py --remove-working-output
 ```
 
-Raw to silver:
+Legacy raw/silver generation:
 
 ```powershell
-.\venv\Scripts\python.exe .\misc\transform_all_raw_to_silver.py
+.\venv\Scripts\python.exe .\main.py --include-raw-silver
 ```
 
-Silver verification:
+Legacy source-specific output generation:
 
 ```powershell
-.\venv\Scripts\python.exe .\misc\verify_all_silver.py
+.\venv\Scripts\python.exe .\main.py --include-raw-silver --include-new-outputs-src
 ```
 
-Churn KPI validation:
-
-```powershell
-.\venv\Scripts\python.exe .\validate_churn_kpis.py
-```
-
-Large base-only generation:
+Large base-only streaming generation:
 
 ```powershell
 .\venv\Scripts\python.exe .\main.py --streaming-base --total-people 10000000 --chunk-size 100000
@@ -45,59 +40,73 @@ Large base-only generation:
 
 ## Storage Layout
 
-Default folders:
+Default synthetic and raw/silver folders:
 
 - `data/output/<run_id>`
 - `data/synthetic/base/<run_id>`
 - `data/synthetic/enhanced/<run_id>`
+- `data/synthetic/mlops/<run_id>`
+- `data/raw/base/prd_01/<run_id>`
+- `data/raw/enhanced/prd_01/<run_id>`
+- `data/raw/enhanced/prd_02/<run_id>`
+- `data/raw/mlops/prd_01/<run_id>`
+- `data/raw/mlops/prd_02/<run_id>`
+- `data/silver/base/<run_id>`
+- `data/silver/enhanced/<run_id>`
+- `data/silver/mlops/<run_id>`
+- `data/scd2/base/<run_id>`
+- `data/scd2/enhanced/<run_id>`
+- `data/scd2/mlops/<run_id>`
+
+Optional legacy folders, only when requested:
+
 - `data/raw/crm/<run_id>`
 - `data/raw/crm_canonical/<run_id>`
 - `data/raw/api/<run_id>`
 - `data/raw/claims/<run_id>`
 - `data/raw/claims_canonical/<run_id>`
-- `data/raw/data_source/motor/<run_id>`
-- `data/raw/data_source/home/<run_id>`
+- `data/raw/data_source/<source>/<run_id>`
 - `data/raw/data_source_canonical/<run_id>`
-- `data/silver/rebuild/<run_id>`
 - `data/silver/api/<run_id>`
 - `data/silver/claims/<run_id>`
 - `data/silver/data_source/<run_id>`
-- `data/scd2/base/<run_id>`
-- `data/scd2/enhanced/<run_id>`
 - `data/scd2/raw/crm/<run_id>`
 - `data/scd2/raw/api/<run_id>`
 
-Optional `new_outputs_src` folders, only when requested:
+## Verification
 
-- `data/new_outputs_src/<source>/data/<run_id>`
-- `data/new_outputs_src/<source>/scd2/<run_id>`
+Base:
+
+```powershell
+.\venv\Scripts\python.exe .\verify_csv.py .\data\synthetic\base\<run_id>
+```
+
+Enhanced:
+
+```powershell
+.\venv\Scripts\python.exe .\misc\verify_enhanced_synthetic.py .\data\synthetic\enhanced\<run_id>
+```
+
+MLOps:
+
+```powershell
+.\venv\Scripts\python.exe .\misc\verify_mlops_synthetic.py .\data\synthetic\mlops\<run_id>
+```
+
+PRD raw:
+
+```powershell
+.\venv\Scripts\python.exe .\misc\verify_prd_raw_mlops.py --mode base --run-id <run_id>
+.\venv\Scripts\python.exe .\misc\verify_prd_raw_mlops.py --mode enhanced --run-id <run_id>
+.\venv\Scripts\python.exe .\misc\verify_prd_raw_mlops.py --mode mlops --run-id <run_id>
+```
 
 ## SCD2 Flow
 
-SCD2 is generated only when prior comparable runs exist.
+SCD2 is generated only when a prior comparable synthetic run exists.
 
-- base synthetic SCD2: `data/scd2/base/<run_id>`
+- base SCD2: `data/scd2/base/<run_id>`
 - enhanced SCD2: `data/scd2/enhanced/<run_id>`
-- raw CRM/API SCD2: `data/scd2/raw/<source>/<run_id>`
-- optional source-specific SCD2: `data/new_outputs_src/<source>/scd2/<run_id>`
+- MLOps SCD2: `data/scd2/mlops/<run_id>`
 
-## Churn And MLOps Rules
-
-Current churn alignment:
-
-- churn distributions are configured in `config/scenario_v1.json` under `churn_settings`
-- config key meanings are documented in `docs/scenario_config_reference.md`
-- `Policy Cycle` is completed annual tenure.
-- Higher `Policy Cycle` produces lower churn.
-- `Policy Cycle` is not number of policies/products held.
-- Multi-product ownership is a separate concept and should not be inferred from `Policy Cycle`.
-- Completed-tenure churn targets the workbook ranges: `<1 year 35-50%`, `1-2 years 25-35%`, `3-5 years 15-25%`, and `>5 years 8-15%`.
-- `AGENT` carries broker/aggregator-like higher churn behavior using existing channel values. The workbook does not define a sales-channel benchmark range.
-- `AGGREGATOR` is not emitted.
-- Policy dates and status rules remain valid for `ACTIVE`, `LAPSED`, and `CANCELLED`.
-
-Validation tools:
-
-- `validate_churn_kpis.py` checks base churn fields and directionality.
-- `verify_csv.py` checks full silver relationship, timeline, policy, and churn rules.
-- `verify_all_silver.py` runs `verify_csv.py` across latest silver outputs.
+SCD2 preserves the same PK/FK, date, churn, NPS, claim, complaint, and MLOps enrichment logic as the synthetic mode that produced it.

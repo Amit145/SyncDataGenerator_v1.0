@@ -242,7 +242,7 @@ def write_raw_crm_batch(base_folder, batch_id, ctx, source_dir_name="crm", sourc
             "company_name": sat_leg.get("Company Name"),
             "legal_person_score": sat_leg.get("Person Score"),
             "legal_person_status": sat_leg.get("Person Status"),
-            "legal_person_job_title": sat_leg.get("Job Title"),
+            "legal_person_job_title": sat_leg.get("Job Title") or "NOT_APPLICABLE",
             "legal_source_id": sat_leg.get("Source Id"),
             "legal_source_type": sat_leg.get("Source Type"),
             "date_of_constitution": sat_leg.get("Date of Constitution"),

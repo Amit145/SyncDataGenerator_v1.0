@@ -8,17 +8,75 @@ For the latest generated-run validation results and expected-vs-current churn ra
 
 ## Output Scope
 
-Default `main.py` generation creates the synthetic workflow only:
+Default `main.py` generation creates the synthetic workflow:
 
-- base vault output under `data/output/<run_id>`
 - normalized synthetic base output under `data/synthetic/base/<run_id>`
 - enhanced synthetic output under `data/synthetic/enhanced/<run_id>`
 - MLOps synthetic output under `data/synthetic/mlops/<run_id>`
 - synthetic base/enhanced/MLOps SCD2 outputs when prior synthetic history exists
 
-Raw, canonical, silver, and raw SCD2 outputs are disabled by default. Generate them only when needed with `--include-raw-silver`.
+`data/output/<run_id>` is an intermediate base build folder. It is kept after successful validation and normalization unless `--remove-working-output` is passed.
 
-`new_outputs_src` is also disabled by default. It is generated only when `--include-raw-silver --include-new-outputs-src` is passed.
+Raw and silver outputs are disabled by default because they add runtime. Enable PRD raw with `output_settings.generate_prd_raw=true`, and enable PRD silver rebuilds with both `output_settings.generate_prd_raw=true` and `output_settings.generate_prd_silver=true`.
+
+Legacy raw CRM/API/claims/data_source, canonical, silver, and raw SCD2 outputs are disabled by default. Generate them only when needed with `output_settings.generate_legacy_raw_silver=true` or `--include-raw-silver`.
+
+`new_outputs_src` is also disabled by default. It is generated only when legacy raw/silver is enabled and `output_settings.generate_new_outputs_src=true` or `--include-new-outputs-src` is passed.
+
+Direct MLOps dimensional output is generated on demand from an existing MLOps synthetic vault run:
+
+```powershell
+.\venv\Scripts\python.exe .\misc\generate_direct_dim_fact.py --run-id <run_id>
+```
+
+Rules for `data/dim_fact_direct/mlops/<run_id>`:
+
+- exactly 22 CSV files are written: 18 dimensions and 4 facts from `mlops/Enhanced_Customer360_Dimensional_Model_DDL.sql`
+- every table includes all DDL columns, even when a value is optional or unknown
+- dimensions use unique surrogate keys and include `-1` unknown rows for optional fact references
+- dimensions with SCD2 columns have populated `effective_from_ts`, `effective_to_ts`, and `record_version`
+- facts resolve their surrogate keys to the corresponding dimension rows
+- the direct dim/fact builder reads the MLOps Data Vault as source and does not mutate the source vault files
+- NPS analytical features are calibrated at the ML notebook `master_df` grain; this can clone descriptive dimension rows with new surrogate keys so joins remain one-to-one and workbook ratios survive dim/fact analysis
+- validation is done with `misc/verify_direct_dim_fact.py` for structure/RI/SCD2 fields and `misc/verify_nps_dim_fact.py` for post-dim/fact NPS ratios
+
+Mode-scoped PRD raw folders:
+
+- `data/raw/base/prd_01/<run_id>` preserves the existing base CRM raw file shape.
+- `data/raw/base/prd_02/<run_id>` carries the same 16 base raw entities as PRD1 but with PRD2-specific raw table names and renamed source columns. It is an alternate raw feed for product separation; it does not replace the existing base PRD1 silver/vault path.
+- `data/raw/enhanced/prd_01/<run_id>` and `data/raw/mlops/prd_01/<run_id>` preserve the same base raw extract scoped to the target mode.
+- Raw CRM and PRD1 file names omit the redundant `crm_` prefix because the source is already represented by the folder. Examples: `party_master.csv`, `address_book.csv`, `account_book.csv`.
+- `party_master.csv.legal_job_title_txt` is always populated for database imports. Legal-person rows use realistic roles such as `DIRECTOR`, `COMPANY_SECRETARY`, `OWNER`, `PARTNER`, `AUTHORIZED_SIGNATORY`, `MANAGING_DIRECTOR`, `TRUSTEE`, or `SOLE_PROPRIETOR`; non-legal rows use `NOT_APPLICABLE`.
+- `data/raw/enhanced/prd_02/<run_id>` and `data/raw/mlops/prd_02/<run_id>` contain the seven added entity registers: broker, campaign, channel, complaint, insured object, override, and regulation.
+- PRD2 also contains source-style bridge and enrichment extracts so PRD1+PRD2 can rebuild the enhanced/MLOps vault without losing relationships or added satellite fields.
+- PRD2 column headers use `src_*` source names instead of vault names. The combined-vault builder maps those source columns back to MLOps hub/link/satellite columns.
+- `misc/verify_prd_raw_mlops.py` checks PRD1 against base PRD1 and PRD2 against the corresponding added entities and relationships.
+
+Base PRD1-to-PRD2 table mapping:
+
+| PRD1 table | Base PRD2 table |
+|---|---|
+| `account_book.csv` | `billing_account_feed.csv` |
+| `address_book.csv` | `location_contact_feed.csv` |
+| `campaign_touch.csv` | `marketing_touch_feed.csv` |
+| `comm_preference.csv` | `contact_preference_feed.csv` |
+| `consent_snapshot.csv` | `consent_state_feed.csv` |
+| `contact_point.csv` | `communication_point_feed.csv` |
+| `customer_lead_bridge.csv` | `client_lead_link_feed.csv` |
+| `customer_portfolio.csv` | `client_portfolio_feed.csv` |
+| `identity_registry.csv` | `identity_reference_feed.csv` |
+| `lead_register.csv` | `prospect_register_feed.csv` |
+| `party_master.csv` | `insured_party_feed.csv` |
+| `policy_register.csv` | `contract_policy_feed.csv` |
+| `product_catalog.csv` | `cover_product_feed.csv` |
+| `property_asset.csv` | `home_asset_feed.csv` |
+| `quote_register.csv` | `quotation_feed.csv` |
+| `vehicle_asset.csv` | `motor_asset_feed.csv` |
+
+Base PRD2 column rename rules:
+
+- Exact names: `batch_ref -> extract_batch_id`, `pull_ts -> extract_timestamp`, `origin_sys -> source_application`, `tenant_cd -> tenant_code`
+- Suffix rules: `_ref -> _reference_id`, `_src_ref -> _source_reference_id`, `_txt -> _desc`, `_amt -> _amount`, `_cnt -> _count`, `_ind -> _flag`, `_dt -> _date`, `_ts -> _timestamp`, `_cd -> _code`, `_nm -> _name`, `_no -> _num`
 
 ## Scenario Rules
 
@@ -81,7 +139,7 @@ Policy date behavior:
 - `Renewal Date` is aligned to policy end/current-term behavior.
 - `Policy Cycle` means completed annual policy tenure, not number of policies purchased.
 - Higher completed `Policy Cycle` means longer completed tenure.
-- Enhanced `sat_policy.policy_issue_date` is equal to `policy_start_date`.
+- Enhanced and MLOps `sat_policy.policy_issue_date` is on or before `policy_start_date`. Most policies issue on the start date or within the configured NPS policy-issuance TAT bands before start.
 
 Status behavior:
 
@@ -181,12 +239,13 @@ Sales-channel churn rules:
 - the churn workbook does not specify a sales-channel percentage benchmark, so channel variance is controlled by scenario config rather than Excel ranges
 - enhanced tables preserve broker-like behavior through the `AGENT` channel mapping
 
-The latest validated run after the workbook-range tuning was `20260521075140`:
+The latest validated run is documented in `docs/latest_run_validation.md`.
 
-- overall churn: `30.81%`
-- sales channel churn: `AGENT 47.74%`, `BRANCH 28.50%`, `ONLINE 23.04%`
-- policy cycle churn: `<1 44.13%`, `1-2 30.63%`, `3-5 17.73%`, `>5 12.12%`
-- synthetic base and enhanced `sat_policy` rates matched
+Current status:
+
+- schema, PK/FK, RI, dates, claim rules, raw/silver rebuilds, and NPS rules pass
+- policy issuance TAT follows the NPS workbook distribution
+- churn remains directionally aligned, with some strict workbook bands still reported as partial because several churn features share the same policy-status rows
 
 Status churn rules:
 
@@ -194,6 +253,40 @@ Status churn rules:
 - suspended account behavior uses configured suspended-policy status weights
 - lapsed status requires a completed renewal cycle
 - sub-one-year churn is cancelled
+
+## MLOps Feedback And Satisfaction Columns
+
+The current MLOps Data Vault DDL is `mlops/Enhanced_Customer360_DataVault_Model_DDL.sql`.
+
+The latest DDL adds 9 MLOps feedback/satisfaction fields. They are generated only in the MLOps-shaped output and are carried into PRD2 raw enrichment/entity extracts and MLOps silver rebuilds through the existing raw-to-silver flow.
+
+| Table | Column | Rule |
+|---|---|---|
+| `sat_claim` | `claims_feedback` | Populated when a claim exists and is no longer open/pending. Uses `claim_satisfaction_score`, litigation, fraud, and claim outcome context. Values: `POSITIVE`, `NEUTRAL`, `NEGATIVE`; blank while open/pending. |
+| `sat_complaint` | `customer_complaint_satisfaction_score` | Populated for complaints with `complaint_resolved_date`. Score is `0-5`; lower scores follow longer resolution time, FOS referral, and upheld/partially upheld complaints. |
+| `sat_complaint` | `complaint_feedback` | Optional feedback label derived from `customer_complaint_satisfaction_score` when feedback is available. Values: `POSITIVE`, `NEUTRAL`, `NEGATIVE`; blank is allowed. |
+| `sat_customer` | `customer_onboarding_satisfaction_score` | Populated for customers. Score is `0-5` and is aligned with the configured onboarding feedback sentiment bucket. NPS remains `0-10`; this field is a separate 0-5 onboarding proxy. |
+| `sat_customer` | `customer_onboarding_feedback` | Uses configured phrase text, not generic sentiment labels. The workbook ratio is enforced as `20%` negative, `30%` neutral, and `50%` positive. The generator expands the configured phrase bank into up to `500` equivalent unique values: `100` negative, `150` neutral, and `250` positive. Positive examples include `Comprehensive cover for the price for appropriate policy` and `Flexible excess options available`; negative examples include `Policy exclusions not clear` and `Courtesy car not in standard cover`. |
+| `sat_marketing_engagement` | `first_contact_resolution` | `Y` when first/contact interaction is low-friction: call frequency <= 1, sentiment not negative, and engagement score >= 60. Otherwise `N`. |
+| `sat_policy` | `policy_renewal_satisfaction_score` | Populated for renewal policies. Score is `0-5`; lower scores follow high premium increase, churned/lapsed/cancelled status, direct-debit cancellation, installment default, and missed payments. Non-renewal policies default to `0` in the numeric output column. |
+| `sat_policy` | `policy_renewal_feedback` | Derived from renewal satisfaction score. Values: `POSITIVE`, `NEUTRAL`, `NEGATIVE`; blank when renewal context is not applicable. |
+| `sat_policy` | `is_renewal_escalation` | `Y` when renewal satisfaction score is <= 2; `N` otherwise for renewal rows. |
+
+Score-to-feedback mapping for claim, complaint, policy renewal, and onboarding phrase selection:
+
+- score `4-5`: `POSITIVE`
+- score `2-3`: `NEUTRAL`
+- score `0-1`: `NEGATIVE`
+
+For `sat_customer.customer_onboarding_feedback`, the final assignment uses `nps_settings.onboarding_feedback_distribution` and `nps_settings.onboarding_feedback_text`. Customers are ranked by NPS so lower NPS rows receive negative onboarding themes first, passive rows receive neutral themes first, and higher NPS rows receive positive themes first.
+
+NPS remains separate:
+
+- NPS `0-6`: detractor
+- NPS `7-8`: passive
+- NPS `9-10`: promoter
+
+The MLOps validator checks these columns for schema presence, allowed score ranges, allowed feedback values, and Y/N flags.
 
 ## Raw, Silver, And Enhanced Rules
 
@@ -225,7 +318,7 @@ Enhanced rules:
 MLOps rules:
 
 - MLOps output is built from the same base context as enhanced output and is written under `data/synthetic/mlops/<run_id>`.
-- MLOps uses the DDL in `mlops/mlops_gen/Enhanced_Customer360_DataVault_Model_DDL.sql`.
+- MLOps uses the DDL in `mlops/Enhanced_Customer360_DataVault_Model_DDL.sql`.
 - MLOps preserves the same 80-table Data Vault structure as enhanced output, with additional MLOps-facing columns.
 - Base and enhanced DDLs are not changed to add these MLOps-only columns.
 - MLOps enrichment runs after base/enhanced entities are assembled, so policy, customer, account, claim, channel, churn, and product relationships remain inherited from the existing generation flow.
@@ -260,16 +353,19 @@ MLOps rules:
 
 NPS feature rules:
 
-- NPS features are validated by `misc/verify_nps_features.py` against the latest NPS workbook, `new_rules/nps/npsn.xlsx`.
-- The older `new_rules/nps/Data Req Churn NPS.xlsx` workbook is retained for comparison only.
+- NPS features are validated by `misc/verify_nps_features.py` against the NPS workbook, `churnps/Data Req Churn NPS.xlsx`, sheet `NPS_Features`.
+- NPS features after ML dim/fact creation are validated by `misc/verify_nps_dim_fact.py .\nps_june\data`, which rebuilds the same `master_df` grain used by the ML notebook.
 - The NPS layer uses existing Data Vault columns and derived proxies only; it does not add columns or change PK/FK/date/churn/claim rules.
-- `sat_customer.nps_score` is generated as a `0-10` score with a bimodal shape: detractor-side scores around `2-4` and promoter-side scores around `9-10`.
+- Enhanced/MLOps generation applies a final NPS alignment pass at policy/customer grain before writing CSVs, so dim/fact joins should preserve the intended workbook ratios more closely. This pass only updates descriptive satellite values and must not modify hubs, links, hash keys, business IDs, or referential integrity.
+- Configurable NPS ratios live under `nps_settings` in `config/scenario_v1.json`.
+- `sat_customer.nps_score` is generated as a `0-10` score with workbook-aligned bands: `DETRACTOR 30`, `PASSIVE 35`, and `PROMOTER 35`. Inside the detractor band, scores `2-4` are weighted lower than `0`, `1`, `5`, and `6` so the score-level chart has a visible dip without changing the overall NPS score.
 - `sat_customer.net_promotor_code_segment` is derived from `nps_score`: `0-6` is `DETRACTORS`, `7-8` is `PASSIVE`, and `9-10` is `PROMOTERS`.
-- Digital onboarding is proxied from `sat_account.account_creation_type`.
-- Policy issuance turnaround time is derived from `sat_policy.policy_issue_date` and `sat_policy.policy_start_date` and must remain within the existing date rule window.
-- Premium increase, digital renewal, claim settlement turnaround, claim escalation, claim channel, complaint resolution turnaround, complaint escalation, and complaint outcome are validated from existing policy, claim, complaint, account, and quote fields.
+- Digital onboarding is proxied from `sat_account.account_creation_type` with a configurable `ONLINE 75` / `BRANCH 25` split. After NPS is assigned, account creation type is aligned so higher-NPS customers are more likely to be `ONLINE` and lower-NPS customers are more likely to be `BRANCH`.
+- Quote drop-off is proxied from `sat_quote.quote_status` with a configurable accepted/drop-off split. Non-accepted drop-off statuses follow the workbook mix `CREATED 50`, `SENT 35`, `EXPIRED 15`, with `EXPIRED` skewing low NPS, `SENT` skewing moderate NPS, and `CREATED` skewing high NPS.
+- Claim escalation is proxied from `sat_claim.is_litigation` with a configurable `92% non-escalated` / `8% escalated` split for enhanced/MLOps claim rows. Escalation is NPS-shaped so escalated/litigated claims skew low NPS and high-NPS claim customers skew non-escalated.
+- Policy issuance turnaround time is derived from `sat_policy.policy_issue_date` and `sat_policy.policy_start_date`; enhanced/MLOps outputs follow the workbook distribution: `70% 0-2 days`, `20% 3-7 days`, and `10% >7 days`. The assignment is NPS-aware: promoters lean toward `0-2 days`, passives lean toward `3-7 days`, and low-NPS detractors lean toward `>7 days`.
+- Premium increase is enforced for the NPS workbook from existing quote renewal amount fields: `<=5% 70`, `5-10% 20`, and `>10% 10`. The assignment is NPS-shaped without overriding the separate churn premium calibration. Digital renewal is enforced for renewal policies from `sat_policy.sales_channel`: `ONLINE 70`, `AGENT 20`, and `BRANCH 10`, with online skewing high NPS, agent-assisted skewing passive NPS, and branch skewing lower NPS. Claim complaint flag is enforced from claim-policy and complaint-policy links: `NO_COMPLAINT 85`, `COMPLAINT 15`, with complaint-linked claims skewing lower NPS. Self-service adoption is enforced from online account creation, paperless consent, and recent account access: `ADOPTED 65`, `NOT_ADOPTED 35`, with adopted customers skewing higher NPS. Complaint resolution turnaround is enforced from complaint dates: `0-2 days 60`, `3-7 days 30`, `>7 days 10`, while preserving valid complaint date ordering and status consistency.
 - Workbook NPS rows that require missing operational data, such as first-contact resolution or full contact-center interaction logs, remain documented as not directly derivable from the current model.
-- `npsn.xlsx` adds an `Onboarding Feedback` row, but it has no source, logic, or expected distribution filled in, so it is not actionable yet.
 
 Known MLOps ratio-calibration constraints:
 
@@ -310,6 +406,8 @@ Safe SCD2 mutation examples:
 - `sat_campaign.campaign_status`
 - `sat_claim.claim_status`
 - `sat_complaint.complaint_status`
+- complaints with `complaint_resolved_date` must not remain `Open` or `Pending`
+- SCD2 complaint-status mutation also preserves that rule: rows with `complaint_resolved_date` are forced to closed/resolved status, and rows without a resolved date are not emitted as closed/resolved.
 - `sat_override.override_reason`
 - `sat_regulation.regulation_compliance_status`
 - `sat_insured_object.insured_object_current_status`
@@ -341,6 +439,12 @@ Use this optional raw/silver validation flow only when raw and silver outputs we
 
 ```powershell
 .\venv\Scripts\python.exe .\main.py --include-raw-silver
+.\venv\Scripts\python.exe .\misc\verify_prd_raw_mlops.py --mode base --run-id <run_id>
+.\venv\Scripts\python.exe .\misc\verify_prd_raw_mlops.py --mode enhanced --run-id <run_id>
+.\venv\Scripts\python.exe .\misc\verify_prd_raw_mlops.py --mode mlops --run-id <run_id>
+.\venv\Scripts\python.exe .\misc\build_product_combined_vault.py --run-id <run_id>
+.\venv\Scripts\python.exe .\misc\verify_mlops_synthetic.py .\data\product_combined\<combined_run_id>
+.\venv\Scripts\python.exe .\verify_csv.py .\data\product_combined\<combined_run_id>
 .\venv\Scripts\python.exe .\misc\transform_all_raw_to_silver.py
 .\venv\Scripts\python.exe .\misc\verify_all_silver.py
 .\venv\Scripts\python.exe .\misc\compare_all_scd2.py

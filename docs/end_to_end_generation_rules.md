@@ -866,7 +866,7 @@ and reports:
 
 ## 19. Output Locations
 
-Primary base output:
+Intermediate base working output, kept after successful normalization unless `--remove-working-output` is passed:
 
 - `data/output/<run_id>`
 

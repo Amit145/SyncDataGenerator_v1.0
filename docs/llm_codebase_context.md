@@ -13,7 +13,7 @@ Default generation is intentionally focused on:
 - synthetic MLOps: `data/synthetic/mlops/<run_id>`
 - synthetic SCD2 for base/enhanced/MLOps only when prior comparable synthetic history exists
 
-Raw, canonical, silver, and `new_outputs_src` outputs are optional because they add runtime.
+Raw and silver outputs are optional because they add runtime. Scenario config controls mode-scoped PRD raw and PRD raw-to-silver generation. Legacy CRM/API/claims/data_source raw, canonical, silver, and `new_outputs_src` can also be enabled by scenario config or CLI flags.
 
 Do not assume generated data under `data/` is source code. Do not delete generated runs unless the user explicitly asks.
 
@@ -37,11 +37,34 @@ Enhanced-only generation:
 .\venv\Scripts\python.exe .\main.py --enhanced-only
 ```
 
-Optional raw/canonical/silver outputs:
+MLOps-only generation for faster NPS/MLOps iteration:
+
+```powershell
+.\venv\Scripts\python.exe .\main.py --mlops-only
+```
+
+`--mlops-only` writes only `data/synthetic/mlops/<run_id>`. It still builds base context in memory, but skips base CSV normalization, enhanced synthetic output, PRD raw, silver, and SCD2.
+
+Optional legacy raw/canonical/silver outputs:
 
 ```powershell
 .\venv\Scripts\python.exe .\main.py --include-raw-silver
 ```
+
+Mode-scoped PRD raw folders are generated only when `config/scenario_v1.json` has `output_settings.generate_prd_raw=true`:
+
+- `data/raw/base/prd_01/<run_id>`
+- `data/raw/base/prd_02/<run_id>`
+- `data/raw/enhanced/prd_01/<run_id>`
+- `data/raw/enhanced/prd_02/<run_id>`
+- `data/raw/mlops/prd_01/<run_id>`
+- `data/raw/mlops/prd_02/<run_id>`
+
+Mode-scoped PRD raw-to-silver vault folders are generated only when both `output_settings.generate_prd_raw=true` and `output_settings.generate_prd_silver=true`:
+
+- `data/silver/base/<run_id>`
+- `data/silver/enhanced/<run_id>`
+- `data/silver/mlops/<run_id>`
 
 Optional `new_outputs_src`:
 
@@ -59,7 +82,32 @@ Run these after `main.py`:
 .\venv\Scripts\python.exe .\misc\verify_mlops_synthetic.py
 .\venv\Scripts\python.exe .\misc\verify_mlops_churn_kpis.py
 .\venv\Scripts\python.exe .\misc\verify_nps_features.py
+.\venv\Scripts\python.exe .\misc\verify_nps_dim_fact.py .\nps_june\data
 .\venv\Scripts\python.exe .\misc\compare_all_scd2.py
+```
+
+Generate and verify direct MLOps dimensional output from an existing MLOps synthetic vault run:
+
+```powershell
+.\venv\Scripts\python.exe .\misc\generate_direct_dim_fact.py --run-id <run_id>
+.\venv\Scripts\python.exe .\misc\verify_direct_dim_fact.py .\data\dim_fact_direct\mlops\<run_id>
+.\venv\Scripts\python.exe .\misc\verify_nps_dim_fact.py .\data\dim_fact_direct\mlops\<run_id>
+```
+
+After a normal run, also verify PRD raw reconciliation:
+
+```powershell
+.\venv\Scripts\python.exe .\misc\verify_prd_raw_mlops.py --mode base --run-id <run_id>
+.\venv\Scripts\python.exe .\misc\verify_prd_raw_mlops.py --mode enhanced --run-id <run_id>
+.\venv\Scripts\python.exe .\misc\verify_prd_raw_mlops.py --mode mlops --run-id <run_id>
+```
+
+Build and verify the combined product vault from PRD1/base plus PRD2 raw:
+
+```powershell
+.\venv\Scripts\python.exe .\misc\build_product_combined_vault.py --run-id <run_id>
+.\venv\Scripts\python.exe .\misc\verify_mlops_synthetic.py .\data\product_combined\<combined_run_id>
+.\venv\Scripts\python.exe .\verify_csv.py .\data\product_combined\<combined_run_id>
 ```
 
 Useful details:
@@ -69,6 +117,9 @@ Useful details:
 - `misc/verify_mlops_synthetic.py` validates MLOps DDL alignment and MLOps-only column integrity.
 - `misc/verify_mlops_churn_kpis.py` validates workbook churn ratios for MLOps-only KPIs.
 - `misc/verify_nps_features.py` validates available/proxy NPS features from the latest NPS workbook.
+- `misc/verify_nps_dim_fact.py` validates NPS ratios after ML dim/fact creation by rebuilding the notebook-style `master_df` from exported dim/fact CSV folders or zip files.
+- `misc/generate_direct_dim_fact.py` creates the 22-table MLOps dimensional output directly from `data/synthetic/mlops/<run_id>`.
+- `misc/verify_direct_dim_fact.py` validates the direct dim/fact output against `mlops/Enhanced_Customer360_Dimensional_Model_DDL.sql`, including all columns, dimension surrogate-key uniqueness, SCD2 field completeness, and fact-to-dimension FK resolution.
 - `misc/compare_all_scd2.py` reports SCD2 only when comparable SCD2 data exists.
 
 For latest generated-run results, use `docs/latest_run_validation.md`.
@@ -81,23 +132,21 @@ Enhanced active DDL:
 
 MLOps Data Vault DDL:
 
-- `mlops/mlops_gen/Enhanced_Customer360_DataVault_Model_DDL.sql`
+- `mlops/Enhanced_Customer360_DataVault_Model_DDL.sql`
 
 Churn workbook:
 
 - `new_rules/Data Req Churn NPS.xlsx`
 
-Latest NPS workbook:
+NPS workbook:
 
-- `new_rules/nps/npsn.xlsx`
-
-Previous NPS workbook, retained for comparison only:
-
-- `new_rules/nps/Data Req Churn NPS.xlsx`
+- `churnps/Data Req Churn NPS.xlsx`, sheet `NPS_Features`
 
 MLOps dimensional/S2T references:
 
-- `mlops/mlops_gen/*`
+- `mlops/Enhanced_Customer360_Dimensional_Model_DDL.sql`
+- `mlops/Enhanced_Customer360_S2T_Mapping_DV_to_Dimensional_Model.xlsx`
+- `mlops/Enhanced_Customer360_Data_Dictionary_DataVault_Model.xlsx`
 
 ## Important Files
 
@@ -116,10 +165,15 @@ Validation:
 
 - `validate_churn_kpis.py`
 - `verify_csv.py`
+- `misc/verify_prd_raw_mlops.py`
+- `misc/build_product_combined_vault.py`
 - `misc/verify_enhanced_synthetic.py`
 - `misc/verify_mlops_synthetic.py`
 - `misc/verify_mlops_churn_kpis.py`
 - `misc/verify_nps_features.py`
+- `misc/generate_direct_dim_fact.py`
+- `misc/verify_direct_dim_fact.py`
+- `misc/verify_nps_dim_fact.py .\nps_june\data`
 - `misc/compare_all_scd2.py`
 
 Config:
@@ -143,7 +197,7 @@ Docs to keep current:
 Base output:
 
 - normalized synthetic base: `data/synthetic/base/<run_id>`
-- legacy/base staging output may exist under `data/output/<run_id>`
+- intermediate base staging output is written under `data/output/<run_id>` and kept after successful normalization unless `--remove-working-output` is passed
 
 Enhanced output:
 
@@ -153,7 +207,19 @@ Enhanced output:
 MLOps output:
 
 - `data/synthetic/mlops/<run_id>`
-- Must match `mlops/mlops_gen/Enhanced_Customer360_DataVault_Model_DDL.sql`.
+- Must match `mlops/Enhanced_Customer360_DataVault_Model_DDL.sql`.
+- Includes the latest 9 feedback/satisfaction fields:
+  - `sat_claim.claims_feedback`
+  - `sat_complaint.complaint_feedback`
+  - `sat_complaint.customer_complaint_satisfaction_score`
+  - `sat_customer.customer_onboarding_satisfaction_score`
+  - `sat_customer.customer_onboarding_feedback`
+  - `sat_marketing_engagement.first_contact_resolution`
+  - `sat_policy.policy_renewal_satisfaction_score`
+  - `sat_policy.policy_renewal_feedback`
+  - `sat_policy.is_renewal_escalation`
+
+`sat_customer.customer_onboarding_feedback` is phrase text, not a generic sentiment label. It follows `nps_settings.onboarding_feedback_distribution`: `20%` negative, `30%` neutral, and `50%` positive. Text starts from `nps_settings.onboarding_feedback_text` and is expanded using `nps_settings.onboarding_feedback_unique_counts` into up to `500` equivalent unique values: `100` negative, `150` neutral, and `250` positive. Positive phrases must include `Comprehensive cover for the price for appropriate policy` and `Flexible excess options available`; negative phrases must include `Policy exclusions not clear` and `Courtesy car not in standard cover`.
 
 SCD2 output:
 
@@ -163,10 +229,52 @@ SCD2 output:
 
 SCD2 is sampled mutation-style output, not full CDC. It is created only when the pipeline finds previous comparable synthetic history. SCD2 rows must contain actual business-value changes; no-op sampled rows are skipped. Stable reference satellites such as `sat_channel` are not emitted unless a meaningful mutable field exists.
 
+Direct MLOps dimensional output:
+
+- `data/dim_fact_direct/mlops/<run_id>`
+- Created by `misc/generate_direct_dim_fact.py` from `data/synthetic/mlops/<run_id>`.
+- Must contain exactly 22 CSV files from `mlops/Enhanced_Customer360_Dimensional_Model_DDL.sql`: 18 dimensions and 4 facts.
+- Dimensions include the full DDL columns and SCD2-style fields where defined: `effective_from_ts`, `effective_to_ts`, `record_version`, and `attr_hash`.
+- Facts resolve their surrogate-key columns to dimension surrogate keys. Optional relationships use the `-1` unknown dimension row.
+- NPS analytical features are calibrated at the same policy/customer notebook `master_df` grain used by ML. The direct builder can clone descriptive dimension rows, especially account/channel/marketing/policy/claim rows, to preserve one-to-one analytical joins without changing the source MLOps vault hash keys.
+- Validate with `misc/verify_direct_dim_fact.py` and `misc/verify_nps_dim_fact.py`.
+
 Optional outputs:
 
 - raw/canonical/silver only with `--include-raw-silver`
+- mode-scoped PRD raw is generated by normal `main.py`
+- mode-scoped PRD raw-to-silver vault output is generated by normal `main.py`
 - `data/new_outputs_src` only with `--include-raw-silver --include-new-outputs-src`
+
+PRD raw contract:
+
+- `data/raw/base/prd_01/<run_id>` is the base raw CRM extract.
+- `data/raw/base/prd_02/<run_id>` is an alternate base product raw feed with the same 16 base entities as PRD1, renamed table files, and renamed source columns. It is generated for product/source separation and must not change the PRD1 base silver/vault rebuild path unless explicit PRD2 base mapping is added.
+- Base PRD2 table mapping is documented in `docs/current_rules_reference.md` and `README.md`. The code source of truth is `BASE_PRD2_TABLE_NAMES` plus `_base_prd2_column_name()` in `generators/raw_prd_generator.py`.
+- Base PRD2 column rename rules include exact renames `batch_ref -> extract_batch_id`, `pull_ts -> extract_timestamp`, `origin_sys -> source_application`, `tenant_cd -> tenant_code`, plus suffix renames such as `_ref -> _reference_id`, `_txt -> _desc`, `_amt -> _amount`, `_cnt -> _count`, `_ind -> _flag`, `_dt -> _date`, `_ts -> _timestamp`, `_cd -> _code`, `_nm -> _name`, and `_no -> _num`.
+- `data/raw/enhanced/prd_01/<run_id>` and `data/raw/mlops/prd_01/<run_id>` must match `data/raw/base/prd_01/<run_id>` file-for-file.
+- Raw CRM and PRD1 file names omit the redundant `crm_` prefix because the source is already represented by the folder. Examples: `party_master.csv`, `address_book.csv`, `account_book.csv`.
+- PRD1 `party_master.csv.legal_job_title_txt` must not be blank. Legal-person rows use business roles; non-legal rows use `NOT_APPLICABLE` so database import does not infer a void/null-only type.
+- `data/raw/enhanced/prd_02/<run_id>` and `data/raw/mlops/prd_02/<run_id>` must not contain vault-shaped `hub_`, `link_`, or `sat_` files.
+- PRD2 contains seven added entity registers: broker, campaign, channel, complaint, insured object, override, and regulation.
+- PRD2 also contains source-style bridge and enrichment extracts required to rebuild the enhanced/MLOps vault from PRD1+PRD2 without losing relationships or added satellite fields.
+- PRD2 raw headers must use `src_*` source names, not vault names such as `*_hash_key`, `load_date`, or `record_source`.
+- `misc/verify_prd_raw_mlops.py` enforces this contract.
+
+Product combined contract:
+
+- `misc/build_product_combined_vault.py` builds `data/product_combined/<timestamp>`.
+- PRD2 raw includes the relationship and enrichment extracts needed by product-combined rebuilds. `misc/build_product_combined_vault.py` translates `src_*` PRD2 columns back to the MLOps vault schema.
+- MLOps PRD2 raw carries additional MLOps-only satellite fields through entity extracts and enrichment extracts. New MLOps columns added to the generated MLOps schema should therefore flow into `data/raw/mlops/prd_02/<run_id>` and `data/silver/mlops/<run_id>`.
+- The output is MLOps-DDL-shaped and should be validated with `misc/verify_mlops_synthetic.py`.
+- `verify_csv.py` accepts a product-combined folder path and aliases MLOps `hub_address` / `link_person_address` to the base address checks.
+
+Mode silver contract:
+
+- `data/silver/base/<run_id>` is rebuilt from `data/raw/base/prd_01/<run_id>` using `misc/raw_to_silver_sample.py` with PRD1 source-field mapping.
+- `data/silver/enhanced/<run_id>` and `data/silver/mlops/<run_id>` are rebuilt by applying PRD2 raw deltas to `data/silver/base/<run_id>` with `misc/build_product_combined_vault.py`.
+- Silver schemas are taken from the corresponding synthetic mode headers so `silver/enhanced` matches `synthetic/enhanced` and `silver/mlops` matches `synthetic/mlops`.
+- Base silver should pass `verify_csv.py` for PK/FK, dates, lifecycle, claim/churn field logic, and base relationship rules. Enhanced/MLOps silver should also preserve the corresponding mode schema and PRD2 relationships.
 
 ## Core Lifecycle
 
@@ -206,8 +314,8 @@ Keep date rules intact:
 
 - Hub/link/satellite load dates are sequenced.
 - Historical business dates are capped to satellite load date where applicable.
-- `policy_issue_date` equals `policy_start_date` for most policies.
-- A small delayed-start population is allowed: policy start may be up to 7 days after issue date.
+- `policy_issue_date` is generated before or on `policy_start_date` for enhanced/MLOps policy rows.
+- NPS policy issuance TAT follows the workbook distribution: `70% 0-2 days`, `20% 3-7 days`, and `10% >7 days`.
 - `policy_end_date = policy_start_date + policy tenure/months`.
 - `renewal_date` must not be after `policy_end_date`.
 - Claims must stay inside the linked policy coverage window.
@@ -308,15 +416,39 @@ Rules:
 
 ## NPS Rules
 
-Latest NPS workbook:
+NPS workbook:
 
-- `new_rules/nps/npsn.xlsx`
+- `churnps/Data Req Churn NPS.xlsx`, sheet `NPS_Features`
 
 NPS validator:
 
 - `misc/verify_nps_features.py`
 
 NPS is implemented using existing generated columns and derived proxies only. It must not add or change DDL columns unless the user explicitly asks for a schema change.
+
+MLOps/enhanced generation includes a final NPS alignment pass at the policy/customer grain used by the ML notebook before CSV write. That pass may update descriptive satellite attributes, but it must not modify hub rows, link rows, hash keys, business keys, PK/FK relationships, or date-order validity.
+
+Config:
+
+- `config/scenario_v1.json` under `nps_settings`
+- Apply safe workbook ratios through existing fields.
+- Keep `nps_score_distribution` for the 30/35/35 band split and `nps_score_value_weights` for the score-level ripple. The detractor band should show lower volume at scores `2-4` than at `0`, `1`, `5`, and `6`.
+- Policy issuance TAT now intentionally follows the NPS workbook, including the `>7 days` bucket. Do not reintroduce the older 7-day cap unless the user asks for that tradeoff.
+- Digital onboarding preserves the configured `ONLINE 75` / `BRANCH 25` split and then aligns `sat_account.account_creation_type` to NPS: higher-NPS customers skew online and lower-NPS customers skew branch. `digital_onboarding_nps_overlap` must keep online visible for low NPS `1-4` and branch visible for high NPS `8-10`, per the 17/06 ML feedback.
+- Drop-off during onboarding preserves the configured accepted/drop-off split, then applies `quote_dropoff_status_distribution` inside non-accepted `sat_quote.quote_status` rows. `EXPIRED` should skew low NPS, `SENT` moderate NPS, and `CREATED` high NPS.
+- NPS premium increase uses both quote renewal amounts and policy/fact-style renewal amounts with `premium_increase_distribution`; it must not change `churn_settings` premium probabilities. `<=5%` skews high NPS, `5-10%` passive NPS, and `>10%` detractor NPS. The policy/fact-style fields are required because the ML notebook computes Premium Increase from `fact_policy.policy_renewal_current_period_amt` and `policy_renewal_next_period_amt`.
+- Digital renewal uses `sat_policy.sales_channel` for renewal policies with `policy_cycle > 1` and `digital_renewal_distribution`; online skews high NPS, agent-assisted skews passive NPS, and branch skews lower NPS.
+- Claim complaint flag uses claim-policy and complaint-policy links plus `claim_complaint_distribution`; about 15% of claim-linked policies should have complaints, selected from lower-NPS customers first.
+- Self-service adoption is a derived proxy, not a new column: online account creation plus `operational_paperless_consent = Y` plus account last access within 30 days. `self_service_adoption_distribution` targets 65% adopted, selected from higher-NPS customers first.
+- Complaint resolution turnaround uses `complaint_resolution_distribution` in the final NPS pass: 60% 0-2 days, 30% 3-7 days, 10% >7 days, preserving complaint date/status consistency.
+- Renewal contacts use `sat_marketing_engagement.customer_service_call_frequency` with `renewal_contact_distribution`: 60% 0-1 contacts, 30% 2-3 contacts, 10% >3 contacts. Low contacts skew high NPS; high contacts skew low NPS.
+- Claim settlement TAT uses `sat_claim.claim_reported_date` and `claim_settlement_date` with `claim_settlement_tat_distribution`: 70% 0-15 days, 20% 16-30 days, 10% >30 days. The pass preserves non-negative settlement dates and keeps dates within the linked policy period when possible.
+- Claim channel uses `sat_claim.claim_channel` with `claim_channel_distribution`: 70% online, 20% agent, 10% branch. Agent at NPS 10 should remain very low per ML feedback.
+- Claim CSAT uses `sat_claim.claim_satisfaction_score`; high scores skew high NPS and low scores skew low NPS. `claims_feedback` is recomputed after shaping.
+- Customer CSAT uses `sat_customer.customer_satisfaction`; customer onboarding score/feedback are recomputed after shaping.
+- Complaint escalation uses `sat_complaint.is_financial_ombudsman_service_referral` with `complaint_escalation_distribution`: 98% N, 2% Y, with Y selected from NPS 0-2 first.
+- Complaint status outcome uses `sat_complaint.complaint_upheld_status` with `complaint_status_outcome_distribution`: 65% not upheld, 20% upheld, 15% partially upheld.
+- Repeat complaint uses `link_complaint_policy` plus `link_policy_customer` with `repeat_complaint_distribution`: 90% no repeat, 10% repeat among complaint customers, with repeats selected from NPS 0-3 first.
 
 Covered available/proxy NPS features:
 
@@ -339,6 +471,25 @@ Covered available/proxy NPS features:
 - complaint status outcome
 - repeat complaint proxy
 
+Safe enforced NPS ratios:
+
+- `sat_customer.nps_score`: `DETRACTOR 30`, `PASSIVE 35`, `PROMOTER 35`.
+- `sat_account.account_creation_type`: `ONLINE 75`, `BRANCH 25`.
+- `sat_quote.quote_status`: accepted/drop-off split from `quote_dropoff_distribution`.
+- `sat_policy.policy_issue_date` to `policy_start_date`: overall `70% 0-2 days`, `20% 3-7 days`, `10% >7 days`, with NPS-aware shape from `policy_issuance_tat_by_nps_band` so promoters lean fast, passives lean medium, and low-NPS detractors lean slow.
+- `sat_claim.is_litigation`: `92%` non-escalated, `8%` escalated for enhanced/MLOps claim rows.
+- `sat_claim.claim_reported_date` to `claim_settlement_date`: `70%` 0-15 days, `20%` 16-30 days, `10%` >30 days, with NPS-aware shaping.
+- `sat_claim.claim_channel`: `70%` online, `20%` agent, `10%` branch, with high-NPS customers skewing online.
+- `sat_marketing_engagement.customer_service_call_frequency`: `60%` 0-1 contacts, `30%` 2-3 contacts, `10%` >3 contacts.
+- `sat_complaint.is_financial_ombudsman_service_referral`: `98%` N, `2%` Y.
+- `sat_complaint.complaint_upheld_status`: `65%` not upheld, `20%` upheld, `15%` partially upheld.
+- Repeat complaint proxy: about `10%` repeat among complaint customers.
+
+Report-only or inherited ratios:
+
+- Complaint volume stays controlled by `enhanced_settings.complaint_customer_rate`.
+- Complaint resolution TAT stays aligned to MLOps complaint-resolution churn calibration.
+
 Not directly coverable without new survey/contact/escalation tables:
 
 - onboarding CSAT
@@ -348,9 +499,7 @@ Not directly coverable without new survey/contact/escalation tables:
 - support/servicing CSAT
 - first contact resolution
 - complaint CSAT
-- generic customer feedback text/category
-
-`npsn.xlsx` adds an `Onboarding Feedback` row, but it currently has no source, logic, or expected distribution filled in. Treat it as not actionable until more workbook detail is provided.
+- generic customer feedback category
 
 ## MLOps DDL Alignment
 
@@ -408,7 +557,7 @@ Do not:
 - Add columns to enhanced/base/MLOps output without checking DDL and validators.
 - Reintroduce `policy_cicle`.
 - Add `AGGREGATOR` as a sales channel; map aggregator-like behavior to existing `AGENT`.
-- Generate Kaggle-specific outputs; Kaggle/new output sources are optional/legacy and disabled by default.
+- Generate legacy source-specific outputs unless the user explicitly enables both `--include-raw-silver` and `--include-new-outputs-src`.
 - Loosen validators just to make a generated run pass.
 - Revert unrelated user changes.
 

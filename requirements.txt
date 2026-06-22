@@ -6,3 +6,4 @@ python-dotenv
 tqdm
 openai
 anthropic
+mysql-connector-python
