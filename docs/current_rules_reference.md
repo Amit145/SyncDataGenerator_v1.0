@@ -43,40 +43,46 @@ Rules for `data/dim_fact_direct/mlops/<run_id>`:
 Mode-scoped PRD raw folders:
 
 - `data/raw/base/prd_01/<run_id>` preserves the existing base CRM raw file shape.
-- `data/raw/base/prd_02/<run_id>` carries the same 16 base raw entities as PRD1 but with PRD2-specific raw table names and renamed source columns. It is an alternate raw feed for product separation; it does not replace the existing base PRD1 silver/vault path.
-- `data/raw/enhanced/prd_01/<run_id>` and `data/raw/mlops/prd_01/<run_id>` preserve the same base raw extract scoped to the target mode.
+- `data/raw/base/prd_02/<run_id>`, `data/raw/enhanced/prd_02/<run_id>`, and `data/raw/mlops/prd_02/<run_id>` carry the SAP/source-2 structure from `business_vault/bv.xlsx` sheet `Source2_Structure`. They use different `SAP_*` source IDs while keeping matchable business values for later Business Vault mastering.
+- `data/raw/enhanced/prd_01/<run_id>` and `data/raw/mlops/prd_01/<run_id>` preserve the same CRM raw extract scoped to the target mode and also mirror enhanced/MLOps source-1 delta extracts with a `source1_` file prefix.
 - Raw CRM and PRD1 file names omit the redundant `crm_` prefix because the source is already represented by the folder. Examples: `party_master.csv`, `address_book.csv`, `account_book.csv`.
 - `party_master.csv.legal_job_title_txt` is always populated for database imports. Legal-person rows use realistic roles such as `DIRECTOR`, `COMPANY_SECRETARY`, `OWNER`, `PARTNER`, `AUTHORIZED_SIGNATORY`, `MANAGING_DIRECTOR`, `TRUSTEE`, or `SOLE_PROPRIETOR`; non-legal rows use `NOT_APPLICABLE`.
-- `data/raw/enhanced/prd_02/<run_id>` and `data/raw/mlops/prd_02/<run_id>` contain the seven added entity registers: broker, campaign, channel, complaint, insured object, override, and regulation.
-- PRD2 also contains source-style bridge and enrichment extracts so PRD1+PRD2 can rebuild the enhanced/MLOps vault without losing relationships or added satellite fields.
-- PRD2 column headers use `src_*` source names instead of vault names. The combined-vault builder maps those source columns back to MLOps hub/link/satellite columns.
-- `misc/verify_prd_raw_mlops.py` checks PRD1 against base PRD1 and PRD2 against the corresponding added entities and relationships.
+- `data/raw/enhanced/prd_delta/<run_id>` and `data/raw/mlops/prd_delta/<run_id>` contain the enhanced/MLOps DDL-specific source delta: added entity registers, source-style bridge extracts, and enrichment extracts needed to rebuild enhanced/MLOps vault outputs without losing relationships or added satellite fields.
+- These delta extracts are also mirrored into enhanced/MLOps `prd_01` with `source1_` prefixes so source 1 contains all relevant CRM plus enhanced/MLOps source-1 raw tables without overwriting existing CRM file names.
+- `prd_delta` column headers use `src_*` source names instead of vault names. The combined-vault builder maps those source columns back to MLOps hub/link/satellite columns.
+- `misc/verify_prd_raw_mlops.py` applies to the product delta source, not the SAP `prd_02` source.
 
-Base PRD1-to-PRD2 table mapping:
+Base PRD2 SAP/source-2 files:
 
-| PRD1 table | Base PRD2 table |
-|---|---|
-| `account_book.csv` | `billing_account_feed.csv` |
-| `address_book.csv` | `location_contact_feed.csv` |
-| `campaign_touch.csv` | `marketing_touch_feed.csv` |
-| `comm_preference.csv` | `contact_preference_feed.csv` |
-| `consent_snapshot.csv` | `consent_state_feed.csv` |
-| `contact_point.csv` | `communication_point_feed.csv` |
-| `customer_lead_bridge.csv` | `client_lead_link_feed.csv` |
-| `customer_portfolio.csv` | `client_portfolio_feed.csv` |
-| `identity_registry.csv` | `identity_reference_feed.csv` |
-| `lead_register.csv` | `prospect_register_feed.csv` |
-| `party_master.csv` | `insured_party_feed.csv` |
-| `policy_register.csv` | `contract_policy_feed.csv` |
-| `product_catalog.csv` | `cover_product_feed.csv` |
-| `property_asset.csv` | `home_asset_feed.csv` |
-| `quote_register.csv` | `quotation_feed.csv` |
-| `vehicle_asset.csv` | `motor_asset_feed.csv` |
+| File | Grain | Key columns |
+|---|---|---|
+| `Person.csv` | 1 row per SAP person | `person_id` |
+| `Address.csv` | 1 row per SAP address | `address_id`, `person_id` |
+| `Product.csv` | 1 row per SAP product | `product_id` |
+| `Home.csv` | 1 row per SAP home asset | `home_id`, `policy_id`, `product_id` |
+| `Motor.csv` | 1 row per SAP motor asset | `motor_id`, `policy_id`, `product_id` |
 
-Base PRD2 column rename rules:
+Base PRD2 SAP columns follow the workbook:
 
-- Exact names: `batch_ref -> extract_batch_id`, `pull_ts -> extract_timestamp`, `origin_sys -> source_application`, `tenant_cd -> tenant_code`
-- Suffix rules: `_ref -> _reference_id`, `_src_ref -> _source_reference_id`, `_txt -> _desc`, `_amt -> _amount`, `_cnt -> _count`, `_ind -> _flag`, `_dt -> _date`, `_ts -> _timestamp`, `_cd -> _code`, `_nm -> _name`, `_no -> _num`
+- Every SAP PRD2 file starts with source metadata columns: `batch_ref`, `pull_ts`, `origin_sys`. `origin_sys` is always `SAP`.
+- `Person`: `batch_ref`, `pull_ts`, `origin_sys`, `person_id`, `person_type`, `organization`, `org_establishment_date`, `first_name`, `middle_name`, `last_name`, `date_of_birth`, `gender`, `occupation`, `email_address`, `phone_number`
+- `Address`: `batch_ref`, `pull_ts`, `origin_sys`, `address_id`, `person_id`, `address_line_1`, `address_line_2`, `city`, `state`, `country`, `zipcode`
+- `Product`: `batch_ref`, `pull_ts`, `origin_sys`, `product_id`, `product_type`, `product_sub_type`, `product_name`, `product_start_date`, `line_of_business`
+- `Home`: `batch_ref`, `pull_ts`, `origin_sys`, `home_id`, `policy_id`, `product_id`, `home_type`, `home_location`, `wall_type`, `roof_material`
+- `Motor`: `batch_ref`, `pull_ts`, `origin_sys`, `motor_id`, `policy_id`, `product_id`, `motor_class`, `motor_model`, `motor_type`, `manufacturing_date`, `body_colour`, `fuel_type`, `gear_type`, `motor_parked_location`
+
+SAP IDs are deliberately different from CRM IDs by prefixing source business IDs with `SAP_`. Example: CRM `PER_...` becomes SAP `SAP_PER_...`. This supports Raw Vault separation by source while keeping values matchable for Business Vault identity resolution and survivorship.
+
+Business Vault person matching contract:
+
+- Natural person match key:
+  - CRM: `given_nm`, `family_nm`, `dob`
+  - SAP: `first_name`, `last_name`, `date_of_birth`
+- Legal person match key:
+  - CRM: `legal_name`, `constitution_dt`
+  - SAP: `organization`, `org_establishment_date`
+- Explicitly excluded from matching: `email_address`, `phone_number`, `gender`, `gender_txt`
+- `misc/verify_business_vault_raw.py --run-id <run_id>` validates that CRM/SAP raw files contain populated natural/legal match keys and that the excluded fields are documented as non-match-key fields.
 
 ## Scenario Rules
 
@@ -365,6 +371,7 @@ NPS feature rules:
 - Claim escalation is proxied from `sat_claim.is_litigation` with a configurable `92% non-escalated` / `8% escalated` split for enhanced/MLOps claim rows. Escalation is NPS-shaped so escalated/litigated claims skew low NPS and high-NPS claim customers skew non-escalated.
 - Policy issuance turnaround time is derived from `sat_policy.policy_issue_date` and `sat_policy.policy_start_date`; enhanced/MLOps outputs follow the workbook distribution: `70% 0-2 days`, `20% 3-7 days`, and `10% >7 days`. The assignment is NPS-aware: promoters lean toward `0-2 days`, passives lean toward `3-7 days`, and low-NPS detractors lean toward `>7 days`.
 - Premium increase is enforced for the NPS workbook from existing quote renewal amount fields: `<=5% 70`, `5-10% 20`, and `>10% 10`. The assignment is NPS-shaped without overriding the separate churn premium calibration. Digital renewal is enforced for renewal policies from `sat_policy.sales_channel`: `ONLINE 70`, `AGENT 20`, and `BRANCH 10`, with online skewing high NPS, agent-assisted skewing passive NPS, and branch skewing lower NPS. Claim complaint flag is enforced from claim-policy and complaint-policy links: `NO_COMPLAINT 85`, `COMPLAINT 15`, with complaint-linked claims skewing lower NPS. Self-service adoption is enforced from online account creation, paperless consent, and recent account access: `ADOPTED 65`, `NOT_ADOPTED 35`, with adopted customers skewing higher NPS. Complaint resolution turnaround is enforced from complaint dates: `0-2 days 60`, `3-7 days 30`, `>7 days 10`, while preserving valid complaint date ordering and status consistency.
+- Complaint NPS shaping now spreads complaint-linked rows across exact scores inside each NPS band. Complaint resolution, complaint escalation, and complaint outcome should include detractor, passive, and promoter bands and should not collapse to only representative scores such as `0`, `1`, `8`, and `10`.
 - Workbook NPS rows that require missing operational data, such as first-contact resolution or full contact-center interaction logs, remain documented as not directly derivable from the current model.
 
 Known MLOps ratio-calibration constraints:

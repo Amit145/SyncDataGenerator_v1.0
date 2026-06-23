@@ -205,6 +205,7 @@ def build_product_combined(
     mode: str = "mlops",
     base_dir: str | Path | None = None,
     schema_dir: str | Path | None = None,
+    delta_folder: str = "prd_delta",
 ) -> Path:
     if schema_dir:
         schemas = read_csv_schemas(schema_dir)
@@ -214,16 +215,16 @@ def build_product_combined(
 
     if run_id:
         base_dir = Path(base_dir) if base_dir else ROOT / "data" / "synthetic" / "base" / run_id
-        prd2_dir = ROOT / "data" / "raw" / mode / "prd_02" / run_id
+        prd2_dir = ROOT / "data" / "raw" / mode / delta_folder / run_id
     else:
-        prd2_dir = latest_subdir(ROOT / "data" / "raw" / mode / "prd_02")
+        prd2_dir = latest_subdir(ROOT / "data" / "raw" / mode / delta_folder)
         run_id = prd2_dir.name
         base_dir = Path(base_dir) if base_dir else ROOT / "data" / "synthetic" / "base" / run_id
 
     if not base_dir.exists():
         raise FileNotFoundError(f"Base synthetic folder not found: {base_dir}")
     if not prd2_dir.exists():
-        raise FileNotFoundError(f"PRD2 raw folder not found: {prd2_dir}")
+        raise FileNotFoundError(f"Product delta raw folder not found: {prd2_dir}")
 
     output_run_id = output_run_id or datetime.now().strftime("%Y%m%d%H%M%S")
     out_root = Path(output_root) if output_root else Path(PRODUCT_COMBINED_ROOT)
@@ -280,17 +281,18 @@ def build_product_combined(
     with (out_dir / "_source_run_id.txt").open("w", encoding="utf-8") as f:
         f.write(f"source_run_id={run_id}\n")
         f.write(f"base_dir={base_dir}\n")
-        f.write(f"prd2_dir={prd2_dir}\n")
+        f.write(f"delta_dir={prd2_dir}\n")
 
     print(f"Product combined vault written to: {out_dir}")
     return out_dir
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Build a MLOps-shaped product_combined vault from PRD1/base and PRD2 raw.")
-    parser.add_argument("--run-id", help="Source run id. Defaults to latest data/raw/<mode>/prd_02 run.")
+    parser = argparse.ArgumentParser(description="Build a MLOps-shaped product_combined vault from PRD1/base and product delta raw.")
+    parser.add_argument("--run-id", help="Source run id. Defaults to latest data/raw/<mode>/prd_delta run.")
     parser.add_argument("--output-run-id", help="Output folder name. Defaults to current timestamp.")
     parser.add_argument("--mode", choices=["enhanced", "mlops"], default="mlops")
+    parser.add_argument("--delta-folder", default="prd_delta", help="Raw delta folder under data/raw/<mode>. Defaults to prd_delta.")
     parser.add_argument(
         "--output-root",
         choices=["product_combined", "synthetic_mlops"],
@@ -299,7 +301,13 @@ def main() -> int:
     )
     args = parser.parse_args()
     output_root = PRODUCT_COMBINED_ROOT if args.output_root == "product_combined" else MLOPS_ROOT
-    build_product_combined(run_id=args.run_id, output_run_id=args.output_run_id, output_root=output_root, mode=args.mode)
+    build_product_combined(
+        run_id=args.run_id,
+        output_run_id=args.output_run_id,
+        output_root=output_root,
+        mode=args.mode,
+        delta_folder=args.delta_folder,
+    )
     return 0
 
 

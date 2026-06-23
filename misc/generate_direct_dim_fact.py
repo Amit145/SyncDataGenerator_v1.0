@@ -185,6 +185,22 @@ def _expanded_onboarding_feedback_phrases() -> dict[str, list[str]]:
     return expanded
 
 
+def _spread_indices_by_score(nps: pd.Series, scores: list[int], descending_within_score: bool = False) -> list[int]:
+    grouped = {
+        score: list(nps[nps == score].sort_index(ascending=not descending_within_score).index)
+        for score in scores
+    }
+    output: list[int] = []
+    while True:
+        added = False
+        for score in scores:
+            if grouped[score]:
+                output.append(grouped[score].pop(0))
+                added = True
+        if not added:
+            return output
+
+
 def _hash_row(row: dict, skip: set[str] | None = None) -> str:
     skip = skip or set()
     payload = "|".join(str(row.get(key, "")) for key in sorted(row) if key not in skip)
@@ -1152,9 +1168,9 @@ class DirectDimFactBuilder:
         complaint_total = max(100, round(len(fp) * 0.10))
         complaint_total = min(complaint_total, len(fp))
         nps_groups = {
-            "LOW": list(nps_all[nps_all <= 6].sort_values(ascending=True).index),
-            "MID": list(nps_all[(nps_all >= 7) & (nps_all <= 8)].sort_values(ascending=False).index),
-            "HIGH": list(nps_all[nps_all >= 9].sort_values(ascending=False).index),
+            "LOW": _spread_indices_by_score(nps_all, [0, 1, 2, 3, 4, 5, 6]),
+            "MID": _spread_indices_by_score(nps_all, [7, 8]),
+            "HIGH": _spread_indices_by_score(nps_all, [9, 10], descending_within_score=True),
         }
         target_counts = self._counts(complaint_total, {"LOW": 50, "MID": 30, "HIGH": 20})
         selected: list[int] = []
@@ -1169,7 +1185,7 @@ class DirectDimFactBuilder:
                     used.add(idx)
                     taken += 1
         if len(selected) < complaint_total:
-            for idx in nps_all.sort_values().index:
+            for idx in nps_groups["LOW"] + nps_groups["MID"] + nps_groups["HIGH"]:
                 if idx not in used:
                     selected.append(idx)
                     used.add(idx)
@@ -1184,12 +1200,27 @@ class DirectDimFactBuilder:
         fc["complaint_status"] = "Closed"
         nps = nps_all.loc[selected].reset_index(drop=True)
         counts = self._counts(len(fc), {"DAYS_0_2": 60, "DAYS_3_7": 30, "DAYS_GT_7": 10})
-        ordered = list(nps.sort_values(ascending=False).index)
-        assigned = {}
-        start = 0
-        for band, count in counts.items():
-            assigned[band] = ordered[start:start + count]
-            start += count
+        high_order = _spread_indices_by_score(nps, [9, 10], descending_within_score=True)
+        mid_order = _spread_indices_by_score(nps, [7, 8])
+        low_order = _spread_indices_by_score(nps, [0, 1, 2, 3, 4, 5, 6])
+        used_assignment: set[int] = set()
+
+        def take(candidates: list[int], count: int) -> list[int]:
+            selected_indices = []
+            for idx in candidates + high_order + mid_order + low_order:
+                if idx in used_assignment:
+                    continue
+                selected_indices.append(idx)
+                used_assignment.add(idx)
+                if len(selected_indices) >= count:
+                    break
+            return selected_indices
+
+        assigned = {
+            "DAYS_0_2": take(high_order, counts.get("DAYS_0_2", 0)),
+            "DAYS_3_7": take(mid_order, counts.get("DAYS_3_7", 0)),
+            "DAYS_GT_7": take(low_order, counts.get("DAYS_GT_7", 0)),
+        }
         ranges = {"DAYS_0_2": (0, 2), "DAYS_3_7": (3, 7), "DAYS_GT_7": (8, 30)}
         for band, indices in assigned.items():
             lo, hi = ranges[band]
@@ -1201,16 +1232,28 @@ class DirectDimFactBuilder:
                 fc.at[idx, "complaint_resolved_date"] = (opened + pd.Timedelta(days=days)).date().isoformat()
                 fc.at[idx, "complaint_status"] = "Closed"
         esc_count = max(1, round(len(fc) * 0.02))
-        low_indices = list(nps.sort_values().index[:esc_count])
+        low_indices = low_order[:esc_count]
         fc["is_financial_ombudsman_service_referral"] = "N"
         fc.loc[low_indices, "is_financial_ombudsman_service_referral"] = "Y"
         outcome_counts = self._counts(len(fc), {"NOT_UPHELD": 65, "UPHELD": 20, "PARTIALLY_UPHELD": 15})
-        ordered = list(nps.sort_values().index)
-        outcome = {}
-        start = 0
-        for band, count in outcome_counts.items():
-            outcome[band] = ordered[start:start + count]
-            start += count
+        used_outcome: set[int] = set()
+
+        def take_outcome(candidates: list[int], count: int) -> list[int]:
+            selected_indices = []
+            for idx in candidates + low_order + mid_order + high_order:
+                if idx in used_outcome:
+                    continue
+                selected_indices.append(idx)
+                used_outcome.add(idx)
+                if len(selected_indices) >= count:
+                    break
+            return selected_indices
+
+        outcome = {
+            "NOT_UPHELD": take_outcome(low_order, outcome_counts.get("NOT_UPHELD", 0)),
+            "UPHELD": take_outcome(mid_order + high_order, outcome_counts.get("UPHELD", 0)),
+            "PARTIALLY_UPHELD": take_outcome(low_order + mid_order, outcome_counts.get("PARTIALLY_UPHELD", 0)),
+        }
         labels = {"NOT_UPHELD": "Not Upheld", "UPHELD": "Upheld", "PARTIALLY_UPHELD": "Partially Upheld"}
         for band, indices in outcome.items():
             fc.loc[indices, "complaint_upheld_status"] = labels[band]

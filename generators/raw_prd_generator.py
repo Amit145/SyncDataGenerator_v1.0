@@ -19,59 +19,136 @@ def write_raw_prd1_batch(base_folder: str, batch_id: str, ctx: dict, mode: str |
     )
 
 
-BASE_PRD2_TABLE_NAMES = {
-    "account_book.csv": "billing_account_feed.csv",
-    "address_book.csv": "location_contact_feed.csv",
-    "campaign_touch.csv": "marketing_touch_feed.csv",
-    "comm_preference.csv": "contact_preference_feed.csv",
-    "consent_snapshot.csv": "consent_state_feed.csv",
-    "contact_point.csv": "communication_point_feed.csv",
-    "customer_lead_bridge.csv": "client_lead_link_feed.csv",
-    "customer_portfolio.csv": "client_portfolio_feed.csv",
-    "identity_registry.csv": "identity_reference_feed.csv",
-    "lead_register.csv": "prospect_register_feed.csv",
-    "party_master.csv": "insured_party_feed.csv",
-    "policy_register.csv": "contract_policy_feed.csv",
-    "product_catalog.csv": "cover_product_feed.csv",
-    "property_asset.csv": "home_asset_feed.csv",
-    "quote_register.csv": "quotation_feed.csv",
-    "vehicle_asset.csv": "motor_asset_feed.csv",
+def mirror_source1_delta_into_prd1(delta_folder: str, prd1_folder: str, prefix: str = "source1_") -> list[str]:
+    """Mirror enhanced/MLOps source-1 delta files into PRD1 without overwriting CRM files."""
+    delta_dir = Path(delta_folder)
+    prd1_dir = Path(prd1_folder)
+    if not delta_dir.exists():
+        raise FileNotFoundError(f"Delta folder not found: {delta_dir}")
+    if not prd1_dir.exists():
+        raise FileNotFoundError(f"PRD1 folder not found: {prd1_dir}")
+    written = []
+    for source_file in sorted(delta_dir.glob("*.csv")):
+        target_file = prd1_dir / f"{prefix}{source_file.name}"
+        shutil.copy2(source_file, target_file)
+        written.append(str(target_file))
+    return written
+
+
+BASE_PRD2_SAP_TABLES = {
+    "Person.csv": [
+        "batch_ref",
+        "pull_ts",
+        "origin_sys",
+        "person_id",
+        "person_type",
+        "organization",
+        "org_establishment_date",
+        "first_name",
+        "middle_name",
+        "last_name",
+        "date_of_birth",
+        "gender",
+        "occupation",
+        "email_address",
+        "phone_number",
+    ],
+    "Address.csv": [
+        "batch_ref",
+        "pull_ts",
+        "origin_sys",
+        "address_id",
+        "person_id",
+        "address_line_1",
+        "address_line_2",
+        "city",
+        "state",
+        "country",
+        "zipcode",
+    ],
+    "Product.csv": [
+        "batch_ref",
+        "pull_ts",
+        "origin_sys",
+        "product_id",
+        "product_type",
+        "product_sub_type",
+        "product_name",
+        "product_start_date",
+        "line_of_business",
+    ],
+    "Home.csv": [
+        "batch_ref",
+        "pull_ts",
+        "origin_sys",
+        "home_id",
+        "policy_id",
+        "product_id",
+        "home_type",
+        "home_location",
+        "wall_type",
+        "roof_material",
+    ],
+    "Motor.csv": [
+        "batch_ref",
+        "pull_ts",
+        "origin_sys",
+        "motor_id",
+        "policy_id",
+        "product_id",
+        "motor_class",
+        "motor_model",
+        "motor_type",
+        "manufacturing_date",
+        "body_colour",
+        "fuel_type",
+        "gear_type",
+        "motor_parked_location",
+    ],
+}
+BUSINESS_VAULT_PERSON_MATCH_RULES = {
+    "NATURAL": {
+        "CRM": ["given_nm", "family_nm", "dob"],
+        "SAP": ["first_name", "last_name", "date_of_birth"],
+    },
+    "LEGAL": {
+        "CRM": ["legal_name", "constitution_dt"],
+        "SAP": ["organization", "org_establishment_date"],
+    },
+}
+BUSINESS_VAULT_EXCLUDED_MATCH_COLUMNS = {
+    "email_address",
+    "phone_number",
+    "gender",
+    "gender_txt",
 }
 
 
-def _base_prd2_column_name(column: str) -> str:
-    replacements = {
-        "batch_ref": "extract_batch_id",
-        "pull_ts": "extract_timestamp",
-        "origin_sys": "source_application",
-        "tenant_cd": "tenant_code",
-    }
-    if column in replacements:
-        return replacements[column]
-    suffix_replacements = [
-        ("_src_ref", "_source_reference_id"),
-        ("_ref", "_reference_id"),
-        ("_txt", "_desc"),
-        ("_amt", "_amount"),
-        ("_cnt", "_count"),
-        ("_ind", "_flag"),
-        ("_dt", "_date"),
-        ("_ts", "_timestamp"),
-        ("_cd", "_code"),
-        ("_nm", "_name"),
-        ("_no", "_num"),
-    ]
-    for suffix, replacement in suffix_replacements:
-        if column.endswith(suffix):
-            return f"{column[:-len(suffix)]}{replacement}"
-    return column
+def _sap_id(value: str) -> str:
+    value = str(value or "").strip()
+    if not value:
+        return ""
+    return value if value.startswith("SAP_") else f"SAP_{value}"
+
+
+def _date_part(value: str) -> str:
+    return str(value or "").strip().split(" ")[0].split("T")[0]
+
+
+def _first_value(*values: str) -> str:
+    for value in values:
+        text = str(value or "").strip()
+        if text:
+            return text
+    return ""
 
 
 def write_raw_base_prd2_variant(prd1_folder: str, raw_root: str, batch_id: str, mode: str = "base") -> str:
-    """Write a second base product raw source with equivalent rows and source-2 names.
+    """Write the base PRD2 raw feed using the workbook Source2/SAP structure.
 
-    This is intentionally a raw-feed rename only. PRD1 remains unchanged and
-    continues to be the base raw source used by the existing silver/vault path.
+    PRD1 is the CRM raw extract. PRD2 is a SAP-style source with different
+    source IDs but matchable business attributes for later Business Vault
+    mastering.
     """
     source_dir = Path(prd1_folder)
     out_dir = Path(raw_root) / mode / "prd_02" / batch_id
@@ -81,17 +158,100 @@ def write_raw_base_prd2_variant(prd1_folder: str, raw_root: str, batch_id: str, 
     if not source_dir.exists():
         raise FileNotFoundError(f"Base PRD1 raw folder not found: {source_dir}")
 
-    for source_name, target_name in BASE_PRD2_TABLE_NAMES.items():
-        rows = _read_rows(source_dir, source_name)
-        source_header = _read_header(source_dir, source_name)
-        if not source_header:
-            continue
-        renamed_header = [_base_prd2_column_name(column) for column in source_header]
-        renamed_rows = [
-            {_base_prd2_column_name(column): row.get(column, "") for column in source_header}
-            for row in rows
-        ]
-        _write_rows(out_dir, target_name, renamed_rows, renamed_header)
+    party_rows = _read_rows(source_dir, "party_master.csv")
+    contact_by_party = _index(_read_rows(source_dir, "contact_point.csv"), "party_ref")
+
+    def metadata(row: dict) -> dict:
+        return {
+            "batch_ref": row.get("batch_ref", batch_id),
+            "pull_ts": row.get("pull_ts", ""),
+            "origin_sys": "SAP",
+        }
+
+    person_rows = []
+    for row in party_rows:
+        contact = contact_by_party.get(row.get("party_ref", ""), {})
+        is_legal = str(row.get("party_kind", "")).upper() == "LEGAL"
+        person_rows.append({**metadata(row),
+            "person_id": _sap_id(row.get("party_ref", "")),
+            "person_type": row.get("party_kind", ""),
+            "organization": row.get("legal_name", "") if is_legal else "",
+            "org_establishment_date": _date_part(row.get("constitution_dt", "")) if is_legal else "",
+            "first_name": row.get("given_nm", ""),
+            "middle_name": "",
+            "last_name": row.get("family_nm", ""),
+            "date_of_birth": _date_part(row.get("dob", "")),
+            "gender": row.get("gender_txt", ""),
+            "occupation": _first_value(row.get("occupation_txt", ""), row.get("job_title_txt", ""), row.get("legal_job_title_txt", "")),
+            "email_address": _first_value(contact.get("email_home_txt", ""), contact.get("email_work_txt", "")),
+            "phone_number": _first_value(contact.get("phone_home_txt", ""), contact.get("phone_work_txt", "")),
+        })
+
+    address_rows = [
+        {**metadata(row),
+            "address_id": _sap_id(row.get("address_ref", "")),
+            "person_id": _sap_id(row.get("party_ref", "")),
+            "address_line_1": row.get("street_txt", ""),
+            "address_line_2": "",
+            "city": row.get("city_nm", ""),
+            "state": row.get("state_cd", ""),
+            "country": row.get("country_cd", ""),
+            "zipcode": row.get("postal_cd", ""),
+        }
+        for row in _read_rows(source_dir, "address_book.csv")
+    ]
+
+    product_rows = [
+        {**metadata(row),
+            "product_id": _sap_id(row.get("product_ref", "")),
+            "product_type": row.get("product_cd", ""),
+            "product_sub_type": row.get("product_line", ""),
+            "product_name": row.get("product_line", ""),
+            "product_start_date": _date_part(row.get("pull_ts", "")),
+            "line_of_business": row.get("product_line", ""),
+        }
+        for row in _read_rows(source_dir, "product_catalog.csv")
+    ]
+
+    home_rows = [
+        {**metadata(row),
+            "home_id": _sap_id(row.get("property_ref", "")),
+            "policy_id": _sap_id(row.get("policy_ref", "")),
+            "product_id": _sap_id(row.get("product_ref", "")),
+            "home_type": row.get("property_type_txt", ""),
+            "home_location": _first_value(row.get("risk_address_txt", ""), row.get("city_nm", "")),
+            "wall_type": row.get("wall_material_txt", ""),
+            "roof_material": row.get("roof_material_txt", ""),
+        }
+        for row in _read_rows(source_dir, "property_asset.csv")
+    ]
+
+    motor_rows = [
+        {**metadata(row),
+            "motor_id": _sap_id(row.get("vehicle_ref", "")),
+            "policy_id": _sap_id(row.get("policy_ref", "")),
+            "product_id": _sap_id(row.get("product_ref", "")),
+            "motor_class": row.get("vehicle_class_txt", ""),
+            "motor_model": row.get("model_nm", ""),
+            "motor_type": row.get("vehicle_type_txt", ""),
+            "manufacturing_date": row.get("manufacture_yr", ""),
+            "body_colour": row.get("body_style_txt", ""),
+            "fuel_type": row.get("fuel_type_txt", ""),
+            "gear_type": row.get("variant_nm", ""),
+            "motor_parked_location": row.get("garage_address_txt", ""),
+        }
+        for row in _read_rows(source_dir, "vehicle_asset.csv")
+    ]
+
+    outputs = {
+        "Person.csv": person_rows,
+        "Address.csv": address_rows,
+        "Product.csv": product_rows,
+        "Home.csv": home_rows,
+        "Motor.csv": motor_rows,
+    }
+    for file_name, rows in outputs.items():
+        _write_rows(out_dir, file_name, rows, BASE_PRD2_SAP_TABLES[file_name])
     return str(out_dir)
 
 
@@ -214,6 +374,7 @@ def write_raw_prd2_from_mlops(
     batch_id: str,
     base_folder: str | None = None,
     mode: str | None = None,
+    product_folder: str = "prd_02",
 ) -> str:
     """Write PRD2 raw as the enhanced/MLOps table delta over base.
 
@@ -221,7 +382,7 @@ def write_raw_prd2_from_mlops(
     vault tables that are not already present in the base synthetic vault.
     """
     source_dir = Path(mlops_folder)
-    out_dir = Path(raw_root) / mode / "prd_02" / batch_id if mode else Path(raw_root) / "prd_02" / batch_id
+    out_dir = Path(raw_root) / mode / product_folder / batch_id if mode else Path(raw_root) / product_folder / batch_id
     if out_dir.exists():
         shutil.rmtree(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -512,6 +673,14 @@ def copy_raw_prd2_folder(
     batch_id: str,
     base_folder: str | None = None,
     mode: str | None = None,
+    product_folder: str = "prd_02",
 ) -> str:
     """Backward-compatible entrypoint for writing source-style PRD2 raw files."""
-    return write_raw_prd2_from_mlops(mlops_folder, raw_root, batch_id, base_folder=base_folder, mode=mode)
+    return write_raw_prd2_from_mlops(
+        mlops_folder,
+        raw_root,
+        batch_id,
+        base_folder=base_folder,
+        mode=mode,
+        product_folder=product_folder,
+    )

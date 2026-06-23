@@ -266,41 +266,44 @@ Mode-scoped PRD raw folders are generated when `output_settings.generate_prd_raw
 - `data/raw/base/prd_02/<run_id>`
 - `data/raw/enhanced/prd_01/<run_id>`
 - `data/raw/enhanced/prd_02/<run_id>`
+- `data/raw/enhanced/prd_delta/<run_id>`
 - `data/raw/mlops/prd_01/<run_id>`
 - `data/raw/mlops/prd_02/<run_id>`
+- `data/raw/mlops/prd_delta/<run_id>`
 
-`data/raw/base/prd_01/<run_id>` is the base CRM raw shape. `data/raw/base/prd_02/<run_id>` carries the same 16 base entities with PRD2-specific table names and renamed raw source columns, so base can be represented as a second product feed without changing PRD1. `data/raw/enhanced/prd_01/<run_id>` and `data/raw/mlops/prd_01/<run_id>` carry the same base raw extract scoped to their target mode.
+`prd_01` is source 1. For `base`, it is the CRM raw shape. For `enhanced` and `mlops`, it contains the CRM raw shape plus mirrored enhanced/MLOps source-1 delta files prefixed with `source1_`, so all source-1 relevant tables are available from one folder without overwriting CRM files. `prd_02` is always the SAP/source-2 raw shape from `business_vault/bv.xlsx` sheet `Source2_Structure`; it uses different `SAP_*` source IDs while preserving matchable business attributes for later Business Vault mastering.
 
 Raw CRM and PRD1 file names do not repeat the folder source prefix. For example, the generated files are `party_master.csv`, `address_book.csv`, and `account_book.csv`, not `crm_party_master.csv`, `crm_address_book.csv`, or `crm_account_book.csv`.
 
-Base PRD2 uses this PRD1-to-PRD2 table mapping:
+PRD2 SAP/source-2 files:
 
-| PRD1 table | Base PRD2 table |
+| File | Main columns |
 |---|---|
-| `account_book.csv` | `billing_account_feed.csv` |
-| `address_book.csv` | `location_contact_feed.csv` |
-| `campaign_touch.csv` | `marketing_touch_feed.csv` |
-| `comm_preference.csv` | `contact_preference_feed.csv` |
-| `consent_snapshot.csv` | `consent_state_feed.csv` |
-| `contact_point.csv` | `communication_point_feed.csv` |
-| `customer_lead_bridge.csv` | `client_lead_link_feed.csv` |
-| `customer_portfolio.csv` | `client_portfolio_feed.csv` |
-| `identity_registry.csv` | `identity_reference_feed.csv` |
-| `lead_register.csv` | `prospect_register_feed.csv` |
-| `party_master.csv` | `insured_party_feed.csv` |
-| `policy_register.csv` | `contract_policy_feed.csv` |
-| `product_catalog.csv` | `cover_product_feed.csv` |
-| `property_asset.csv` | `home_asset_feed.csv` |
-| `quote_register.csv` | `quotation_feed.csv` |
-| `vehicle_asset.csv` | `motor_asset_feed.csv` |
+| `Person.csv` | `batch_ref`, `pull_ts`, `origin_sys`, `person_id`, `person_type`, `organization`, `org_establishment_date`, `first_name`, `middle_name`, `last_name`, `date_of_birth`, `gender`, `occupation`, `email_address`, `phone_number` |
+| `Address.csv` | `batch_ref`, `pull_ts`, `origin_sys`, `address_id`, `person_id`, `address_line_1`, `address_line_2`, `city`, `state`, `country`, `zipcode` |
+| `Product.csv` | `batch_ref`, `pull_ts`, `origin_sys`, `product_id`, `product_type`, `product_sub_type`, `product_name`, `product_start_date`, `line_of_business` |
+| `Home.csv` | `batch_ref`, `pull_ts`, `origin_sys`, `home_id`, `policy_id`, `product_id`, `home_type`, `home_location`, `wall_type`, `roof_material` |
+| `Motor.csv` | `batch_ref`, `pull_ts`, `origin_sys`, `motor_id`, `policy_id`, `product_id`, `motor_class`, `motor_model`, `motor_type`, `manufacturing_date`, `body_colour`, `fuel_type`, `gear_type`, `motor_parked_location` |
 
-Base PRD2 column names are renamed with these rules: `batch_ref -> extract_batch_id`, `pull_ts -> extract_timestamp`, `origin_sys -> source_application`, `tenant_cd -> tenant_code`, `_ref -> _reference_id`, `_txt -> _desc`, `_amt -> _amount`, `_cnt -> _count`, `_ind -> _flag`, `_dt -> _date`, `_ts -> _timestamp`, `_cd -> _code`, `_nm -> _name`, and `_no -> _num`.
+Every SAP PRD2 file starts with source metadata columns `batch_ref`, `pull_ts`, and `origin_sys`; `origin_sys` is always `SAP`. SAP IDs are intentionally different from CRM IDs. For example, CRM `PER_...` becomes SAP `SAP_PER_...`, CRM `PRD_...` becomes SAP `SAP_PRD_...`, and CRM `POL_...` becomes SAP `SAP_POL_...`.
 
-`data/raw/enhanced/prd_02/<run_id>` and `data/raw/mlops/prd_02/<run_id>` contain source-style raw extracts for the additional enhanced/MLOps product. They do not contain vault-shaped `hub_`, `link_`, or `sat_` files. PRD2 has seven added entity registers plus bridge/enrichment extracts needed to rebuild the enhanced/MLOps vault from PRD1+PRD2 without losing relationships or added satellite columns.
+Business Vault person matching uses only the agreed match-key fields. Natural-person matching uses CRM `given_nm`, `family_nm`, `dob` against SAP `first_name`, `last_name`, `date_of_birth`. Legal-entity matching uses CRM `legal_name`, `constitution_dt` against SAP `organization`, `org_establishment_date`. Email, phone, and gender fields are explicitly excluded from the match-key contract.
 
-PRD2 raw columns use `src_*` source names instead of vault names. For example, vault columns such as `policy_hash_key`, `load_date`, and `record_source` are stored as `src_policy_ref`, `src_extract_ts`, and `src_system`; `misc/build_product_combined_vault.py` maps them back to the MLOps vault schema during rebuild.
+Verify the raw Business Vault source contract after generation:
 
-PRD2 added entity registers:
+```powershell
+.\venv\Scripts\python.exe .\misc\verify_business_vault_raw.py --mode base --run-id <run_id>
+.\venv\Scripts\python.exe .\misc\verify_business_vault_raw.py --mode enhanced --run-id <run_id>
+.\venv\Scripts\python.exe .\misc\verify_business_vault_raw.py --mode mlops --run-id <run_id>
+```
+
+`data/raw/enhanced/prd_delta/<run_id>` and `data/raw/mlops/prd_delta/<run_id>` contain source-style raw extracts for the additional enhanced/MLOps product. They do not contain vault-shaped `hub_`, `link_`, or `sat_` files. `prd_delta` has seven added entity registers plus bridge/enrichment extracts needed to rebuild the enhanced/MLOps vault without losing relationships or added satellite columns.
+
+The same delta files are mirrored into enhanced/MLOps `prd_01` using a `source1_` prefix, for example `source1_complaint_register.csv` and `source1_override_register.csv`. The unprefixed `prd_delta` copy is retained for rebuild tooling.
+
+`prd_delta` raw columns use `src_*` source names instead of vault names. For example, vault columns such as `policy_hash_key`, `load_date`, and `record_source` are stored as `src_policy_ref`, `src_extract_ts`, and `src_system`; `misc/build_product_combined_vault.py` maps them back to the MLOps vault schema during rebuild.
+
+`prd_delta` added entity registers:
 
 - `broker_book.csv`
 - `campaign_register.csv`
@@ -310,7 +313,7 @@ PRD2 added entity registers:
 - `override_register.csv`
 - `regulation_register.csv`
 
-PRD2 supporting relationship/enrichment extracts:
+`prd_delta` supporting relationship/enrichment extracts:
 
 - `address_book.csv`
 - `claim_register.csv`

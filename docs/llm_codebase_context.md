@@ -57,8 +57,10 @@ Mode-scoped PRD raw folders are generated only when `config/scenario_v1.json` ha
 - `data/raw/base/prd_02/<run_id>`
 - `data/raw/enhanced/prd_01/<run_id>`
 - `data/raw/enhanced/prd_02/<run_id>`
+- `data/raw/enhanced/prd_delta/<run_id>`
 - `data/raw/mlops/prd_01/<run_id>`
 - `data/raw/mlops/prd_02/<run_id>`
+- `data/raw/mlops/prd_delta/<run_id>`
 
 Mode-scoped PRD raw-to-silver vault folders are generated only when both `output_settings.generate_prd_raw=true` and `output_settings.generate_prd_silver=true`:
 
@@ -248,31 +250,34 @@ Optional outputs:
 
 PRD raw contract:
 
-- `data/raw/base/prd_01/<run_id>` is the base raw CRM extract.
-- `data/raw/base/prd_02/<run_id>` is an alternate base product raw feed with the same 16 base entities as PRD1, renamed table files, and renamed source columns. It is generated for product/source separation and must not change the PRD1 base silver/vault rebuild path unless explicit PRD2 base mapping is added.
-- Base PRD2 table mapping is documented in `docs/current_rules_reference.md` and `README.md`. The code source of truth is `BASE_PRD2_TABLE_NAMES` plus `_base_prd2_column_name()` in `generators/raw_prd_generator.py`.
-- Base PRD2 column rename rules include exact renames `batch_ref -> extract_batch_id`, `pull_ts -> extract_timestamp`, `origin_sys -> source_application`, `tenant_cd -> tenant_code`, plus suffix renames such as `_ref -> _reference_id`, `_txt -> _desc`, `_amt -> _amount`, `_cnt -> _count`, `_ind -> _flag`, `_dt -> _date`, `_ts -> _timestamp`, `_cd -> _code`, `_nm -> _name`, and `_no -> _num`.
-- `data/raw/enhanced/prd_01/<run_id>` and `data/raw/mlops/prd_01/<run_id>` must match `data/raw/base/prd_01/<run_id>` file-for-file.
+- `data/raw/<mode>/prd_01/<run_id>` is source 1. For `base`, it is the CRM raw extract. For `enhanced` and `mlops`, it contains the CRM raw extract plus mirrored enhanced/MLOps source-1 delta files prefixed with `source1_`.
+- `data/raw/<mode>/prd_02/<run_id>` is the SAP/source-2 raw feed from `business_vault/bv.xlsx` sheet `Source2_Structure` for `base`, `enhanced`, and `mlops`. It writes `Person.csv`, `Address.csv`, `Product.csv`, `Home.csv`, and `Motor.csv` with different `SAP_*` source IDs and matchable business attributes for later Business Vault mastering.
+- Every SAP PRD2 file starts with `batch_ref`, `pull_ts`, and `origin_sys`; `origin_sys` must be `SAP`.
+- SAP PRD2 structure is documented in `docs/current_rules_reference.md` and `README.md`. The code source of truth is `BASE_PRD2_SAP_TABLES` and `write_raw_base_prd2_variant()` in `generators/raw_prd_generator.py`.
+- SAP PRD2 deliberately does not apply Business Vault survivorship. It only produces CRM and SAP raw source data with different source IDs. Matching and survivorship rules belong to a later Business Vault layer.
+- Business Vault raw matching contract is codified in `BUSINESS_VAULT_PERSON_MATCH_RULES` and checked by `misc/verify_business_vault_raw.py`. Natural matching uses CRM `given_nm/family_nm/dob` to SAP `first_name/last_name/date_of_birth`. Legal matching uses CRM `legal_name/constitution_dt` to SAP `organization/org_establishment_date`. Email, phone, and gender are explicitly excluded from match keys.
+- The unprefixed CRM files in `data/raw/enhanced/prd_01/<run_id>` and `data/raw/mlops/prd_01/<run_id>` must match `data/raw/base/prd_01/<run_id>` file-for-file. Prefixed `source1_*.csv` files are the mirrored enhanced/MLOps source-1 delta extracts.
 - Raw CRM and PRD1 file names omit the redundant `crm_` prefix because the source is already represented by the folder. Examples: `party_master.csv`, `address_book.csv`, `account_book.csv`.
 - PRD1 `party_master.csv.legal_job_title_txt` must not be blank. Legal-person rows use business roles; non-legal rows use `NOT_APPLICABLE` so database import does not infer a void/null-only type.
-- `data/raw/enhanced/prd_02/<run_id>` and `data/raw/mlops/prd_02/<run_id>` must not contain vault-shaped `hub_`, `link_`, or `sat_` files.
-- PRD2 contains seven added entity registers: broker, campaign, channel, complaint, insured object, override, and regulation.
-- PRD2 also contains source-style bridge and enrichment extracts required to rebuild the enhanced/MLOps vault from PRD1+PRD2 without losing relationships or added satellite fields.
-- PRD2 raw headers must use `src_*` source names, not vault names such as `*_hash_key`, `load_date`, or `record_source`.
-- `misc/verify_prd_raw_mlops.py` enforces this contract.
+- `data/raw/enhanced/prd_delta/<run_id>` and `data/raw/mlops/prd_delta/<run_id>` must not contain vault-shaped `hub_`, `link_`, or `sat_` files.
+- `prd_delta` contains seven added entity registers: broker, campaign, channel, complaint, insured object, override, and regulation.
+- `prd_delta` also contains source-style bridge and enrichment extracts required to rebuild the enhanced/MLOps vault without losing relationships or added satellite fields.
+- `prd_delta` raw headers must use `src_*` source names, not vault names such as `*_hash_key`, `load_date`, or `record_source`.
+- `prd_delta` files are mirrored into enhanced/MLOps PRD1 with `source1_` prefixes so source 1 has all relevant raw tables in one folder while rebuild tooling can still use the unprefixed `prd_delta` copy.
+- `misc/verify_prd_raw_mlops.py` applies to this product delta contract.
 
 Product combined contract:
 
 - `misc/build_product_combined_vault.py` builds `data/product_combined/<timestamp>`.
-- PRD2 raw includes the relationship and enrichment extracts needed by product-combined rebuilds. `misc/build_product_combined_vault.py` translates `src_*` PRD2 columns back to the MLOps vault schema.
-- MLOps PRD2 raw carries additional MLOps-only satellite fields through entity extracts and enrichment extracts. New MLOps columns added to the generated MLOps schema should therefore flow into `data/raw/mlops/prd_02/<run_id>` and `data/silver/mlops/<run_id>`.
+- `prd_delta` raw includes the relationship and enrichment extracts needed by product-combined rebuilds. `misc/build_product_combined_vault.py` translates `src_*` delta columns back to the MLOps vault schema.
+- MLOps `prd_delta` raw carries additional MLOps-only satellite fields through entity extracts and enrichment extracts. New MLOps columns added to the generated MLOps schema should therefore flow into `data/raw/mlops/prd_delta/<run_id>` and `data/silver/mlops/<run_id>`.
 - The output is MLOps-DDL-shaped and should be validated with `misc/verify_mlops_synthetic.py`.
 - `verify_csv.py` accepts a product-combined folder path and aliases MLOps `hub_address` / `link_person_address` to the base address checks.
 
 Mode silver contract:
 
 - `data/silver/base/<run_id>` is rebuilt from `data/raw/base/prd_01/<run_id>` using `misc/raw_to_silver_sample.py` with PRD1 source-field mapping.
-- `data/silver/enhanced/<run_id>` and `data/silver/mlops/<run_id>` are rebuilt by applying PRD2 raw deltas to `data/silver/base/<run_id>` with `misc/build_product_combined_vault.py`.
+- `data/silver/enhanced/<run_id>` and `data/silver/mlops/<run_id>` are rebuilt by applying `prd_delta` raw deltas to `data/silver/base/<run_id>` with `misc/build_product_combined_vault.py`.
 - Silver schemas are taken from the corresponding synthetic mode headers so `silver/enhanced` matches `synthetic/enhanced` and `silver/mlops` matches `synthetic/mlops`.
 - Base silver should pass `verify_csv.py` for PK/FK, dates, lifecycle, claim/churn field logic, and base relationship rules. Enhanced/MLOps silver should also preserve the corresponding mode schema and PRD2 relationships.
 

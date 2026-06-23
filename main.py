@@ -33,7 +33,12 @@ from generators.transaction_generator import (
     hub_assets_from_policies,
 )
 from generators.raw_crm_generator import write_raw_crm_batch
-from generators.raw_prd_generator import copy_raw_prd2_folder, write_raw_base_prd2_variant, write_raw_prd1_batch
+from generators.raw_prd_generator import (
+    copy_raw_prd2_folder,
+    mirror_source1_delta_into_prd1,
+    write_raw_base_prd2_variant,
+    write_raw_prd1_batch,
+)
 from generators.raw_api_generator import write_raw_api_batch
 from generators.raw_claims_generator import write_raw_claims_batch
 from generators.raw_data_source_generator import generate_data_source_raw
@@ -750,8 +755,12 @@ raw_base_prd1_out = None
 raw_base_prd2_out = None
 raw_enhanced_prd1_out = None
 raw_enhanced_prd2_out = None
+raw_enhanced_prd_delta_out = None
+raw_enhanced_prd1_delta_files = []
 raw_mlops_prd1_out = None
 raw_mlops_prd2_out = None
+raw_mlops_prd_delta_out = None
+raw_mlops_prd1_delta_files = []
 silver_base_out = None
 silver_enhanced_out = None
 silver_mlops_out = None
@@ -842,24 +851,30 @@ if generate_prd_raw:
     raw_base_prd1_out = write_raw_prd1_batch(RAW_ROOT, folder_run_id, base_context, mode="base")
     raw_base_prd2_out = write_raw_base_prd2_variant(raw_base_prd1_out, RAW_ROOT, folder_run_id, mode="base")
     raw_enhanced_prd1_out = write_raw_prd1_batch(RAW_ROOT, folder_run_id, base_context, mode="enhanced")
+    raw_enhanced_prd2_out = write_raw_base_prd2_variant(raw_enhanced_prd1_out, RAW_ROOT, folder_run_id, mode="enhanced")
     raw_mlops_prd1_out = write_raw_prd1_batch(RAW_ROOT, folder_run_id, base_context, mode="mlops")
+    raw_mlops_prd2_out = write_raw_base_prd2_variant(raw_mlops_prd1_out, RAW_ROOT, folder_run_id, mode="mlops")
 
 if generate_prd_raw and not mlops_only and enhanced_synthetic:
-    raw_enhanced_prd2_out = copy_raw_prd2_folder(
+    raw_enhanced_prd_delta_out = copy_raw_prd2_folder(
         enhanced_synthetic,
         RAW_ROOT,
         folder_run_id,
         base_folder=out,
         mode="enhanced",
+        product_folder="prd_delta",
     )
-if generate_prd_raw and not mlops_only:
-    raw_mlops_prd2_out = copy_raw_prd2_folder(
+    raw_enhanced_prd1_delta_files = mirror_source1_delta_into_prd1(raw_enhanced_prd_delta_out, raw_enhanced_prd1_out)
+if generate_prd_raw:
+    raw_mlops_prd_delta_out = copy_raw_prd2_folder(
         mlops_synthetic,
         RAW_ROOT,
         folder_run_id,
         base_folder=out,
         mode="mlops",
+        product_folder="prd_delta",
     )
+    raw_mlops_prd1_delta_files = mirror_source1_delta_into_prd1(raw_mlops_prd_delta_out, raw_mlops_prd1_out)
 
 if generate_prd_silver and raw_base_prd1_out:
     silver_base_out = os.path.join(SILVER_BASE_ROOT, folder_run_id)
@@ -949,10 +964,18 @@ if raw_enhanced_prd1_out:
     print("RAW ENHANCED PRD1:", raw_enhanced_prd1_out)
 if raw_enhanced_prd2_out:
     print("RAW ENHANCED PRD2:", raw_enhanced_prd2_out)
+if raw_enhanced_prd_delta_out:
+    print("RAW ENHANCED PRD_DELTA:", raw_enhanced_prd_delta_out)
+if raw_enhanced_prd1_delta_files:
+    print("RAW ENHANCED PRD1 SOURCE1 DELTA FILES:", len(raw_enhanced_prd1_delta_files))
 if raw_mlops_prd1_out:
     print("RAW MLOPS PRD1:", raw_mlops_prd1_out)
 if raw_mlops_prd2_out:
     print("RAW MLOPS PRD2:", raw_mlops_prd2_out)
+if raw_mlops_prd_delta_out:
+    print("RAW MLOPS PRD_DELTA:", raw_mlops_prd_delta_out)
+if raw_mlops_prd1_delta_files:
+    print("RAW MLOPS PRD1 SOURCE1 DELTA FILES:", len(raw_mlops_prd1_delta_files))
 if not generate_prd_raw and not skip_base_outputs:
     print("PRD RAW: skipped (set output_settings.generate_prd_raw=true in config/scenario_v1.json)")
 if silver_base_out:

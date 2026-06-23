@@ -276,6 +276,16 @@ def verify(root: Path) -> int:
         days = (_dt(complaint_rows["complaint_resolved_date"]) - _dt(complaint_rows["complaint_date"])).dt.days
         band = pd.cut(days, bins=[-1, 2, 7, float("inf")], labels=["DAYS_0_2", "DAYS_3_7", "DAYS_GT_7"]).astype(str)
         errors += _check_distribution("Complaint resolution TAT at ML master grain", band, {"DAYS_0_2": (0.55, 0.65), "DAYS_3_7": (0.25, 0.35), "DAYS_GT_7": (0.08, 0.12)})
+        complaint_nps = pd.to_numeric(complaint_rows.get("net_promoter_score"), errors="coerce").dropna().astype(int)
+        unique_scores = sorted(complaint_nps.unique().tolist())
+        has_bands = {
+            "DETRACTOR": bool((complaint_nps <= 6).any()),
+            "PASSIVE": bool(((complaint_nps >= 7) & (complaint_nps <= 8)).any()),
+            "PROMOTER": bool((complaint_nps >= 9).any()),
+        }
+        spread_ok = all(has_bands.values()) and (len(unique_scores) > 4 or len(complaint_nps) < 100)
+        print(("PASS" if spread_ok else "FAIL") + f": Complaint NPS score spread at ML master grain - unique_scores={unique_scores} bands={has_bands}")
+        errors += 0 if spread_ok else 1
     if "is_financial_ombudsman_service_referral" in master.columns:
         complaint_rows = _complaint_rows(master)
         escalated = complaint_rows["is_financial_ombudsman_service_referral"].astype(str).str.upper().eq("Y")

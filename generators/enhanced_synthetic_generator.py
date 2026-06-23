@@ -2426,6 +2426,31 @@ def _complaint_customer_nps_rank(tables: dict[str, list[dict]]) -> list[tuple[in
     ]
 
 
+def _spread_ranked_by_score(
+    ranked: list[tuple[int, int, str]],
+    scores: list[int],
+    reverse_within_score: bool = False,
+) -> list[tuple[int, int, str]]:
+    """Interleave rows across exact NPS scores so a band is not dominated by one score."""
+    grouped = {
+        score: sorted(
+            [item for item in ranked if item[0] == score],
+            key=lambda item: item[1],
+            reverse=reverse_within_score,
+        )
+        for score in scores
+    }
+    output: list[tuple[int, int, str]] = []
+    while True:
+        added = False
+        for score in scores:
+            if grouped[score]:
+                output.append(grouped[score].pop(0))
+                added = True
+        if not added:
+            return output
+
+
 def _apply_nps_renewal_contact_distribution(tables: dict[str, list[dict]], cfg: dict | None = None) -> None:
     ranked = _marketing_customer_nps_rank(tables)
     if not ranked:
@@ -3208,7 +3233,15 @@ def _apply_claim_complaint_nps_alignment(tables: dict[str, list[dict]], cfg: dic
         (nps_by_customer.get(policy_customer.get(policy_hk), 0), idx, policy_hk)
         for idx, policy_hk in enumerate(claim_policies)
     )
-    selected_policies = [policy_hk for _, _, policy_hk in ranked_policies[:target]]
+    detractor_claim_policies = _spread_ranked_by_score(ranked_policies, [0, 1, 2, 3, 4, 5, 6])
+    selected_policies = [policy_hk for _, _, policy_hk in detractor_claim_policies[:target]]
+    if len(selected_policies) < target:
+        selected_policies.extend(
+            policy_hk
+            for _, _, policy_hk in ranked_policies
+            if policy_hk not in set(selected_policies)
+        )
+        selected_policies = selected_policies[:target]
     selected_set = set(selected_policies)
     non_claim_policies = [
         row.get("policy_hash_key")
@@ -3226,9 +3259,16 @@ def _apply_claim_complaint_nps_alignment(tables: dict[str, list[dict]], cfg: dic
     # Fill extra complaint rows with high/moderate-NPS non-claim policies so
     # resolution-TAT NPS rules have representative fast/moderate complaint cases.
     extras_needed = max(0, len(complaint_links) - len(selected_policies))
-    passive_extra = [policy_hk for nps, _, policy_hk in sorted(ranked_non_claim, key=lambda item: (abs(item[0] - 7.5), item[1])) if 7 <= nps <= 8]
-    high_extra = [policy_hk for nps, _, policy_hk in sorted(ranked_non_claim, reverse=True) if nps >= 9]
-    fallback_extra = [policy_hk for _, _, policy_hk in sorted(ranked_non_claim, reverse=True)]
+    passive_extra = [policy_hk for nps, _, policy_hk in _spread_ranked_by_score(ranked_non_claim, [7, 8]) if 7 <= nps <= 8]
+    high_extra = [policy_hk for nps, _, policy_hk in _spread_ranked_by_score(ranked_non_claim, [9, 10], reverse_within_score=True) if nps >= 9]
+    fallback_extra = [
+        policy_hk
+        for _, _, policy_hk in (
+            _spread_ranked_by_score(ranked_non_claim, [9, 10], reverse_within_score=True)
+            + _spread_ranked_by_score(ranked_non_claim, [7, 8])
+            + _spread_ranked_by_score(ranked_non_claim, [0, 1, 2, 3, 4, 5, 6])
+        )
+    ]
     high_target = max(1, round(extras_needed * 0.55)) if extras_needed else 0
     passive_target = max(0, extras_needed - high_target)
 
@@ -3688,7 +3728,10 @@ def _apply_ml_master_grain_nps_alignment(tables: dict[str, list[dict]], cfg: dic
         complaint_mid = sorted(complaint_ranked, key=lambda item: (abs(item[0] - 5.5), item[1]))
         complaint_passive = sorted(complaint_ranked, key=lambda item: (abs(item[0] - 7.5), item[1]))
         complaint_high = sorted(complaint_ranked, reverse=True)
-        complaint_fallback = complaint_low + complaint_mid + complaint_high
+        complaint_low_spread = _spread_ranked_by_score(complaint_ranked, [0, 1, 2, 3, 4, 5, 6])
+        complaint_passive_spread = _spread_ranked_by_score(complaint_ranked, [7, 8])
+        complaint_high_spread = _spread_ranked_by_score(complaint_ranked, [9, 10], reverse_within_score=True)
+        complaint_fallback = complaint_low_spread + complaint_passive_spread + complaint_high_spread
         resolution_distribution = nps_settings.get("complaint_resolution_distribution") or {
             "DAYS_0_2": 60,
             "DAYS_3_7": 30,
@@ -3703,11 +3746,11 @@ def _apply_ml_master_grain_nps_alignment(tables: dict[str, list[dict]], cfg: dic
                 "DAYS_GT_7": {"DAYS_GT_7", "GT_7", "SLOW"},
             },
             {
-                "DAYS_GT_7": [[item for item in complaint_low if item[0] <= 6]],
-                "DAYS_3_7": [[item for item in complaint_passive if 7 <= item[0] <= 8]],
-                "DAYS_0_2": [[item for item in complaint_high if item[0] >= 9]],
+                "DAYS_GT_7": [[item for item in complaint_low_spread if item[0] <= 6]],
+                "DAYS_3_7": [[item for item in complaint_passive_spread if 7 <= item[0] <= 8]],
+                "DAYS_0_2": [[item for item in complaint_high_spread if item[0] >= 9]],
             },
-            complaint_high + complaint_passive + complaint_low,
+            complaint_high_spread + complaint_passive_spread + complaint_low_spread,
         )
         resolution_ranges = {"DAYS_0_2": (0, 2), "DAYS_3_7": (3, 7), "DAYS_GT_7": (8, 30)}
         for band, rows in resolution_rows.items():
@@ -3731,8 +3774,8 @@ def _apply_ml_master_grain_nps_alignment(tables: dict[str, list[dict]], cfg: dic
                 "NON_ESCALATED": {"NON_ESCALATED", "N", "NO", "FALSE"},
             },
             {
-                "ESCALATED": [[item for item in complaint_low if item[0] <= 2]],
-                "NON_ESCALATED": [[item for item in complaint_high if item[0] >= 3]],
+                "ESCALATED": [[item for item in complaint_low_spread if item[0] <= 6]],
+                "NON_ESCALATED": [[item for item in complaint_high_spread if item[0] >= 9], [item for item in complaint_passive_spread if 7 <= item[0] <= 8], [item for item in complaint_low_spread if 3 <= item[0] <= 6]],
             },
             complaint_fallback,
         )
@@ -3753,9 +3796,9 @@ def _apply_ml_master_grain_nps_alignment(tables: dict[str, list[dict]], cfg: dic
                 "PARTIALLY_UPHELD": {"PARTIALLY_UPHELD", "PARTIALLY UPHELD"},
             },
             {
-                "NOT_UPHELD": [[item for item in complaint_low if item[0] <= 4]],
-                "PARTIALLY_UPHELD": [[item for item in complaint_mid_low if 3 <= item[0] <= 6]],
-                "UPHELD": [[item for item in complaint_mid if 4 <= item[0] <= 7]],
+                "NOT_UPHELD": [[item for item in complaint_low_spread if item[0] <= 6]],
+                "PARTIALLY_UPHELD": [[item for item in complaint_low_spread if 3 <= item[0] <= 6], [item for item in complaint_passive_spread if 7 <= item[0] <= 8]],
+                "UPHELD": [[item for item in complaint_passive_spread if 7 <= item[0] <= 8], [item for item in complaint_high_spread if item[0] >= 9]],
             },
             complaint_fallback,
         )

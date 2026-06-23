@@ -101,7 +101,7 @@ The generator now supports a separate `data/synthetic/mlops/<run_id>` output bas
 Normal `main.py` also writes mode-scoped raw and silver outputs. For MLOps, the 9 latest fields flow as follows:
 
 - synthetic MLOps: `data/synthetic/mlops/<run_id>`
-- MLOps PRD2 raw entity/enrichment extracts: `data/raw/mlops/prd_02/<run_id>`
+- MLOps product delta raw entity/enrichment extracts: `data/raw/mlops/prd_delta/<run_id>`
 - MLOps silver rebuild: `data/silver/mlops/<run_id>`
 - MLOps SCD2, when previous comparable history exists: `data/scd2/mlops/<run_id>`
 
