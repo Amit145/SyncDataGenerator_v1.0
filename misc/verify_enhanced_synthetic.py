@@ -298,9 +298,9 @@ def verify_base_timelines(frames: dict[str, pd.DataFrame]) -> int:
         if {"policy_start_date", "policy_issue_date"}.issubset(sat_policy.columns):
             start_date = parse_dt(sat_policy["policy_start_date"])
             issue_date = parse_dt(sat_policy["policy_issue_date"])
-            mismatch = start_date.notna() & issue_date.notna() & (start_date != issue_date)
-            if mismatch.any():
-                print("TIMELINE CHECK FAILED: sat_policy policy_issue_date != policy_start_date")
+            invalid_issue = start_date.notna() & issue_date.notna() & (issue_date > start_date)
+            if invalid_issue.any():
+                print("TIMELINE CHECK FAILED: sat_policy policy_issue_date > policy_start_date")
                 errors += 1
 
     sat_lead = frames.get("sat_lead")

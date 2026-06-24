@@ -168,7 +168,8 @@ CREATE OR REPLACE TABLE dim_claim
 	claim_band STRING,
 	claim_band_sort INTEGER,
 	is_fault_claim CHAR(1),
-	claim_satisfaction_score STRING,
+	claim_satisfaction_score INTEGER,
+	claims_feedback STRING,
 	effective_from_ts TIMESTAMP,
 	effective_to_ts TIMESTAMP,
 	record_version INTEGER,
@@ -199,6 +200,8 @@ CREATE OR REPLACE TABLE dim_customer
 	customer_satisfaction STRING,
 	customer_age_band STRING,
 	net_promotor_code_segment STRING,
+	customer_onboarding_satisfaction_score INTEGER,
+	customer_onboarding_feedback STRING,
 	effective_from_ts TIMESTAMP,
 	effective_to_ts TIMESTAMP,
 	record_version INTEGER,
@@ -263,12 +266,12 @@ CREATE OR REPLACE TABLE dim_home
 	wall_construction_material_type STRING,
 	effective_from_ts TIMESTAMP,
 	effective_to_ts TIMESTAMP,
-	record_version INTEGER,
 	created_by STRING,
 	created_ts TIMESTAMP,
 	last_updated_by STRING,
 	last_updated_ts TIMESTAMP,
-	attr_hash STRING
+	attr_hash STRING,
+	record_version INTEGER
 )
 PARTITIONED BY (insured_object_home_id, effective_from_ts);
 
@@ -336,7 +339,8 @@ CREATE OR REPLACE TABLE dim_marketing
 	has_retention_team_interaction CHAR(1),
 	customer_service_call_frequency INTEGER,
 	average_call_sentiment STRING,
-	engagement_score STRING,
+	engagement_score INTEGER,
+	first_contact_resolution STRING,
 	effective_from_ts TIMESTAMP,
 	effective_to_ts TIMESTAMP,
 	record_version INTEGER,
@@ -489,6 +493,9 @@ CREATE OR REPLACE TABLE dim_policy
 	missed_payment_count INTEGER,
 	loyalty_discount_usage STRING,
 	is_installment_default CHAR(1),
+	policy_renewal_satisfaction_score INTEGER,
+	policy_renewal_feedback STRING,
+	is_renewal_escalation CHAR(1),
 	effective_from_ts TIMESTAMP,
 	effective_to_ts TIMESTAMP,
 	record_version INTEGER,
@@ -575,6 +582,8 @@ CREATE OR REPLACE TABLE fact_complaint
 	compensation_amt DECIMAL(18,4),
 	complaint_status STRING,
 	insurance_category STRING,
+	complaint_feedback STRING,
+	customer_complaint_satisfaction_score INTEGER,
 	created_by STRING,
 	created_ts TIMESTAMP,
 	load_ts TIMESTAMP

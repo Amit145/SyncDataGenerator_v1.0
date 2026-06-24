@@ -13,6 +13,15 @@ Probability values are decimal probabilities from `0.0` to `1.0`.
 - `random_seed`: Seed used to make runs reproducible for the same config and code path.
 - `natural_person_pct`: Share of generated people that should be natural persons. The remainder are legal persons.
 
+## output_settings
+
+Controls optional output families that add runtime. Normal synthetic base, enhanced, MLOps, and synthetic SCD2 outputs are still controlled by the command mode.
+
+- `generate_legacy_raw_silver`: When `true`, normal `main.py` also writes legacy CRM/API/claims/data_source raw, canonical raw, API silver, and raw SCD2 outputs. The CLI flag `--include-raw-silver` also enables this for one run.
+- `generate_prd_raw`: When `true`, normal `main.py` writes mode-scoped product raw folders under `data/raw/base/prd_01/<run_id>`, `data/raw/enhanced/prd_01/<run_id>`, `data/raw/enhanced/prd_02/<run_id>`, `data/raw/mlops/prd_01/<run_id>`, and `data/raw/mlops/prd_02/<run_id>`.
+- `generate_prd_silver`: When `true`, normal `main.py` rebuilds mode-scoped silver vault folders under `data/silver/base/<run_id>`, `data/silver/enhanced/<run_id>`, and `data/silver/mlops/<run_id>`. This requires `generate_prd_raw=true` for the same run.
+- `generate_new_outputs_src`: When `true`, `data/new_outputs_src` is generated only if legacy raw/silver is also enabled. The CLI flag `--include-new-outputs-src` also enables this for one run, but still requires `--include-raw-silver` or `generate_legacy_raw_silver=true`.
+
 ## lifecycle_distribution
 
 Controls initial person lifecycle mix before later conversion logic.
@@ -402,6 +411,8 @@ Validator target ranges for the MLOps-only churn KPIs that became coverable with
 These ranges are used by `misc/verify_mlops_churn_kpis.py`; they do not change base or enhanced schemas.
 
 - `auto_renew_enabled`: ON `5-12%`, OFF `35-55%`
+- `policy_type`: NEW_BUSINESS `35-55%`, RENEWAL `8-18%`
+- `policy_renewal`: Y `8-18%`, N `35-55%`
 - `fault_claim`: NO `12-20%`, YES `30-50%`
 - `ncd_years`: `0_1` `25-40%`, `2_4` `18-30%`, `5_8` `15-25%`, `9_PLUS` `10-18%`
 - `payment_method`: ANNUAL `8-15%`, MONTHLY_DD `15-25%`, CARD_MANUAL `25-40%`
@@ -409,10 +420,23 @@ These ranges are used by `misc/verify_mlops_churn_kpis.py`; they do not change b
 - `missed_payments`: `0` `10-18%`, `1` `25-35%`, `2` `40-55%`, `3_PLUS` `60-75%`
 - `retention_contacted`: NO `12-22%`, YES `35-55%`
 - `claim_satisfaction`: HIGH `8-15%`, NEUTRAL `18-30%`, LOW `40-65%`
+- `customer_satisfaction`: VERY_SATISFIED `8-15%`, SATISFIED `15-25%`, NEUTRAL `25-40%`, DISSATISFIED `45-65%`
+- `complaint_resolution_days`: `0_7` `8-15%`, `8_30` `18-30%`, `31_60` `35-50%`, `61_PLUS` `50-70%`
 - `loyalty_discount`: RETAINED `8-18%`, NOT_APPLIED `18-30%`, REMOVED `40-60%`
 - `installment_default`: NO `10-18%`, YES `50-75%`
 - `call_sentiment`: POSITIVE `8-15%`, NEUTRAL `18-30%`, NEGATIVE `40-65%`
 - `engagement_score`: HIGH `8-15%`, MEDIUM `18-30%`, LOW `35-55%`, VERY_LOW `50-70%`
+
+`policy_renewal` is intentionally separate from `auto_renew_enabled`: `policy_renewal` describes whether the policy is a renewal/new-business policy, while `auto_renew_enabled` describes whether the policy is enrolled for automatic renewal. Engagement score keeps the workbook direction: higher engagement has lower expected churn, and lower engagement has higher expected churn.
+
+### mlops_churn_band_weights
+
+Controls generated band sizes for configurable MLOps KPI calibration where the workbook gives churn ranges but not row-count distribution.
+
+- `policy_type`: NEW_BUSINESS `45`, RENEWAL `55`
+- `policy_renewal`: Y `55`, N `45`
+- `customer_satisfaction`: VERY_SATISFIED `20`, SATISFIED `35`, NEUTRAL `25`, DISSATISFIED `20`
+- `complaint_resolution_days`: `0_7` `35`, `8_30` `35`, `31_60` `20`, `61_PLUS` `10`
 
 ## lifecycle_mode
 
@@ -454,6 +478,38 @@ Enhanced claim financial consistency rules:
 - `claims_paid` must not exceed `claim_amount`.
 - `outstanding_reserve` represents the unpaid expected amount for open claims.
 - valid zeros remain possible for recovery, fraud, and legal fields when those situations do not apply.
+
+## nps_settings
+
+Controls the NPS feature ratios from `churnps/Data Req Churn NPS.xlsx`, sheet `NPS_Features`, for rows marked `Available`, `Proxy`, or `Proxy (complaint only)`.
+
+These settings are applied through existing base/enhanced/MLOps fields and inherited by raw/silver generation paths. They do not add columns or change Data Vault keys.
+
+- `nps_score_distribution`: Relative split for `sat_customer.nps_score` bands. Current workbook target is `DETRACTOR 30`, `PASSIVE 35`, `PROMOTER 35`; scores map as `0-6`, `7-8`, and `9-10`.
+- `nps_score_value_weights`: Relative weights inside each NPS band. The default detractor shape creates a visible dip at scores `2-4` while keeping total detractors near 30%; passive/promoter weights add small ripples so the score-level bar chart does not look artificially flat.
+- `digital_onboarding_distribution`: Relative split for `sat_account.account_creation_type`. Current target is `ONLINE 75`, `BRANCH 25`. The generator preserves this overall split and then aligns account creation type to NPS so higher-NPS customers skew online and lower-NPS customers skew branch.
+- `digital_onboarding_nps_overlap`: Cross-over rates for the 17/06 ML feedback. `online_low_nps_1_4_rate` keeps some online records visible for low NPS `1-4`; `branch_high_nps_8_10_rate` keeps some branch records visible for high NPS `8-10`. This prevents an unrealistically perfect split while preserving the overall `75/25` ratio.
+- `quote_dropoff_distribution`: Relative split for `sat_quote.quote_status`. `ACCEPTED` means converted/retained in the onboarding funnel; `DROPOFF` emits non-accepted statuses such as `CREATED`, `SENT`, or `EXPIRED`.
+- `quote_dropoff_status_distribution`: Relative split inside non-accepted quote drop-offs. Current workbook target is `CREATED 50`, `SENT 35`, and `EXPIRED 15`. Assignment is NPS-shaped so expired quotes skew low NPS, sent quotes skew moderate NPS, and created quotes skew high NPS.
+- `premium_increase_distribution`: Relative split for the NPS renewal premium increase feature using both `sat_quote.renewal_amt_current_period` / `sat_quote.renewal_amt_next_period` and policy/fact-style `sat_policy.renewal_amount_current_period` / `sat_policy.renewal_amount_next_period`. Current workbook target is `LE_5 70`, `GT_5_LE_10 20`, and `GT_10 10`. Assignment is NPS-shaped so `<=5%` skews high NPS, `5-10%` skews passive NPS, and `>10%` skews detractor NPS. This does not modify the separate churn premium calibration in `churn_settings`.
+- `digital_renewal_distribution`: Relative split for the NPS digital-renewal feature using `sat_policy.sales_channel` where `policy_cycle > 1`. Current workbook target is `ONLINE 70`, `AGENT 20`, and `BRANCH 10`. Assignment is NPS-shaped so online renewals skew high NPS, agent-assisted renewals skew passive NPS, and branch renewals skew lower NPS.
+- `policy_issuance_tat_distribution`: Relative split for `sat_policy.policy_start_date - sat_policy.policy_issue_date`. Current target is `DAYS_0_2 70`, `DAYS_3_7 20`, and `DAYS_GT_7 10`.
+- `policy_issuance_tat_by_nps_band`: Conditional weights used to make policy issuance TAT correlate with NPS while preserving the overall `70/20/10` target. Promoters lean to `0-2 days`, passives lean to `3-7 days`, and low-NPS detractors lean to `>7 days`.
+- `claim_escalation_distribution`: Relative split for `sat_claim.is_litigation`. Current target is `NON_ESCALATED 92`, `ESCALATED 8`.
+- `claim_complaint_distribution`: Relative split for the claim complaint proxy using claim-policy and complaint-policy links. Current workbook target is `NO_COMPLAINT 85`, `COMPLAINT 15`. Complaint-linked claims skew lower NPS, while high-NPS claim customers skew no complaint.
+- `self_service_adoption_distribution`: Relative split for the derived self-service adoption proxy. The flag is true when account creation is online, operational paperless consent is `Y`, and account last access is within 30 days of the account load date. Current workbook target is `ADOPTED 65`, `NOT_ADOPTED 35`; adopted customers skew higher NPS.
+- `complaint_resolution_distribution`: Workbook target for complaint resolution turnaround using `sat_complaint.complaint_date` and `complaint_resolved_date`: `0-2 days 60`, `3-7 days 30`, `>7 days 10`. The final NPS pass preserves valid complaint date ordering and status consistency, with fast resolution skewing higher NPS and slow resolution skewing lower NPS.
+- `renewal_contact_distribution`: Workbook target for customer contacts during renewal using `sat_marketing_engagement.customer_service_call_frequency`: `0-1 contacts 60`, `2-3 contacts 30`, `>3 contacts 10`. Low contacts skew high NPS, moderate contacts skew passive NPS, and high contacts skew low NPS.
+- `claim_settlement_tat_distribution`: Workbook target for claim settlement turnaround using `sat_claim.claim_reported_date` and `claim_settlement_date`: `0-15 days 70`, `16-30 days 20`, `>30 days 10`. Fast settlement skews high NPS, medium settlement skews passive NPS, and slow settlement skews low NPS.
+- `claim_channel_distribution`: Workbook target for claim servicing channel using `sat_claim.claim_channel`: `ONLINE 70`, `AGENT 20`, `BRANCH 10`. Online skews high NPS, agent skews passive NPS, and branch skews lower NPS.
+- `complaint_escalation_distribution`: Workbook target for complaint escalation using `sat_complaint.is_financial_ombudsman_service_referral`: `NON_ESCALATED 98`, `ESCALATED 2`. Escalated rows are selected from NPS `0-2` first.
+- `complaint_status_outcome_distribution`: Workbook target for `sat_complaint.complaint_upheld_status`: `NOT_UPHELD 65`, `UPHELD 20`, `PARTIALLY_UPHELD 15`. Status assignment is NPS-shaped so not upheld skews low NPS and upheld/partial statuses carry moderate NPS volume.
+- `repeat_complaint_distribution`: Workbook target for repeat complaint proxy from complaint-policy/customer links: `NO_REPEAT 90`, `REPEAT 10` among complaint customers, with repeat complaints selected from NPS `0-3` first.
+- `onboarding_feedback_text`: Phrase bank for `sat_customer.customer_onboarding_feedback`. Positive feedback includes "Comprehensive cover for the price for appropriate policy" and "Flexible excess options available". Negative feedback includes "Policy exclusions not clear" and "Courtesy car not in standard cover". The generator rotates through the configured phrase list inside each sentiment bucket; it no longer writes generic `POSITIVE`, `NEUTRAL`, or `NEGATIVE` for this onboarding field.
+- `onboarding_feedback_distribution`: Workbook target for onboarding feedback text: `NEGATIVE 20`, `NEUTRAL 30`, `POSITIVE 50`. Lower NPS customers are selected for negative themes first, passive NPS customers for neutral themes first, and higher NPS customers for positive themes first.
+- `onboarding_feedback_unique_counts`: Target number of equivalent unique onboarding feedback text values to generate per sentiment bucket. Current values are `NEGATIVE 100`, `NEUTRAL 150`, `POSITIVE 250`, giving up to `500` unique onboarding feedback values while preserving the workbook ratio.
+- `self_service_score_distribution`: Relative split for a derived `0-3` self-service adoption proxy. The current model reports this from existing fields and does not add a separate column.
+- `preserve_existing_churn_date_rules`: Legacy guard retained for compatibility. Current NPS policy issuance TAT follows the workbook distribution, including the `>7 days` bucket, while preserving `policy_issue_date <= policy_start_date`.
 
 ## enhanced_settings
 
