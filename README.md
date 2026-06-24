@@ -279,15 +279,17 @@ PRD2 SAP/source-2 files:
 
 | File | Main columns |
 |---|---|
-| `Person.csv` | `batch_ref`, `pull_ts`, `origin_sys`, `person_id`, `person_type`, `organization`, `org_establishment_date`, `first_name`, `middle_name`, `last_name`, `date_of_birth`, `gender`, `occupation`, `email_address`, `phone_number` |
-| `Address.csv` | `batch_ref`, `pull_ts`, `origin_sys`, `address_id`, `person_id`, `address_line_1`, `address_line_2`, `city`, `state`, `country`, `zipcode` |
-| `Product.csv` | `batch_ref`, `pull_ts`, `origin_sys`, `product_id`, `product_type`, `product_sub_type`, `product_name`, `product_start_date`, `line_of_business` |
-| `Home.csv` | `batch_ref`, `pull_ts`, `origin_sys`, `home_id`, `policy_id`, `product_id`, `home_type`, `home_location`, `wall_type`, `roof_material` |
-| `Motor.csv` | `batch_ref`, `pull_ts`, `origin_sys`, `motor_id`, `policy_id`, `product_id`, `motor_class`, `motor_model`, `motor_type`, `manufacturing_date`, `body_colour`, `fuel_type`, `gear_type`, `motor_parked_location` |
+| `person.csv` | `batch_ref`, `pull_ts`, `origin_sys`, `person_id`, `person_type`, `organization`, `org_establishment_date`, `first_name`, `middle_name`, `last_name`, `date_of_birth`, `gender`, `occupation`, `email_address`, `phone_number` |
+| `address.csv` | `batch_ref`, `pull_ts`, `origin_sys`, `address_id`, `person_id`, `address_line_1`, `address_line_2`, `city`, `state`, `country`, `zipcode` |
+| `product.csv` | `batch_ref`, `pull_ts`, `origin_sys`, `product_id`, `product_type`, `product_sub_type`, `product_name`, `product_start_date`, `line_of_business` |
+| `home.csv` | `batch_ref`, `pull_ts`, `origin_sys`, `home_id`, `policy_id`, `product_id`, `home_type`, `home_location`, `wall_type`, `roof_material` |
+| `motor.csv` | `batch_ref`, `pull_ts`, `origin_sys`, `motor_id`, `policy_id`, `product_id`, `motor_class`, `motor_model`, `motor_type`, `manufacturing_date`, `body_colour`, `fuel_type`, `gear_type`, `motor_parked_location` |
 
 Every SAP PRD2 file starts with source metadata columns `batch_ref`, `pull_ts`, and `origin_sys`; `origin_sys` is always `SAP`. SAP IDs are intentionally different from CRM IDs. For example, CRM `PER_...` becomes SAP `SAP_PER_...`, CRM `PRD_...` becomes SAP `SAP_PRD_...`, and CRM `POL_...` becomes SAP `SAP_POL_...`.
 
 Business Vault person matching uses only the agreed match-key fields. Natural-person matching uses CRM `given_nm`, `family_nm`, `dob` against SAP `first_name`, `last_name`, `date_of_birth`. Legal-entity matching uses CRM `legal_name`, `constitution_dt` against SAP `organization`, `org_establishment_date`. Email, phone, and gender fields are explicitly excluded from the match-key contract.
+
+Raw Vault loads should create hubs, links, and satellites from these source files. Relationship links are required for person-address, policy-product, product-home, and product-motor relationships. Business Vault PIT tables are not generated in the raw source folders; build PITs after Raw Vault/BV load when a point-in-time analytical snapshot is needed.
 
 Verify the raw Business Vault source contract after generation:
 

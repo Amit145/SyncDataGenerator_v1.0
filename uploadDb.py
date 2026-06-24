@@ -17,17 +17,20 @@ DB_NAME = "u941116359_enhanced_360"
 """
 
 DB_HOST = "auth-db1282.hstgr.io"
-DB_USER = "u941116359_c360"
-DB_PASSWORD = "OneTwoThree@1234"
-DB_NAME = "u941116359_c360"
+DB_USER = "u941116359_admin1"
+DB_PASSWORD = "Admin1@bvault"
+DB_NAME = "u941116359_bvault"
 
-CSV_FOLDER = "C:\\Users\\amit262468\\Downloads\\20260414205204\\DB"   # Folder containing all CSV files
+CSV_FOLDER = r"F:\SyncDataGenerator_v1.0\data\raw\base\prd_02\20260623182109"   # Folder containing all CSV files
 
 
 # PRD1 raw upload type overrides. Keep the upload raw-style by default:
 # everything is TEXT unless the source mapping identifies a specific exception.
 RAW_COLUMN_TYPE_OVERRIDES = {
     'dob': "DATE",
+    'date_of_birth': "DATE",
+    'org_establishment_date': "DATE",
+    'product_start_date': "DATE"
 }
 
 

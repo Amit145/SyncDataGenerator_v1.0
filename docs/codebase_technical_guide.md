@@ -690,7 +690,7 @@ Raw PRD:
 - PRD2 outputs: `data/raw/base/prd_02/<run_id>`, `data/raw/enhanced/prd_02/<run_id>`, `data/raw/mlops/prd_02/<run_id>`
 - `prd_delta` outputs: `data/raw/enhanced/prd_delta/<run_id>`, `data/raw/mlops/prd_delta/<run_id>`
 - PRD1 preserves the existing CRM raw file shape.
-- PRD2 preserves the SAP/source-2 raw file shape from `business_vault/bv.xlsx`: `Person.csv`, `Address.csv`, `Product.csv`, `Home.csv`, and `Motor.csv`.
+- PRD2 preserves the SAP/source-2 raw file shape from `business_vault/bv.xlsx`: `person.csv`, `address.csv`, `product.csv`, `home.csv`, and `motor.csv`.
 - Raw CRM and PRD1 file names omit the redundant `crm_` prefix because the source is already represented by the folder. Examples: `party_master.csv`, `address_book.csv`, `account_book.csv`.
 - `prd_delta` contains seven added source-style entity registers: `broker_book.csv`, `campaign_register.csv`, `channel_catalog.csv`, `complaint_register.csv`, `insured_object_register.csv`, `override_register.csv`, and `regulation_register.csv`.
 - `prd_delta` also contains source-style bridge and enrichment extracts needed to rebuild enhanced/MLOps vault relationships and added satellite attributes.
@@ -698,6 +698,11 @@ Raw PRD:
 - `prd_delta` must not contain vault-shaped `hub_`, `link_`, or `sat_` files.
 - The verifier reconciles `prd_delta` to the corresponding MLOps added entities and relationships.
 - verifier: `misc/verify_prd_raw_mlops.py`
+
+Business Vault positioning:
+
+- Raw Vault should derive hubs, links, and satellites from PRD1/PRD2 sources. Links are required for source relationships including person-address, policy-product, product-home, and product-motor.
+- PIT tables are not source raw files and are not generated under `data/raw`. Build PITs after Raw Vault/BV loading when a point-in-time analytical snapshot is needed.
 
 Raw API:
 

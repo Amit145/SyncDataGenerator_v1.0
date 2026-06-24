@@ -41,6 +41,10 @@ def _safe_get(index, key, column):
     return row.get(column) if row else None
 
 
+def _date_part(value):
+    return str(value or "").strip().split(" ")[0].split("T")[0]
+
+
 def write_raw_crm_batch(base_folder, batch_id, ctx, source_dir_name="crm", source_system="CRM"):
     out_dir = os.path.join(base_folder, source_dir_name, batch_id)
     extract_ts = ctx.get("extract_ts") or get_now_iso()
@@ -245,7 +249,7 @@ def write_raw_crm_batch(base_folder, batch_id, ctx, source_dir_name="crm", sourc
             "legal_person_job_title": sat_leg.get("Job Title") or "NOT_APPLICABLE",
             "legal_source_id": sat_leg.get("Source Id"),
             "legal_source_type": sat_leg.get("Source Type"),
-            "date_of_constitution": sat_leg.get("Date of Constitution"),
+            "date_of_constitution": _date_part(sat_leg.get("Date of Constitution")),
             "lead_converted_date": sat_leg.get("Converted Date"),
         }, batch_id, extract_ts, source_system))
 

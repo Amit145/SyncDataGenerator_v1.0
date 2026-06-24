@@ -56,11 +56,11 @@ Base PRD2 SAP/source-2 files:
 
 | File | Grain | Key columns |
 |---|---|---|
-| `Person.csv` | 1 row per SAP person | `person_id` |
-| `Address.csv` | 1 row per SAP address | `address_id`, `person_id` |
-| `Product.csv` | 1 row per SAP product | `product_id` |
-| `Home.csv` | 1 row per SAP home asset | `home_id`, `policy_id`, `product_id` |
-| `Motor.csv` | 1 row per SAP motor asset | `motor_id`, `policy_id`, `product_id` |
+| `person.csv` | 1 row per SAP person | `person_id` |
+| `address.csv` | 1 row per SAP address | `address_id`, `person_id` |
+| `product.csv` | 1 row per SAP product | `product_id` |
+| `home.csv` | 1 row per SAP home asset | `home_id`, `policy_id`, `product_id` |
+| `motor.csv` | 1 row per SAP motor asset | `motor_id`, `policy_id`, `product_id` |
 
 Base PRD2 SAP columns follow the workbook:
 
@@ -70,6 +70,8 @@ Base PRD2 SAP columns follow the workbook:
 - `Product`: `batch_ref`, `pull_ts`, `origin_sys`, `product_id`, `product_type`, `product_sub_type`, `product_name`, `product_start_date`, `line_of_business`
 - `Home`: `batch_ref`, `pull_ts`, `origin_sys`, `home_id`, `policy_id`, `product_id`, `home_type`, `home_location`, `wall_type`, `roof_material`
 - `Motor`: `batch_ref`, `pull_ts`, `origin_sys`, `motor_id`, `policy_id`, `product_id`, `motor_class`, `motor_model`, `motor_type`, `manufacturing_date`, `body_colour`, `fuel_type`, `gear_type`, `motor_parked_location`
+
+Raw Vault modelling should derive relationship links from PRD1 and PRD2 sources. The SAP PRD2 files support person-address, policy-product, product-home, and product-motor relationships; those are vault links, not extra raw source files. PIT tables are Business Vault/consumption artifacts and should be built after Raw Vault/BV load when a point-in-time snapshot is required.
 
 SAP IDs are deliberately different from CRM IDs by prefixing source business IDs with `SAP_`. Example: CRM `PER_...` becomes SAP `SAP_PER_...`. This supports Raw Vault separation by source while keeping values matchable for Business Vault identity resolution and survivorship.
 

@@ -36,7 +36,7 @@ def mirror_source1_delta_into_prd1(delta_folder: str, prd1_folder: str, prefix: 
 
 
 BASE_PRD2_SAP_TABLES = {
-    "Person.csv": [
+    "person.csv": [
         "batch_ref",
         "pull_ts",
         "origin_sys",
@@ -53,7 +53,7 @@ BASE_PRD2_SAP_TABLES = {
         "email_address",
         "phone_number",
     ],
-    "Address.csv": [
+    "address.csv": [
         "batch_ref",
         "pull_ts",
         "origin_sys",
@@ -66,7 +66,7 @@ BASE_PRD2_SAP_TABLES = {
         "country",
         "zipcode",
     ],
-    "Product.csv": [
+    "product.csv": [
         "batch_ref",
         "pull_ts",
         "origin_sys",
@@ -77,7 +77,7 @@ BASE_PRD2_SAP_TABLES = {
         "product_start_date",
         "line_of_business",
     ],
-    "Home.csv": [
+    "home.csv": [
         "batch_ref",
         "pull_ts",
         "origin_sys",
@@ -89,7 +89,7 @@ BASE_PRD2_SAP_TABLES = {
         "wall_type",
         "roof_material",
     ],
-    "Motor.csv": [
+    "motor.csv": [
         "batch_ref",
         "pull_ts",
         "origin_sys",
@@ -244,11 +244,11 @@ def write_raw_base_prd2_variant(prd1_folder: str, raw_root: str, batch_id: str, 
     ]
 
     outputs = {
-        "Person.csv": person_rows,
-        "Address.csv": address_rows,
-        "Product.csv": product_rows,
-        "Home.csv": home_rows,
-        "Motor.csv": motor_rows,
+        "person.csv": person_rows,
+        "address.csv": address_rows,
+        "product.csv": product_rows,
+        "home.csv": home_rows,
+        "motor.csv": motor_rows,
     }
     for file_name, rows in outputs.items():
         _write_rows(out_dir, file_name, rows, BASE_PRD2_SAP_TABLES[file_name])
