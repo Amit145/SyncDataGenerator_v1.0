@@ -43,13 +43,16 @@ Rules for `data/dim_fact_direct/mlops/<run_id>`:
 Mode-scoped PRD raw folders:
 
 - `data/raw/base/prd_01/<run_id>` preserves the existing base CRM raw file shape.
-- `data/raw/base/prd_02/<run_id>`, `data/raw/enhanced/prd_02/<run_id>`, and `data/raw/mlops/prd_02/<run_id>` carry the SAP/source-2 structure from `business_vault/bv.xlsx` sheet `Source2_Structure`. They use different `SAP_*` source IDs while keeping matchable business values for later Business Vault mastering.
-- `data/raw/enhanced/prd_01/<run_id>` and `data/raw/mlops/prd_01/<run_id>` preserve the same CRM raw extract scoped to the target mode and also mirror enhanced/MLOps source-1 delta extracts with a `source1_` file prefix.
+- `data/raw/base/prd_02/<run_id>` and `data/raw/mlops/prd_02/<run_id>` carry the SAP/source-2 structure from `business_vault/bv.xlsx` sheet `Source2_Structure`. They use different `SAP_*` source IDs while keeping matchable business values for later Business Vault mastering.
+- `data/raw/enhanced/prd_01/<run_id>` preserves the CRM raw extract and also carries enhanced source-1 add-on extracts as unprefixed CSV files under `addons/`. The final enhanced raw deliverable is `data/raw/enhanced/prd_01/<run_id>/vault_ready_28`.
+- `data/raw/enhanced/prd_01/<run_id>/vault_ready_28` contains exactly 28 flat CSV files: 16 CRM foundation files, 9 enhanced entity files, 2 enhanced relationship group files, and 1 enhanced enrichment group file. This 28-file package is sufficient to rebuild the full 80-table enhanced silver vault without JSON bundle parsing.
+- `data/raw/mlops/prd_01/<run_id>` preserves the same CRM raw extract scoped to MLOps and also mirrors MLOps source-1 delta extracts with a `source1_` file prefix.
 - Raw CRM and PRD1 file names omit the redundant `crm_` prefix because the source is already represented by the folder. Examples: `party_master.csv`, `address_book.csv`, `account_book.csv`.
+- PRD1 CRM `address_book.csv` includes `address_type_txt` and `region_txt`. Natural-person addresses use `personal`; legal-person addresses use `business address`. `region_txt` is derived from `country_cd`; `UK` maps to `Europe`.
+- PRD1 CRM `product_catalog.csv` includes `product_type_txt`, `underwriting_group_txt`, `regulatory_approval_cd`, `product_status_txt`, `product_lob_cd`, and `product_launch_dt`. `product_type_txt` equals `product_cd`; underwriting group is one of `GroupA`, `GroupB`, or `GroupC`; regulatory approval code follows `RAC###`; product LOB code follows `LOB###`; launch date is before the earliest policy start date for that product.
 - `party_master.csv.legal_job_title_txt` is always populated for database imports. Legal-person rows use realistic roles such as `DIRECTOR`, `COMPANY_SECRETARY`, `OWNER`, `PARTNER`, `AUTHORIZED_SIGNATORY`, `MANAGING_DIRECTOR`, `TRUSTEE`, or `SOLE_PROPRIETOR`; non-legal rows use `NOT_APPLICABLE`.
-- `data/raw/enhanced/prd_delta/<run_id>` and `data/raw/mlops/prd_delta/<run_id>` contain the enhanced/MLOps DDL-specific source delta: added entity registers, source-style bridge extracts, and enrichment extracts needed to rebuild enhanced/MLOps vault outputs without losing relationships or added satellite fields.
-- These delta extracts are also mirrored into enhanced/MLOps `prd_01` with `source1_` prefixes so source 1 contains all relevant CRM plus enhanced/MLOps source-1 raw tables without overwriting existing CRM file names.
-- `prd_delta` column headers use `src_*` source names instead of vault names. The combined-vault builder maps those source columns back to MLOps hub/link/satellite columns.
+- Enhanced DDL-specific source extracts are staged only in enhanced `prd_01/<run_id>/addons` as unprefixed raw files, then packaged into `prd_01/<run_id>/vault_ready_28`. MLOps DDL-specific source delta remains under `data/raw/mlops/prd_delta/<run_id>`.
+- `prd_delta` column headers use `src_*` source names instead of vault names. The combined-vault builder maps those source columns back to MLOps hub/link/satellite columns. For enhanced, the same mapping reads entity files plus flat relationship/enrichment group files from `prd_01/<run_id>/vault_ready_28`.
 - `misc/verify_prd_raw_mlops.py` applies to the product delta source, not the SAP `prd_02` source.
 
 Base PRD2 SAP/source-2 files:
@@ -61,6 +64,7 @@ Base PRD2 SAP/source-2 files:
 | `product.csv` | 1 row per SAP product | `product_id` |
 | `home.csv` | 1 row per SAP home asset | `home_id`, `policy_id`, `product_id` |
 | `motor.csv` | 1 row per SAP motor asset | `motor_id`, `policy_id`, `product_id` |
+| `insured_object.csv` | 1 row per SAP insured home/motor object | `insured_object_id`, `policy_id`, one of `home_id` or `motor_id` |
 
 Base PRD2 SAP columns follow the workbook:
 
@@ -70,6 +74,9 @@ Base PRD2 SAP columns follow the workbook:
 - `Product`: `batch_ref`, `pull_ts`, `origin_sys`, `product_id`, `product_type`, `product_sub_type`, `product_name`, `product_start_date`, `line_of_business`
 - `Home`: `batch_ref`, `pull_ts`, `origin_sys`, `home_id`, `policy_id`, `product_id`, `home_type`, `home_location`, `wall_type`, `roof_material`
 - `Motor`: `batch_ref`, `pull_ts`, `origin_sys`, `motor_id`, `policy_id`, `product_id`, `motor_class`, `motor_model`, `motor_type`, `manufacturing_date`, `body_colour`, `fuel_type`, `gear_type`, `motor_parked_location`
+- `Insured Object`: `batch_ref`, `pull_ts`, `origin_sys`, `insured_object_id`, `policy_id`, `motor_id`, `home_id`, `insured_object_variant`, `insured_object_sub_variant`, `insured_amount`, `insured_object_begin_date`, `insured_object_finish_date`
+- `person.csv.middle_name` is generated for natural persons as deterministic SAP source-2 enrichment. `address.csv.address_line_2` is generated with deterministic flat/unit style values. They are populated source attributes, not Business Vault matching keys.
+- `insured_object.csv` is derived from PRD1 home and motor assets. Each row references exactly one `home_id` or `motor_id`, references its SAP `policy_id`, uses policy start/end dates as insured object begin/finish dates, and carries a positive insured amount.
 
 Raw Vault modelling should derive relationship links from PRD1 and PRD2 sources. The SAP PRD2 files support person-address, policy-product, product-home, and product-motor relationships; those are vault links, not extra raw source files. PIT tables are Business Vault/consumption artifacts and should be built after Raw Vault/BV load when a point-in-time snapshot is required.
 
@@ -84,7 +91,7 @@ Business Vault person matching contract:
   - CRM: `legal_name`, `constitution_dt`
   - SAP: `organization`, `org_establishment_date`
 - Explicitly excluded from matching: `email_address`, `phone_number`, `gender`, `gender_txt`
-- `misc/verify_business_vault_raw.py --run-id <run_id>` validates that CRM/SAP raw files contain populated natural/legal match keys and that the excluded fields are documented as non-match-key fields.
+- `misc/verify_business_vault_raw.py --run-id <run_id>` validates that all six SAP PRD2 files exist, have rows, match schema, reconcile counts/IDs to CRM PRD1 source files, contain populated natural/legal match keys, and keep excluded fields documented as non-match-key fields.
 
 ## Scenario Rules
 

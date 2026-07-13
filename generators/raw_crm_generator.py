@@ -1,4 +1,5 @@
 import os
+from datetime import datetime, timedelta
 
 from helper.crm_raw_layout import to_crm_raw_column, to_crm_raw_file
 from helper.csv_writer import write_csv
@@ -43,6 +44,63 @@ def _safe_get(index, key, column):
 
 def _date_part(value):
     return str(value or "").strip().split(" ")[0].split("T")[0]
+
+
+def _address_type_for_person(sat_person):
+    return "business address" if str((sat_person or {}).get("Type", "")).upper() == "LEGAL" else "personal"
+
+
+def _region_from_country(country):
+    normalized = str(country or "").strip().upper()
+    if normalized in {"UK", "GB", "GBR", "UNITED KINGDOM", "ENGLAND", "SCOTLAND", "WALES", "NORTHERN IRELAND"}:
+        return "Europe"
+    if normalized in {"IE", "IRL", "FR", "FRA", "DE", "DEU", "ES", "ESP", "IT", "ITA", "NL", "NLD"}:
+        return "Europe"
+    if normalized in {"US", "USA", "UNITED STATES", "CA", "CAN"}:
+        return "North America"
+    if normalized in {"IN", "IND"}:
+        return "Asia"
+    return "Unknown" if normalized else ""
+
+
+def _stable_index(value, modulo):
+    text = str(value or "")
+    return sum(ord(char) for char in text) % modulo if modulo else 0
+
+
+def _product_metadata(product_code, launch_date):
+    idx = _stable_index(product_code, 900) + 100
+    groups = ["GroupA", "GroupB", "GroupC"]
+    status = "ACTIVE"
+    return {
+        "underwriting_group": groups[_stable_index(product_code, len(groups))],
+        "regulatory_approval_code": f"RAC{idx:03d}",
+        "product_status": status,
+        "product_line_of_business_code": f"LOB{idx:03d}",
+        "product_launch_date": launch_date,
+    }
+
+
+def _product_launch_dates(policy_to_product_id, sat_policy_by_hk):
+    earliest_by_product = {}
+    for policy_hk, product_code in policy_to_product_id.items():
+        sat_policy = sat_policy_by_hk.get(policy_hk, {})
+        start_text = _date_part(sat_policy.get("Policy Start Date"))
+        if not product_code or not start_text:
+            continue
+        try:
+            start_date = datetime.fromisoformat(start_text).date()
+        except ValueError:
+            continue
+        current = earliest_by_product.get(product_code)
+        if current is None or start_date < current:
+            earliest_by_product[product_code] = start_date
+
+    launch_dates = {}
+    for product_code, earliest_date in earliest_by_product.items():
+        offset_days = 30 + _stable_index(product_code, 91)
+        launch_dates[product_code] = (earliest_date - timedelta(days=offset_days)).isoformat()
+    return launch_dates
 
 
 def write_raw_crm_batch(base_folder, batch_id, ctx, source_dir_name="crm", source_system="CRM"):
@@ -141,7 +199,7 @@ def write_raw_crm_batch(base_folder, batch_id, ctx, source_dir_name="crm", sourc
         ],
         "crm_person_address.csv": [
             "_batch_id", "_extract_ts", "_source_system", "person_id", "address_id",
-            "street", "postcode", "city", "state", "country",
+            "street", "postcode", "city", "state", "country", "address_type", "region",
         ],
         "crm_lead.csv": [
             "_batch_id", "_extract_ts", "_source_system", "person_id", "lead_id",
@@ -178,7 +236,8 @@ def write_raw_crm_batch(base_folder, batch_id, ctx, source_dir_name="crm", sourc
         ],
         "crm_product.csv": [
             "_batch_id", "_extract_ts", "_source_system", "product_id", "product_code",
-            "product_type",
+            "product_type", "product_type_text", "underwriting_group", "regulatory_approval_code",
+            "product_status", "product_line_of_business_code", "product_launch_date",
         ],
         "crm_quote.csv": [
             "_batch_id", "_extract_ts", "_source_system", "person_id", "quote_id",
@@ -275,6 +334,7 @@ def write_raw_crm_batch(base_folder, batch_id, ctx, source_dir_name="crm", sourc
 
     for addr_hk, hub_addr in hub_addr_by_hk.items():
         person_hk = person_by_addr_hk.get(addr_hk)
+        sat_person = sat_person_by_hk.get(person_hk, {})
         sat_addr = sat_addr_by_hk.get(addr_hk, {})
         raw_rows["crm_person_address.csv"].append(_with_meta({
             "person_id": _safe_get(hub_person_by_hk, person_hk, "Person Id"),
@@ -284,6 +344,8 @@ def write_raw_crm_batch(base_folder, batch_id, ctx, source_dir_name="crm", sourc
             "city": sat_addr.get("City"),
             "state": sat_addr.get("State"),
             "country": sat_addr.get("Country"),
+            "address_type": _address_type_for_person(sat_person),
+            "region": _region_from_country(sat_addr.get("Country")),
         }, batch_id, extract_ts, source_system))
 
     for person_hk, lead_hks in ctx["person_to_lead"].items():
@@ -371,11 +433,16 @@ def write_raw_crm_batch(base_folder, batch_id, ctx, source_dir_name="crm", sourc
             "account_status": sat_account.get("Account Status"),
         }, batch_id, extract_ts, source_system))
 
+    product_launch_dates = _product_launch_dates(ctx["policy_to_product_id"], sat_policy_by_hk)
     for product_hk, hub_product in hub_product_by_hk.items():
+        product_code = product_code_by_hk.get(product_hk)
+        product_meta = _product_metadata(product_code, product_launch_dates.get(product_code, "2019-01-01"))
         raw_rows["crm_product.csv"].append(_with_meta({
             "product_id": hub_product["Product Id"],
-            "product_code": product_code_by_hk.get(product_hk),
-            "product_type": product_code_by_hk.get(product_hk),
+            "product_code": product_code,
+            "product_type": product_code,
+            "product_type_text": product_code,
+            **product_meta,
         }, batch_id, extract_ts, source_system))
 
     for quote_hk, hub_quote in hub_quote_by_hk.items():
