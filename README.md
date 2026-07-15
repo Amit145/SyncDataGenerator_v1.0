@@ -254,7 +254,10 @@ Optional legacy raw folders, generated with `output_settings.generate_legacy_raw
 - `data/raw/crm/<run_id>`
 - `data/raw/crm_canonical/<run_id>`
 - `data/raw/api/<run_id>`
-- `data/raw/claims/<run_id>`
+- `data/raw/claims/<run_id>/raw`
+- `data/raw/claims/<run_id>/prd_01`
+- `data/raw/claims/<run_id>/prd_02`
+- `data/raw/claims/<run_id>/raw_vault`
 - `data/raw/claims_canonical/<run_id>`
 - `data/raw/data_source/motor/<run_id>`
 - `data/raw/data_source/home/<run_id>`
@@ -330,6 +333,15 @@ This verifier checks all six SAP PRD2 files (`person.csv`, `address.csv`, `produ
 Enhanced source-style add-on extracts are staged inside `data/raw/enhanced/prd_01/<run_id>/addons`, then packaged into flat CSVs under `data/raw/enhanced/prd_01/<run_id>/vault_ready_28`. Enhanced also writes SAP/source-2 raw under `data/raw/enhanced/prd_02/<run_id>` and a consolidated 34-file raw-vault package under `data/raw/enhanced/raw_vault/<run_id>`. Enhanced silver still uses `vault_ready_28`; `prd_delta` is only for MLOps. `data/raw/mlops/prd_delta/<run_id>` contains source-style raw extracts for the additional MLOps product. These extracts do not contain vault-shaped `hub_`, `link_`, or `sat_` files.
 
 `prd_delta` raw columns use `src_*` source names instead of vault names. For example, vault columns such as `policy_hash_key`, `load_date`, and `record_source` are stored as `src_policy_ref`, `src_extract_ts`, and `src_system`; `misc/build_product_combined_vault.py` maps them back to the MLOps vault schema during rebuild.
+
+Claims raw also has a two-source shape when the claims product is enabled. `data/raw/claims/<run_id>/prd_01` is the CRM/source-1 claim view, `data/raw/claims/<run_id>/prd_02` is the SAP/source-2 claim view, and `data/raw/claims/<run_id>/raw_vault` consolidates them back into the 23-file claims LDM raw shape used to create claims bronze, silver vault, and gold. The source split is driven by `claims/Claims_2Sources_DataTables.xlsx` for claim, loss event, and claim investigation tables.
+
+Validate the claims two-source raw and claims vault:
+
+```powershell
+.\venv\Scripts\python.exe .\misc\verify_claims_two_source_raw.py --run-id <run_id>
+.\venv\Scripts\python.exe .\misc\verify_claims_product.py --run-id <run_id>
+```
 
 `prd_delta` added entity registers:
 

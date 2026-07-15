@@ -1,5 +1,8 @@
+import csv
 import os
+import shutil
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from helper.csv_writer import write_csv
 
@@ -396,6 +399,166 @@ CLAIMS_RAW_FILE_NAMES = {
     "medical_condition.csv": "medical_condition_catalog.csv",
     "diagnosis.csv": "diagnosis_register.csv",
 }
+
+CLAIMS_TWO_SOURCE_SPEC_PATH = Path(__file__).resolve().parents[1] / "claims" / "Claims_2Sources_DataTables.xlsx"
+CLAIMS_TWO_SOURCE_TABLES = {
+    "Claim": ("claim.csv", "claim_register.csv"),
+    "Loss Event": ("loss_event.csv", "loss_event_register.csv"),
+    "Claim Investigation": ("claim_investigation.csv", "claim_investigation_register.csv"),
+}
+
+
+def _snake(value: str) -> str:
+    return "_".join(str(value or "").strip().lower().replace("-", " ").split())
+
+
+def _read_csv_rows(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    with path.open("r", newline="", encoding="utf-8") as f:
+        return list(csv.DictReader(f))
+
+
+def _copy_csv(src: Path, dst_dir: Path, dst_name: str | None = None) -> None:
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(src, dst_dir / (dst_name or src.name))
+
+
+def _load_claims_two_source_spec() -> dict[str, list[dict]]:
+    """Read the claims source-1/source-2 workbook into raw column mappings."""
+    if not CLAIMS_TWO_SOURCE_SPEC_PATH.exists():
+        raise FileNotFoundError(f"Claims two-source spec not found: {CLAIMS_TWO_SOURCE_SPEC_PATH}")
+    try:
+        import openpyxl
+    except ImportError as exc:
+        raise ImportError("openpyxl is required to read claims/Claims_2Sources_DataTables.xlsx") from exc
+
+    wb = openpyxl.load_workbook(CLAIMS_TWO_SOURCE_SPEC_PATH, data_only=True)
+    ws = wb[wb.sheetnames[0]]
+    mapping: dict[str, list[dict]] = {raw_table: [] for raw_table, _ in CLAIMS_TWO_SOURCE_TABLES.values()}
+    for values in ws.iter_rows(min_row=2, values_only=True):
+        table_label = str(values[1] or "").strip()
+        logical_attr = str(values[2] or "").strip()
+        src1_attr = str(values[4] or "").strip()
+        src2_attr = str(values[6] or "").strip()
+        if not table_label or not logical_attr or table_label not in CLAIMS_TWO_SOURCE_TABLES:
+            continue
+        raw_table, _ = CLAIMS_TWO_SOURCE_TABLES[table_label]
+        logical_col = _snake(logical_attr)
+        if logical_col not in CLAIMS_LDM_SCHEMAS[raw_table]:
+            continue
+        mapping[raw_table].append({
+            "logical": logical_col,
+            "src1": _snake(src1_attr) if src1_attr else "",
+            "src2": _snake(src2_attr) if src2_attr else "",
+        })
+    return mapping
+
+
+def _write_claims_source_view(
+    source_dir: Path,
+    table_name: str,
+    rows: list[dict],
+    mapping_rows: list[dict],
+    source_key: str,
+    batch_id: str,
+    origin_sys: str,
+) -> None:
+    columns = ["batch_ref", "pull_ts", "origin_sys"]
+    columns.extend(entry[source_key] for entry in mapping_rows if entry[source_key])
+    out_rows = []
+    for row in rows:
+        out = {
+            "batch_ref": batch_id,
+            "pull_ts": row.get("claim_status_date")
+            or row.get("movement_date")
+            or row.get("loss_date")
+            or row.get("claim_investigation_start_date")
+            or "",
+            "origin_sys": origin_sys,
+        }
+        for entry in mapping_rows:
+            source_col = entry[source_key]
+            if source_col:
+                out[source_col] = row.get(entry["logical"], "")
+        out_rows.append(out)
+    write_csv(str(source_dir), table_name, out_rows, fieldnames=columns)
+
+
+def _rebuild_claims_table_from_sources(
+    src1_rows: list[dict],
+    src2_rows: list[dict],
+    mapping_rows: list[dict],
+    schema: list[str],
+) -> list[dict]:
+    rebuilt = []
+    for index, src1 in enumerate(src1_rows):
+        src2 = src2_rows[index] if index < len(src2_rows) else {}
+        row = {column: "" for column in schema}
+        for entry in mapping_rows:
+            value = src1.get(entry["src1"], "") if entry["src1"] else ""
+            if str(value).strip() == "" and entry["src2"]:
+                value = src2.get(entry["src2"], "")
+            row[entry["logical"]] = value
+        rebuilt.append(row)
+    return rebuilt
+
+
+def write_claims_two_source_raw(claims_raw_dir: str, raw_root: str, batch_id: str) -> dict[str, str]:
+    """Create claims PRD1/PRD2 source views and a vault-ready consolidated raw folder.
+
+    Source 1 follows the CRM/source-1 attribute names in
+    claims/Claims_2Sources_DataTables.xlsx. Source 2 follows the SAP/source-2
+    attribute names. The consolidated raw_vault folder is shaped back to the
+    existing claims LDM raw schema so the current bronze/silver/gold claims
+    pipeline can load it without logic changes.
+    """
+    source_raw = Path(claims_raw_dir)
+    root = Path(raw_root) / "claims" / batch_id
+    prd1_dir = root / "prd_01"
+    prd2_dir = root / "prd_02"
+    raw_vault_dir = root / "raw_vault"
+    for path in (prd1_dir, prd2_dir, raw_vault_dir):
+        if path.exists():
+            shutil.rmtree(path)
+        path.mkdir(parents=True, exist_ok=True)
+
+    mappings = _load_claims_two_source_spec()
+
+    split_raw_files = {raw_file for raw_file, _ in CLAIMS_TWO_SOURCE_TABLES.values()}
+    for raw_file, raw_name in CLAIMS_RAW_FILE_NAMES.items():
+        source_path = source_raw / raw_name
+        if raw_file not in split_raw_files and source_path.exists():
+            _copy_csv(source_path, raw_vault_dir, raw_name)
+
+    for raw_file, raw_name in CLAIMS_RAW_FILE_NAMES.items():
+        if raw_file not in split_raw_files:
+            continue
+        source_path = source_raw / raw_name
+        rows = _read_csv_rows(source_path)
+        mapping_rows = mappings[raw_file]
+        prd_file = raw_file
+        _write_claims_source_view(prd1_dir, prd_file, rows, mapping_rows, "src1", batch_id, "CRM")
+        _write_claims_source_view(prd2_dir, prd_file, rows, mapping_rows, "src2", batch_id, "SAP")
+        src1_rows = _read_csv_rows(prd1_dir / prd_file)
+        src2_rows = _read_csv_rows(prd2_dir / prd_file)
+        rebuilt = _rebuild_claims_table_from_sources(src1_rows, src2_rows, mapping_rows, CLAIMS_LDM_SCHEMAS[raw_file])
+        write_csv(str(raw_vault_dir), raw_name, rebuilt, fieldnames=CLAIMS_LDM_SCHEMAS[raw_file])
+
+    with (root / "_source_manifest.csv").open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["source", "folder", "description"])
+        writer.writeheader()
+        writer.writerows([
+            {"source": "prd_01", "folder": str(prd1_dir), "description": "Claims CRM/source-1 view from Claims_2Sources_DataTables.xlsx"},
+            {"source": "prd_02", "folder": str(prd2_dir), "description": "Claims SAP/source-2 view from Claims_2Sources_DataTables.xlsx"},
+            {"source": "raw_vault", "folder": str(raw_vault_dir), "description": "Vault-ready consolidated claims raw in existing LDM schema"},
+        ])
+
+    return {
+        "prd_01": str(prd1_dir),
+        "prd_02": str(prd2_dir),
+        "raw_vault": str(raw_vault_dir),
+    }
 
 
 def _as_list(value):

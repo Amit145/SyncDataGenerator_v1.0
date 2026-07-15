@@ -44,7 +44,7 @@ from generators.raw_prd_generator import (
 )
 from generators.raw_api_generator import write_raw_api_batch
 from generators.raw_claims_generator import write_raw_claims_batch
-from generators.claim_ldm_generator import write_claims_ldm_raw_batch
+from generators.claim_ldm_generator import write_claims_ldm_raw_batch, write_claims_two_source_raw
 from generators.raw_data_source_generator import generate_data_source_raw
 
 from helper.config_loader import load_config
@@ -784,7 +784,12 @@ silver_mlops_out = None
 claims_product_outputs = None
 if include_claims_product:
     claims_ldm_raw_out = write_claims_ldm_raw_batch(RAW_ROOT, folder_run_id, base_context)
-    claims_product_outputs = build_claims_product(claims_ldm_raw_out, folder_run_id, load_date=SAT_DATE)
+    claims_two_source_raw = write_claims_two_source_raw(claims_ldm_raw_out, RAW_ROOT, folder_run_id)
+    claims_product_outputs = build_claims_product(claims_two_source_raw["raw_vault"], folder_run_id, load_date=SAT_DATE)
+    claims_product_outputs["source_raw"] = claims_ldm_raw_out
+    claims_product_outputs["prd_01"] = claims_two_source_raw["prd_01"]
+    claims_product_outputs["prd_02"] = claims_two_source_raw["prd_02"]
+    claims_product_outputs["raw_vault"] = claims_two_source_raw["raw_vault"]
 
 if include_raw_silver and not skip_base_outputs:
     raw_out = write_raw_crm_batch(RAW_BASE, folder_run_id, base_context)
@@ -979,7 +984,10 @@ print("Basic PK validation OK")
 if not skip_base_outputs:
     print("DONE:", out)
     if claims_product_outputs:
-        print("CLAIMS RAW:", claims_product_outputs["raw"])
+        print("CLAIMS SOURCE RAW:", claims_product_outputs["source_raw"])
+        print("CLAIMS PRD1:", claims_product_outputs["prd_01"])
+        print("CLAIMS PRD2:", claims_product_outputs["prd_02"])
+        print("CLAIMS RAW VAULT:", claims_product_outputs["raw_vault"])
         print("CLAIMS BRONZE:", claims_product_outputs["bronze"])
         print("CLAIMS SILVER:", claims_product_outputs["silver"])
         print("CLAIMS GOLD:", claims_product_outputs["gold"])

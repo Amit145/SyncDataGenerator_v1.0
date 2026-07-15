@@ -60,11 +60,14 @@ Optional claims product raw/bronze/silver/gold outputs:
 Claims product outputs are generated from the claim LDM/CDM/DV references under `claims/` and write:
 
 - `data/raw/claims/<run_id>/raw`
+- `data/raw/claims/<run_id>/prd_01`
+- `data/raw/claims/<run_id>/prd_02`
+- `data/raw/claims/<run_id>/raw_vault`
 - `data/bronze/claims/<run_id>`
 - `data/silver/claims/<run_id>`
 - `data/gold/claims/<run_id>`
 
-See `docs/claims_product_flow.md` before changing claim raw, silver vault, or gold logic.
+Claims `prd_01` and `prd_02` are generated from `claims/Claims_2Sources_DataTables.xlsx`. PRD1 is CRM/source-1, PRD2 is SAP/source-2, and `raw_vault` is the consolidated 23-file claims LDM raw shape consumed by the existing claims bronze/silver/gold pipeline. See `docs/claims_product_flow.md` before changing claim raw, silver vault, or gold logic.
 
 Mode-scoped PRD raw folders are generated only when `config/scenario_v1.json` has `output_settings.generate_prd_raw=true`:
 

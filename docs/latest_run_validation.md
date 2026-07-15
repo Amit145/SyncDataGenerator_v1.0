@@ -18,6 +18,38 @@ Validated commands:
 .\venv\Scripts\python.exe .\misc\verify_nps_dim_fact.py .\data\dim_fact_direct\mlops\20260618123141
 ```
 
+## Claims Two-Source Validation Addendum
+
+Claims run validated: `20260715091202`
+
+Claims raw folders:
+
+- `data/raw/claims/20260715091202/raw`
+- `data/raw/claims/20260715091202/prd_01`
+- `data/raw/claims/20260715091202/prd_02`
+- `data/raw/claims/20260715091202/raw_vault`
+
+Validated commands:
+
+```powershell
+.\venv\Scripts\python.exe .\misc\verify_claims_two_source_raw.py --run-id 20260715091202
+.\venv\Scripts\python.exe .\misc\verify_claims_product.py --run-id 20260715091202
+```
+
+Claims two-source results:
+
+| Area | Expected | Current | Status |
+|---|---|---|---|
+| Claims PRD1/PRD2 source split | PRD1 CRM/source-1 and PRD2 SAP/source-2 from `Claims_2Sources_DataTables.xlsx` | Present under `data/raw/claims/20260715091202/prd_01` and `prd_02` | Pass |
+| Claim rows | PRD1/PRD2 counts match source raw | `4817` in source, PRD1, and PRD2 | Pass |
+| Loss event rows | PRD1/PRD2 counts match source raw | `4817` in source, PRD1, and PRD2 | Pass |
+| Claim investigation rows | PRD1/PRD2 counts match source raw | `1081` in source, PRD1, and PRD2 | Pass |
+| Claims raw vault | Consolidated 23-file LDM raw shape | `23` CSV files | Pass |
+| Claims references | Claim/loss/investigation references resolve | Verified by `verify_claims_two_source_raw.py` and `verify_claims_product.py` | Pass |
+| Claims silver vault | Bronze/silver/gold load from `raw_vault` | Claims product verifier passed | Pass |
+
+`_source_manifest.csv` is informational only. Claims loading needs `prd_01` and `prd_02` to reconstruct `raw_vault`; claims bronze/silver/gold use `raw_vault`.
+
 ## Summary
 
 | Area | Expected | Current | Status |

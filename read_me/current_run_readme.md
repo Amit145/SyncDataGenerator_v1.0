@@ -62,6 +62,26 @@ Legacy raw CRM/API/claims/data_source, canonical raw, API silver, and raw SCD2 o
 .\venv\Scripts\python.exe .\main.py --include-raw-silver --include-new-outputs-src
 ```
 
+## Optional Claims Product
+
+Claims product generation is separate from legacy raw/silver. It writes a claims LDM raw source, claims PRD1/PRD2 source split, consolidated claims raw vault, and claims bronze/silver/gold:
+
+```powershell
+.\venv\Scripts\python.exe .\main.py --include-claims-product
+```
+
+Claims outputs:
+
+- `data/raw/claims/<run_id>/raw`
+- `data/raw/claims/<run_id>/prd_01`
+- `data/raw/claims/<run_id>/prd_02`
+- `data/raw/claims/<run_id>/raw_vault`
+- `data/bronze/claims/<run_id>`
+- `data/silver/claims/<run_id>`
+- `data/gold/claims/<run_id>`
+
+`prd_01` is the CRM/source-1 view and `prd_02` is the SAP/source-2 view from `claims/Claims_2Sources_DataTables.xlsx`. They consolidate into `raw_vault`, which is the 23-file claims LDM input used to build the claims vault. The manifest is informational only and is not required to load.
+
 ## Verification
 
 Validate base synthetic:
@@ -88,6 +108,13 @@ Validate PRD raw structure:
 .\venv\Scripts\python.exe .\misc\verify_prd_raw_mlops.py --mode base --run-id <run_id>
 .\venv\Scripts\python.exe .\misc\verify_prd_raw_mlops.py --mode enhanced --run-id <run_id>
 .\venv\Scripts\python.exe .\misc\verify_prd_raw_mlops.py --mode mlops --run-id <run_id>
+```
+
+Validate claims PRD1/PRD2 and claims vault:
+
+```powershell
+.\venv\Scripts\python.exe .\misc\verify_claims_two_source_raw.py --run-id <run_id>
+.\venv\Scripts\python.exe .\misc\verify_claims_product.py --run-id <run_id>
 ```
 
 Validate churn and NPS rules:

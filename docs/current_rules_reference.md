@@ -23,6 +23,8 @@ Legacy raw CRM/API/claims/data_source, canonical, silver, and raw SCD2 outputs a
 
 `new_outputs_src` is also disabled by default. It is generated only when legacy raw/silver is enabled and `output_settings.generate_new_outputs_src=true` or `--include-new-outputs-src` is passed.
 
+Claims product raw is enabled separately with `--include-claims-product` or `output_settings.generate_claims_product=true`. It writes `data/raw/claims/<run_id>/raw`, claims CRM/source-1 `prd_01`, claims SAP/source-2 `prd_02`, and consolidated `raw_vault`. The two-source claims split follows `claims/Claims_2Sources_DataTables.xlsx` for claim, loss event, and claim investigation columns, then rebuilds `raw_vault` into the existing 23-file claims LDM raw shape used by claims bronze/silver/gold.
+
 Direct MLOps dimensional output is generated on demand from an existing MLOps synthetic vault run:
 
 ```powershell
