@@ -23,7 +23,7 @@ Legacy raw CRM/API/claims/data_source, canonical, silver, and raw SCD2 outputs a
 
 `new_outputs_src` is also disabled by default. It is generated only when legacy raw/silver is enabled and `output_settings.generate_new_outputs_src=true` or `--include-new-outputs-src` is passed.
 
-Claims product raw is enabled separately with `--include-claims-product` or `output_settings.generate_claims_product=true`. It writes `data/raw/claims/<run_id>/raw`, claims CRM/source-1 `prd_01`, claims SAP/source-2 `prd_02`, and consolidated `raw_vault`. The two-source claims split follows `claims/Claims_2Sources_DataTables.xlsx` for claim, loss event, and claim investigation columns, then rebuilds `raw_vault` into the existing 23-file claims LDM raw shape used by claims bronze/silver/gold.
+Claims product raw is enabled separately with `--include-claims-product` or `output_settings.generate_claims_product=true`. It writes `data/raw/claims/<run_id>/raw`, full 23-file LDM `prd_01`, claims SAP/source-2 `prd_02`, and consolidated `raw_vault`. The PRD2 claims split follows `claims/Claims_2Sources_DataTables.xlsx` for claim, loss event, and claim investigation columns, then rebuilds `raw_vault` into the existing 23-file claims LDM raw shape used by claims bronze/silver/gold.
 
 Direct MLOps dimensional output is generated on demand from an existing MLOps synthetic vault run:
 
@@ -47,8 +47,8 @@ Mode-scoped PRD raw folders:
 - `data/raw/base/prd_01/<run_id>` preserves the existing base CRM raw file shape.
 - `data/raw/base/prd_02/<run_id>`, `data/raw/enhanced/prd_02/<run_id>`, and `data/raw/mlops/prd_02/<run_id>` carry the SAP/source-2 structure from `business_vault/bv.xlsx` sheet `Source2_Structure`. They use different `SAP_*` source IDs while keeping matchable business values for later Business Vault mastering.
 - `data/raw/enhanced/prd_01/<run_id>` preserves the CRM raw extract and also carries enhanced source-1 add-on extracts as unprefixed CSV files under `addons/`. The final enhanced raw deliverable is `data/raw/enhanced/prd_01/<run_id>/vault_ready_28`.
-- `data/raw/enhanced/prd_01/<run_id>/vault_ready_28` contains exactly 28 flat CSV files: 16 CRM foundation files, 9 enhanced entity files, 2 enhanced relationship group files, and 1 enhanced enrichment group file. This 28-file package is sufficient to rebuild the full 80-table enhanced silver vault without JSON bundle parsing.
-- `data/raw/enhanced/raw_vault/<run_id>` consolidates the 28 enhanced `vault_ready_28` source-1 files and the six enhanced SAP/source-2 `prd_02` files into one flat 34-file raw-vault package.
+- `data/raw/enhanced/prd_01/<run_id>/vault_ready_28` contains 27 active flat CSV files: 16 CRM foundation files, 8 enhanced entity files, 2 enhanced relationship group files, and 1 enhanced enrichment group file. The folder name is retained for compatibility. This package is sufficient to rebuild the full 80-table enhanced silver vault without JSON bundle parsing because insured object rows are derived from the relationship bridge files.
+- `data/raw/enhanced/raw_vault/<run_id>` consolidates the 27 enhanced `vault_ready_28` source-1 files and the five enhanced SAP/source-2 `prd_02` files into one flat 32-file raw-vault package.
 - Enhanced raw 28 carries NPS/feedback source extensions for Business Vault/modelling without changing the enhanced silver DDL: `customer_portfolio.csv.customer_onboarding_satisfaction_score`, `customer_portfolio.csv.customer_onboarding_feedback`, `complaint_register.csv.src_customer_complaint_satisfaction_score`, `complaint_register.csv.src_complaint_feedback`, `claim_register.csv.src_is_fault_claim`, `claim_register.csv.src_claim_satisfaction_score`, `claim_register.csv.src_claims_feedback`, and `claim_register.csv.src_is_claim_complaint_raised`.
 - Enhanced claim experience extensions are cycle-derived: fault uses claim fraud/suspicion/litigation/repudiation signals plus a stable fallback, satisfaction is a 0-5 score for closed/settled claims from status/fraud/litigation/fault/reserve/amount context, feedback follows the score, and claim complaint raised is `Y` only when the claim policy has a linked complaint.
 - Every enhanced `vault_ready_28` file includes `batch_ref`, `pull_ts`, and `origin_sys`, including enhanced entity, relationship group, and enrichment group files.
@@ -58,6 +58,7 @@ Mode-scoped PRD raw folders:
 - PRD1 CRM `address_book.csv` includes `address_type_txt` and `region_txt`. Natural-person addresses use `personal`; legal-person addresses use `corporate`. `region_txt` is derived from `country_cd`; European countries map to `Europe`.
 - PRD1 CRM `product_catalog.csv` includes `product_type_txt`, `product_variant`, `underwriting_group_txt`, `regulatory_approval_cd`, `product_status_txt`, `product_lob_cd`, and `product_launch_dt`. `product_type_txt` equals `product_cd`; `product_variant` equals `product_line`; underwriting group is one of `GroupA`, `GroupB`, or `GroupC`; regulatory approval code follows `RAC###`; product LOB code follows `LOB###`; launch date is before the earliest policy start date for that product.
 - PRD1 CRM `vehicle_asset.csv` includes `driver_experience_years`, derived from the linked natural-person birth date as `max(age - 17, 0)` and capped to a realistic range. If the linked birth date is unavailable, a deterministic vehicle-based fallback is used.
+- Enhanced PRD1 `property_asset.csv` and `vehicle_asset.csv` include asset-level insured-object columns: `insured_object_id`, `insured_object_type`, `insured_object_sub_type`, `insured_object_description`, `insured_value`, `currency_code`, `insured_object_start_date`, `insured_object_end_date`, and `insured_object_current_status`. These values are aligned to the enhanced insured-object bridge files; start/end/status follow the linked policy.
 - `party_master.csv.legal_job_title_txt` is always populated for database imports. Legal-person rows use realistic roles such as `DIRECTOR`, `COMPANY_SECRETARY`, `OWNER`, `PARTNER`, `AUTHORIZED_SIGNATORY`, `MANAGING_DIRECTOR`, `TRUSTEE`, or `SOLE_PROPRIETOR`; non-legal rows use `NOT_APPLICABLE`.
 - Enhanced DDL-specific source extracts are staged only in enhanced `prd_01/<run_id>/addons` as unprefixed raw files, then packaged into `prd_01/<run_id>/vault_ready_28`. Enhanced SAP/source-2 uses `data/raw/enhanced/prd_02/<run_id>`, and the flat upload package is `data/raw/enhanced/raw_vault/<run_id>`. MLOps DDL-specific source delta remains under `data/raw/mlops/prd_delta/<run_id>`.
 - `prd_delta` column headers use `src_*` source names instead of vault names. The combined-vault builder maps those source columns back to MLOps hub/link/satellite columns. For enhanced, the same mapping reads entity files plus flat relationship/enrichment group files from `prd_01/<run_id>/vault_ready_28`.
@@ -72,7 +73,7 @@ Base PRD2 SAP/source-2 files:
 | `product.csv` | 1 row per SAP product | `product_id` |
 | `home.csv` | 1 row per SAP home asset | `home_id`, `policy_id`, `product_id` |
 | `motor.csv` | 1 row per SAP motor asset | `motor_id`, `policy_id`, `product_id` |
-| `insured_object.csv` | 1 row per SAP insured home/motor object | `insured_object_id`, `policy_id`, one of `home_id` or `motor_id` |
+| `insured_object.csv` | Base/MLOps only: 1 row per SAP insured home/motor object | `insured_object_id`, `policy_id`, one of `home_id` or `motor_id` |
 
 Base PRD2 SAP columns follow the workbook:
 
@@ -84,7 +85,7 @@ Base PRD2 SAP columns follow the workbook:
 - `Motor`: `batch_ref`, `pull_ts`, `origin_sys`, `motor_id`, `policy_id`, `product_id`, `motor_class`, `motor_model`, `motor_type`, `manufacturing_date`, `body_colour`, `fuel_type`, `gear_type`, `motor_parked_location`
 - `Insured Object`: `batch_ref`, `pull_ts`, `origin_sys`, `insured_object_id`, `policy_id`, `motor_id`, `home_id`, `insured_object_variant`, `insured_object_sub_variant`, `insured_amount`, `insured_object_begin_date`, `insured_object_finish_date`
 - `person.csv.middle_name` is generated for natural persons as deterministic SAP source-2 enrichment. `address.csv.address_line_2` is generated with deterministic flat/unit style values. They are populated source attributes, not Business Vault matching keys.
-- `insured_object.csv` is derived from PRD1 home and motor assets. Each row references exactly one `home_id` or `motor_id`, references its SAP `policy_id`, uses policy start/end dates as insured object begin/finish dates, and carries a positive insured amount.
+- For base/MLOps, `insured_object.csv` is derived from PRD1 home and motor assets. Each row references exactly one `home_id` or `motor_id`, references its SAP `policy_id`, uses policy start/end dates as insured object begin/finish dates, and carries a positive insured amount. Enhanced omits this standalone SAP file and derives insured-object hub/sat rows from `policy_insured_object_bridge.csv`, `insured_object_home_bridge.csv`, and `insured_object_motor_bridge.csv`.
 
 Raw Vault modelling should derive relationship links from PRD1 and PRD2 sources. The SAP PRD2 files support person-address, policy-product, product-home, and product-motor relationships; those are vault links, not extra raw source files. PIT tables are Business Vault/consumption artifacts and should be built after Raw Vault/BV load when a point-in-time snapshot is required.
 
@@ -99,7 +100,7 @@ Business Vault person matching contract:
   - CRM: `legal_name`, `constitution_dt`
   - SAP: `organization`, `org_establishment_date`
 - Explicitly excluded from matching: `email_address`, `phone_number`, `gender`, `gender_txt`
-- `misc/verify_business_vault_raw.py --run-id <run_id>` validates that all six SAP PRD2 files exist, have rows, match schema, reconcile counts/IDs to CRM PRD1 source files, contain populated natural/legal match keys, and keep excluded fields documented as non-match-key fields.
+- `misc/verify_business_vault_raw.py --run-id <run_id>` validates that SAP PRD2 files exist, have rows, match schema, reconcile counts/IDs to CRM PRD1 source files, contain populated natural/legal match keys, and keep excluded fields documented as non-match-key fields. Base/MLOps expect six SAP files; enhanced expects five SAP files and checks insured objects through the enhanced bridge-driven vault derivation.
 
 ## Scenario Rules
 

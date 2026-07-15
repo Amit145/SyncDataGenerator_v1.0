@@ -87,23 +87,23 @@ This keeps raw looking like source extracts while bronze remains aligned to the 
 
 ## Two-Source Claims Raw
 
-The claims product also writes a two-source raw split from `Claims_2Sources_DataTables.xlsx`:
+The claims product also writes a two-source raw split:
 
-- `data/raw/claims/<run_id>/prd_01`: CRM/source-1 claim extracts
-- `data/raw/claims/<run_id>/prd_02`: SAP/source-2 claim extracts
+- `data/raw/claims/<run_id>/prd_01`: full 23-file claims LDM raw source
+- `data/raw/claims/<run_id>/prd_02`: SAP/source-2 claim extracts from `Claims_2Sources_DataTables.xlsx`
 - `data/raw/claims/<run_id>/raw_vault`: vault-ready consolidated claims raw
 
-The workbook currently defines source-1/source-2 mappings for:
+The workbook currently defines source-2 mappings for:
 
 - `claim.csv`
 - `loss_event.csv`
 - `claim_investigation.csv`
 
-PRD1 and PRD2 use workbook source attribute names normalized to lower snake case and include `batch_ref`, `pull_ts`, and `origin_sys`. PRD1 uses `origin_sys=CRM`; PRD2 uses `origin_sys=SAP`.
+PRD1 uses the existing LDM raw file names and columns, such as `claim_register.csv`, `loss_event_register.csv`, and `claim_investigation_register.csv`. PRD2 uses workbook source-2 attribute names normalized to lower snake case and includes `batch_ref`, `pull_ts`, and `origin_sys=SAP`.
 
-The `raw_vault` folder is rebuilt back into the existing 23-file claims LDM raw shape. It is the input used by the claims bronze/silver/gold pipeline, so the existing claims Data Vault creation logic does not need a separate loader. Non-split claims LDM tables are copied from `raw`; split tables are reconstructed from PRD1 first and filled from PRD2 where the workbook marks a source-2-only attribute.
+The `raw_vault` folder is rebuilt back into the existing 23-file claims LDM raw shape. It is the input used by the claims bronze/silver/gold pipeline, so the existing claims Data Vault creation logic does not need a separate loader. Non-split claims LDM tables come from PRD1. Split tables are reconstructed from PRD1 first and filled from PRD2 where the workbook marks a source-2-only attribute.
 
-PRD1 and PRD2 are sufficient to reconstruct the split entities in `raw_vault`; `_source_manifest.csv` is only informational and is not required for loading. The split entities remain traceable because PRD1 and PRD2 are generated from the same source raw row order and preserve matching business values for claim, loss event, and claim investigation records.
+PRD1 and PRD2 are sufficient to reconstruct `raw_vault`; `_source_manifest.csv` is only informational and is not required for loading. The split entities remain traceable because PRD1 and PRD2 are generated from the same source raw row order and preserve matching business values for claim, loss event, and claim investigation records.
 
 Additional claim LDM attributes covered in raw/bronze/silver include:
 
@@ -167,7 +167,7 @@ The product verifier checks:
 The two-source verifier checks:
 
 - `raw`, `prd_01`, `prd_02`, and `raw_vault` exist
-- PRD1 and PRD2 schemas match `Claims_2Sources_DataTables.xlsx`
+- PRD1 has all 23 LDM raw files, and PRD2 schemas match `Claims_2Sources_DataTables.xlsx`
 - PRD1 and PRD2 row counts match the source raw rows for claim, loss event, and claim investigation
 - `raw_vault` contains all 23 claims LDM raw files
 - core claim, loss-event, and investigation references resolve

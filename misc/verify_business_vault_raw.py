@@ -82,8 +82,13 @@ def verify(run_id: str | None = None, mode: str = "base") -> int:
     sap_prd2_available = prd2.exists()
     missing_files = []
     sap_frames: dict[str, pd.DataFrame] = {}
+    expected_sap_tables = {
+        name: columns
+        for name, columns in BASE_PRD2_SAP_TABLES.items()
+        if not (mode == "enhanced" and name == "insured_object.csv")
+    }
     if sap_prd2_available:
-        for file_name, expected_columns in BASE_PRD2_SAP_TABLES.items():
+        for file_name, expected_columns in expected_sap_tables.items():
             path = prd2 / file_name
             if not path.exists():
                 missing_files.append(file_name)
@@ -109,8 +114,11 @@ def verify(run_id: str | None = None, mode: str = "base") -> int:
             "product.csv": len(crm_sources["product_catalog.csv"]),
             "home.csv": len(crm_sources["property_asset.csv"]),
             "motor.csv": len(crm_sources["vehicle_asset.csv"]),
-            "insured_object.csv": len(crm_sources["property_asset.csv"]) + len(crm_sources["vehicle_asset.csv"]),
         }
+        if mode != "enhanced":
+            expected_counts["insured_object.csv"] = len(crm_sources["property_asset.csv"]) + len(
+                crm_sources["vehicle_asset.csv"]
+            )
         for file_name, expected in expected_counts.items():
             actual = len(sap_frames[file_name])
             if actual == expected:
@@ -454,59 +462,62 @@ def verify(run_id: str | None = None, mode: str = "base") -> int:
         "insured_object_begin_date",
         "insured_object_finish_date",
     ]
-    missing_insured = [col for col in insured_required + ["motor_id", "home_id"] if col not in sap_insured_object.columns]
-    if missing_insured:
-        print(f"FAIL: SAP insured_object.csv missing columns {missing_insured}")
-        errors += 1
+    if sap_insured_object is None:
+        print("PASS: enhanced SAP PRD2 omits insured_object.csv; insured objects are derived from PRD1 bridges")
     else:
-        populated = int(_nonblank_key(sap_insured_object, insured_required).sum()) if len(sap_insured_object) else 0
-        one_asset = (
-            sap_insured_object["motor_id"].astype(str).str.strip().ne("")
-            ^ sap_insured_object["home_id"].astype(str).str.strip().ne("")
-        )
-        expected_insured_ids = (
-            _sap_id_series(crm_sources["vehicle_asset.csv"]["vehicle_ref"], prefix="IO_")
-            | _sap_id_series(crm_sources["property_asset.csv"]["property_ref"], prefix="IO_")
-        )
-        actual_insured_ids = set(sap_insured_object["insured_object_id"].astype(str).str.strip())
-        policy_ids = set(sap_insured_object["policy_id"].astype(str).str.strip())
-        expected_policy_ids = _sap_id_series(crm_sources["vehicle_asset.csv"]["policy_ref"]) | _sap_id_series(
-            crm_sources["property_asset.csv"]["policy_ref"]
-        )
-        motor_ids = set(sap_insured_object["motor_id"].astype(str).str.strip())
-        motor_ids.discard("")
-        home_ids = set(sap_insured_object["home_id"].astype(str).str.strip())
-        home_ids.discard("")
-        expected_motor_ids = _sap_id_series(crm_sources["vehicle_asset.csv"]["vehicle_ref"])
-        expected_home_ids = _sap_id_series(crm_sources["property_asset.csv"]["property_ref"])
-        amount_ok = pd.to_numeric(sap_insured_object["insured_amount"], errors="coerce").fillna(0).gt(0)
-        date_ok = sap_insured_object[["insured_object_begin_date", "insured_object_finish_date"]].astype(str).apply(
-            lambda col: col.str.strip().map(lambda value: bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}", value)))
-        ).all(axis=1)
-        ok_rows = int((one_asset & amount_ok & date_ok).sum())
-        refs_ok = (
-            actual_insured_ids == expected_insured_ids
-            and policy_ids.issubset(expected_policy_ids)
-            and motor_ids == expected_motor_ids
-            and home_ids == expected_home_ids
-        )
-        if populated == len(sap_insured_object) and ok_rows == len(sap_insured_object) and refs_ok:
-            print(f"PASS: SAP insured_object.csv relationships, dates, and amounts valid {ok_rows}/{len(sap_insured_object)}")
-        else:
-            print(
-                "FAIL: SAP insured_object.csv relationships, dates, and amounts valid "
-                f"{ok_rows}/{len(sap_insured_object)}; required populated {populated}/{len(sap_insured_object)}"
-            )
-            if not refs_ok:
-                print(
-                    "FAIL: SAP insured_object.csv ID/reference reconciliation "
-                    f"insured_missing={len(expected_insured_ids - actual_insured_ids)} "
-                    f"insured_extra={len(actual_insured_ids - expected_insured_ids)} "
-                    f"policy_extra={len(policy_ids - expected_policy_ids)} "
-                    f"motor_mismatch={motor_ids != expected_motor_ids} "
-                    f"home_mismatch={home_ids != expected_home_ids}"
-                )
+        missing_insured = [col for col in insured_required + ["motor_id", "home_id"] if col not in sap_insured_object.columns]
+        if missing_insured:
+            print(f"FAIL: SAP insured_object.csv missing columns {missing_insured}")
             errors += 1
+        else:
+            populated = int(_nonblank_key(sap_insured_object, insured_required).sum()) if len(sap_insured_object) else 0
+            one_asset = (
+                sap_insured_object["motor_id"].astype(str).str.strip().ne("")
+                ^ sap_insured_object["home_id"].astype(str).str.strip().ne("")
+            )
+            expected_insured_ids = (
+                _sap_id_series(crm_sources["vehicle_asset.csv"]["vehicle_ref"], prefix="IO_")
+                | _sap_id_series(crm_sources["property_asset.csv"]["property_ref"], prefix="IO_")
+            )
+            actual_insured_ids = set(sap_insured_object["insured_object_id"].astype(str).str.strip())
+            policy_ids = set(sap_insured_object["policy_id"].astype(str).str.strip())
+            expected_policy_ids = _sap_id_series(crm_sources["vehicle_asset.csv"]["policy_ref"]) | _sap_id_series(
+                crm_sources["property_asset.csv"]["policy_ref"]
+            )
+            motor_ids = set(sap_insured_object["motor_id"].astype(str).str.strip())
+            motor_ids.discard("")
+            home_ids = set(sap_insured_object["home_id"].astype(str).str.strip())
+            home_ids.discard("")
+            expected_motor_ids = _sap_id_series(crm_sources["vehicle_asset.csv"]["vehicle_ref"])
+            expected_home_ids = _sap_id_series(crm_sources["property_asset.csv"]["property_ref"])
+            amount_ok = pd.to_numeric(sap_insured_object["insured_amount"], errors="coerce").fillna(0).gt(0)
+            date_ok = sap_insured_object[["insured_object_begin_date", "insured_object_finish_date"]].astype(str).apply(
+                lambda col: col.str.strip().map(lambda value: bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}", value)))
+            ).all(axis=1)
+            ok_rows = int((one_asset & amount_ok & date_ok).sum())
+            refs_ok = (
+                actual_insured_ids == expected_insured_ids
+                and policy_ids.issubset(expected_policy_ids)
+                and motor_ids == expected_motor_ids
+                and home_ids == expected_home_ids
+            )
+            if populated == len(sap_insured_object) and ok_rows == len(sap_insured_object) and refs_ok:
+                print(f"PASS: SAP insured_object.csv relationships, dates, and amounts valid {ok_rows}/{len(sap_insured_object)}")
+            else:
+                print(
+                    "FAIL: SAP insured_object.csv relationships, dates, and amounts valid "
+                    f"{ok_rows}/{len(sap_insured_object)}; required populated {populated}/{len(sap_insured_object)}"
+                )
+                if not refs_ok:
+                    print(
+                        "FAIL: SAP insured_object.csv ID/reference reconciliation "
+                        f"insured_missing={len(expected_insured_ids - actual_insured_ids)} "
+                        f"insured_extra={len(actual_insured_ids - expected_insured_ids)} "
+                        f"policy_extra={len(policy_ids - expected_policy_ids)} "
+                        f"motor_mismatch={motor_ids != expected_motor_ids} "
+                        f"home_mismatch={home_ids != expected_home_ids}"
+                    )
+                errors += 1
 
     print(f"Business Vault raw source matching contract for {mode}/{run_id} " + ("passed." if errors == 0 else f"failed with {errors} issue(s)."))
     return errors

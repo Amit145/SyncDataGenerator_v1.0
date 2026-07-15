@@ -80,7 +80,7 @@ Claims outputs:
 - `data/silver/claims/<run_id>`
 - `data/gold/claims/<run_id>`
 
-`prd_01` is the CRM/source-1 view and `prd_02` is the SAP/source-2 view from `claims/Claims_2Sources_DataTables.xlsx`. They consolidate into `raw_vault`, which is the 23-file claims LDM input used to build the claims vault. The manifest is informational only and is not required to load.
+`prd_01` is the full 23-file claims LDM raw source. `prd_02` is the SAP/source-2 view from `claims/Claims_2Sources_DataTables.xlsx` for claim, loss event, and claim investigation. They consolidate into `raw_vault`, which is the 23-file claims LDM input used to build the claims vault. The manifest is informational only and is not required to load.
 
 ## Verification
 

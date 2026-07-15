@@ -48,7 +48,7 @@ Claims product creates a two-source claims raw split and a vault-ready consolida
 - `data/silver/claims/<run_id>`
 - `data/gold/claims/<run_id>`
 
-`prd_01` is CRM/source-1, `prd_02` is SAP/source-2, and `raw_vault` is the consolidated 23-file claims LDM input used by the claims vault builder.
+`prd_01` is the full 23-file claims LDM raw source, `prd_02` is SAP/source-2 from `claims/Claims_2Sources_DataTables.xlsx`, and `raw_vault` is the consolidated 23-file claims LDM input used by the claims vault builder.
 
 Large base-only streaming generation:
 

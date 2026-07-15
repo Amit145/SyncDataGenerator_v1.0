@@ -8,6 +8,19 @@ from pathlib import Path
 from generators.raw_crm_generator import write_raw_crm_batch
 
 
+ENHANCED_ASSET_INSURED_OBJECT_COLUMNS = [
+    "insured_object_id",
+    "insured_object_type",
+    "insured_object_sub_type",
+    "insured_object_description",
+    "insured_value",
+    "currency_code",
+    "insured_object_start_date",
+    "insured_object_end_date",
+    "insured_object_current_status",
+]
+
+
 def write_raw_prd1_batch(base_folder: str, batch_id: str, ctx: dict, mode: str | None = None) -> str:
     """Write the existing base CRM raw shape into the PRD1 source folder."""
     source_dir_name = f"{mode}/prd_01" if mode else "prd_01"
@@ -469,8 +482,9 @@ def write_raw_base_prd2_variant(prd1_folder: str, raw_root: str, batch_id: str, 
         "product.csv": product_rows,
         "home.csv": home_rows,
         "motor.csv": motor_rows,
-        "insured_object.csv": insured_object_rows,
     }
+    if mode != "enhanced":
+        outputs["insured_object.csv"] = insured_object_rows
     for file_name, rows in outputs.items():
         _write_rows(out_dir, file_name, rows, BASE_PRD2_SAP_TABLES[file_name])
     return str(out_dir)
@@ -550,6 +564,93 @@ def _read_header(folder: Path, name: str) -> list[str]:
         return []
     with path.open("r", newline="", encoding="utf-8") as f:
         return next(csv.reader(f), [])
+
+
+def _asset_insured_lookup_from_addons(addons_dir: Path, file_name: str, asset_column: str) -> dict[str, str]:
+    lookup = {}
+    for row in _read_rows(addons_dir, file_name):
+        asset_id = row.get(asset_column, "")
+        insured_id = row.get("src_insured_object_id", "")
+        if asset_id and insured_id:
+            lookup[asset_id] = insured_id
+    return lookup
+
+
+def _asset_insured_lookup_from_group(folder: Path, source_extract: str, asset_column: str) -> dict[str, str]:
+    lookup = {}
+    for row in _read_rows(folder, "enhanced_policy_relationships.csv"):
+        if row.get("source_extract") != source_extract:
+            continue
+        asset_id = row.get(asset_column, "")
+        insured_id = row.get("src_insured_object_id", "")
+        if asset_id and insured_id:
+            lookup[asset_id] = insured_id
+    return lookup
+
+
+def _asset_insured_lookup(folder: Path, asset_type: str) -> dict[str, str]:
+    addons_dir = folder / "addons"
+    if asset_type == "home":
+        lookup = _asset_insured_lookup_from_addons(addons_dir, "insured_object_home_bridge.csv", "src_home_id")
+        lookup.update(_asset_insured_lookup_from_group(folder, "insured_object_home_bridge.csv", "src_home_id"))
+    else:
+        lookup = _asset_insured_lookup_from_addons(addons_dir, "insured_object_motor_bridge.csv", "src_motor_id")
+        lookup.update(_asset_insured_lookup_from_group(folder, "insured_object_motor_bridge.csv", "src_motor_id"))
+    return lookup
+
+
+def enrich_enhanced_asset_insured_object_columns(folder: str | Path) -> None:
+    """Carry insured-object attributes on property/vehicle rows for enhanced raw.
+
+    Enhanced intentionally omits a standalone insured-object register. These
+    asset-level columns preserve the business attributes while bridge files keep
+    the relationship path used by vault creation.
+    """
+    folder = Path(folder)
+    policy_by_id = {row.get("policy_ref", ""): row for row in _read_rows(folder, "policy_register.csv")}
+    asset_specs = [
+        (
+            "property_asset.csv",
+            "property_ref",
+            "home",
+            lambda row: row.get("property_type_txt", ""),
+            lambda row: _first_value(row.get("wall_material_txt", ""), row.get("roof_material_txt", "")),
+            lambda row: _first_value(row.get("risk_address_txt", ""), row.get("property_type_txt", "")),
+            lambda row, policy: _home_insured_amount(row, policy),
+        ),
+        (
+            "vehicle_asset.csv",
+            "vehicle_ref",
+            "motor",
+            lambda row: row.get("vehicle_type_txt", ""),
+            lambda row: _first_value(row.get("model_nm", ""), row.get("variant_nm", "")),
+            lambda row: _first_value(row.get("model_nm", ""), row.get("vehicle_class_txt", ""), row.get("vehicle_type_txt", "")),
+            lambda row, policy: _money_value(row.get("insured_value_amt", ""), policy.get("renewal_premium_curr", "")),
+        ),
+    ]
+    for file_name, ref_column, asset_type, type_fn, sub_type_fn, description_fn, value_fn in asset_specs:
+        path = folder / file_name
+        if not path.exists():
+            continue
+        rows = _read_rows(folder, file_name)
+        fieldnames = _read_header(folder, file_name)
+        insured_lookup = _asset_insured_lookup(folder, asset_type)
+        for column in ENHANCED_ASSET_INSURED_OBJECT_COLUMNS:
+            if column not in fieldnames:
+                fieldnames.append(column)
+        for row in rows:
+            policy = policy_by_id.get(row.get("policy_ref", ""), {})
+            asset_ref = row.get(ref_column, "")
+            row["insured_object_id"] = insured_lookup.get(asset_ref, f"INS_OBJ_{asset_ref}")
+            row["insured_object_type"] = type_fn(row)
+            row["insured_object_sub_type"] = sub_type_fn(row)
+            row["insured_object_description"] = description_fn(row)
+            row["insured_value"] = value_fn(row, policy)
+            row["currency_code"] = "GBP"
+            row["insured_object_start_date"] = _date_part(policy.get("policy_start_dt", ""))
+            row["insured_object_end_date"] = _date_part(policy.get("policy_end_dt", ""))
+            row["insured_object_current_status"] = policy.get("policy_status_txt", "")
+        _write_rows(folder, file_name, rows, fieldnames)
 
 
 def _merge(hub: dict | None, sat: dict | None, extra: dict | None = None) -> dict:
@@ -941,6 +1042,7 @@ def write_source1_delta_into_prd1(
         output_prefix="",
         clean_output=True,
     )
+    enrich_enhanced_asset_insured_object_columns(prd1_folder)
     return [str(path) for path in sorted(Path(out_dir).glob("*.csv"))]
 
 
@@ -951,7 +1053,6 @@ VAULT_READY_ENTITY_ADDONS = {
     "channel_catalog.csv": "channel_catalog.csv",
     "claim_register.csv": "claim_register.csv",
     "complaint_register.csv": "complaint_register.csv",
-    "insured_object_register.csv": "insured_object_register.csv",
     "override_register.csv": "override_register.csv",
     "regulation_register.csv": "regulation_register.csv",
 }
@@ -1073,11 +1174,15 @@ def write_enhanced_vault_ready_28(prd1_folder: str, output_folder: str = "vault_
     for output_file, logical_files in VAULT_READY_ENRICHMENT_GROUPS.items():
         _write_grouped_rows(addon_files, out_dir, output_file, logical_files)
 
+    enrich_enhanced_asset_insured_object_columns(out_dir)
     _ensure_raw_metadata_columns(out_dir, prd1_dir.name)
 
+    expected_count = 27
     output_count = len(list(out_dir.glob("*.csv")))
-    if output_count != 28:
-        raise RuntimeError(f"Enhanced vault-ready raw must contain 28 files, found {output_count} in {out_dir}")
+    if output_count != expected_count:
+        raise RuntimeError(
+            f"Enhanced vault-ready raw must contain {expected_count} active files, found {output_count} in {out_dir}"
+        )
     return str(out_dir)
 
 
@@ -1091,8 +1196,8 @@ def write_enhanced_consolidated_raw_vault(
 ) -> str:
     """Write one flat enhanced raw-vault package from source-1 and source-2 raw.
 
-    The enhanced source-1 contract is the 28-file ``vault_ready_28`` package.
-    Source-2 is the SAP-style six-table PRD2 feed. Keeping the consolidated
+    The enhanced source-1 contract is the 27-file ``vault_ready_28`` package.
+    Source-2 is the SAP-style five-table PRD2 feed. Keeping the consolidated
     folder flat makes it easy to upload as one bronze/raw-vault input while
     preserving the individual source table names.
     """
@@ -1112,13 +1217,15 @@ def write_enhanced_consolidated_raw_vault(
     for source_file in sorted(source1_dir.glob("*.csv")):
         shutil.copy2(source_file, out_dir / source_file.name)
 
-    for file_name in BASE_PRD2_SAP_TABLES:
+    prd2_files = [file_name for file_name in BASE_PRD2_SAP_TABLES if file_name != "insured_object.csv"]
+    for file_name in prd2_files:
         source_file = source2_dir / file_name
         if not source_file.exists():
             raise FileNotFoundError(f"Enhanced PRD2 file missing: {source_file}")
         shutil.copy2(source_file, out_dir / source_file.name)
 
-    expected_count = 28 + len(BASE_PRD2_SAP_TABLES)
+    expected_sap_files = len(BASE_PRD2_SAP_TABLES) - 1
+    expected_count = 27 + expected_sap_files
     output_count = len(list(out_dir.glob("*.csv")))
     if output_count != expected_count:
         raise RuntimeError(

@@ -236,6 +236,42 @@ def _fill_missing_from_supplement(row: dict, supplement: dict | None, columns: l
     return merged
 
 
+def _derive_insured_object_rows(prd2_dir: Path, schema_dir: str | Path | None, columns: list[str], table_name: str) -> list[dict]:
+    """Derive insured-object hub/sat rows from relationship extracts.
+
+    Enhanced raw no longer carries an explicit insured_object_register.csv. The
+    insured object identity is still present in policy/home/motor relationship
+    extracts, and remaining satellite attributes can be filled from the current
+    schema supplement when available.
+    """
+    source_rows = []
+    for bridge_file in [
+        "policy_insured_object_bridge.csv",
+        "insured_object_home_bridge.csv",
+        "insured_object_motor_bridge.csv",
+    ]:
+        source_rows.extend(read_prd2_rows(prd2_dir, bridge_file))
+
+    by_hash: dict[str, dict] = {}
+    for row in source_rows:
+        insured_hash = row.get("insured_object_hash_key", "")
+        if not insured_hash:
+            continue
+        existing = by_hash.setdefault(insured_hash, {"insured_object_hash_key": insured_hash})
+        for column in ["load_date", "record_source", "insured_object_id"]:
+            if not existing.get(column) and row.get(column):
+                existing[column] = row[column]
+
+    supplemental_key, supplemental_by_key = _supplemental_rows_by_key(schema_dir, table_name, columns)
+    derived = []
+    for insured_hash, row in by_hash.items():
+        if not row.get("insured_object_id"):
+            row["insured_object_id"] = insured_hash
+        supplement = supplemental_by_key.get(row.get(supplemental_key, "")) if supplemental_key else None
+        derived.append(_fill_missing_from_supplement(row, supplement, columns))
+    return derived
+
+
 def load_enrichments(prd2_dir: Path) -> dict[str, tuple[str, dict[str, dict]]]:
     enrichments = {}
     for file_name, (table_name, key_column) in ENRICHMENT_MAP.items():
@@ -321,6 +357,18 @@ def build_product_combined(
 
     for raw_file, (hub_table, sat_table) in ENTITY_MAP.items():
         rows = read_prd2_rows(prd2_dir, raw_file)
+        if raw_file == "insured_object_register.csv" and not rows:
+            hub_columns = schemas.get(hub_table, [])
+            sat_columns = schemas.get(sat_table, [])
+            hub_rows = _derive_insured_object_rows(prd2_dir, schema_dir, hub_columns, hub_table) if hub_columns else []
+            sat_rows = _derive_insured_object_rows(prd2_dir, schema_dir, sat_columns, sat_table) if sat_columns else []
+            if hub_table in schemas:
+                write_rows(out_dir, hub_table, hub_rows, schemas[hub_table])
+                written.add(hub_table)
+            if sat_table in schemas:
+                write_rows(out_dir, sat_table, sat_rows, schemas[sat_table])
+                written.add(sat_table)
+            continue
         if hub_table in schemas:
             write_rows(out_dir, hub_table, rows, schemas[hub_table])
             written.add(hub_table)
