@@ -32,6 +32,7 @@ Default outputs:
 - `data/raw/base/prd_01/<run_id>`
 - `data/raw/enhanced/prd_01/<run_id>`
 - `data/raw/enhanced/prd_02/<run_id>`
+- `data/raw/enhanced/raw_vault/<run_id>`
 - `data/raw/mlops/prd_01/<run_id>`
 - `data/raw/mlops/prd_02/<run_id>`
 - `data/silver/base/<run_id>`

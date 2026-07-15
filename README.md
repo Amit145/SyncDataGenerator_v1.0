@@ -265,11 +265,13 @@ Mode-scoped PRD raw folders are generated when `output_settings.generate_prd_raw
 - `data/raw/base/prd_01/<run_id>`
 - `data/raw/base/prd_02/<run_id>`
 - `data/raw/enhanced/prd_01/<run_id>`
+- `data/raw/enhanced/prd_02/<run_id>`
+- `data/raw/enhanced/raw_vault/<run_id>`
 - `data/raw/mlops/prd_01/<run_id>`
 - `data/raw/mlops/prd_02/<run_id>`
 - `data/raw/mlops/prd_delta/<run_id>`
 
-`prd_01` is source 1. For `base`, it is the CRM raw shape. For `enhanced`, it contains the CRM raw shape plus an internal `addons/` staging folder and a final `vault_ready_28/` raw package; enhanced silver is rebuilt from this single PRD1 package. For `mlops`, PRD1 contains CRM raw plus mirrored MLOps source-1 delta files. `prd_02` is the SAP/source-2 raw shape for base and MLOps from `business_vault/bv.xlsx` sheet `Source2_Structure`; it uses different `SAP_*` source IDs while preserving matchable business attributes for later Business Vault mastering.
+`prd_01` is source 1. For `base`, it is the CRM raw shape. For `enhanced`, it contains the CRM raw shape plus an internal `addons/` staging folder and a final `vault_ready_28/` raw package; enhanced silver is rebuilt from this single PRD1 package. For `mlops`, PRD1 contains CRM raw plus mirrored MLOps source-1 delta files. `prd_02` is the SAP/source-2 raw shape for base, enhanced, and MLOps from `business_vault/bv.xlsx` sheet `Source2_Structure`; it uses different `SAP_*` source IDs while preserving matchable business attributes for later Business Vault mastering.
 
 Enhanced PRD1 final raw package:
 
@@ -280,13 +282,19 @@ Enhanced PRD1 final raw package:
 - 2 flat enhanced relationship group files
 - 1 flat enhanced enrichment group file
 
-The `vault_ready_28` folder is the deliverable raw package for enhanced. It has enough data to rebuild the full 80-table enhanced silver vault while avoiding separate enhanced `prd_02`, enhanced `prd_delta`, old `source1_*.csv` output files, and JSON bundle parsing.
+The `vault_ready_28` folder is the source-1 deliverable raw package for enhanced. `data/raw/enhanced/prd_02/<run_id>` now carries the same six SAP/source-2 tables as base and MLOps: `person.csv`, `address.csv`, `product.csv`, `home.csv`, `motor.csv`, and `insured_object.csv`. `data/raw/enhanced/raw_vault/<run_id>` consolidates the 28 enhanced source-1 files plus those six SAP source-2 files into one flat 34-file package for raw-vault loading.
+
+Enhanced raw 28 also carries selected NPS/feedback source attributes for Business Vault and modelling use even when the enhanced silver DDL does not include them. `customer_portfolio.csv` includes `customer_onboarding_satisfaction_score` and `customer_onboarding_feedback`. `complaint_register.csv` includes `src_customer_complaint_satisfaction_score` and `src_complaint_feedback`. `claim_register.csv` includes `src_is_fault_claim`, `src_claim_satisfaction_score`, `src_claims_feedback`, and `src_is_claim_complaint_raised`; these are derived from claim lifecycle, fraud/suspicion, litigation, reserve/amount, and policy-complaint linkage so the claim cycle stays consistent.
+
+Every file in enhanced `vault_ready_28` includes `batch_ref`, `pull_ts`, and `origin_sys`. The raw package also carries MLOps-aligned source extensions for modelling: policy payment/renewal fields on `policy_register.csv`, quote risk/underwriting fields on `quote_register.csv`, and retention/call/engagement fields on `campaign_touch.csv`.
 
 Raw CRM and PRD1 file names do not repeat the folder source prefix. For example, the generated files are `party_master.csv`, `address_book.csv`, and `account_book.csv`, not `crm_party_master.csv`, `crm_address_book.csv`, or `crm_account_book.csv`.
 
-PRD1 CRM `address_book.csv` includes `address_type_txt` and `region_txt`. Natural-person addresses use `personal`; legal-person addresses use `business address`. `region_txt` is derived from `country_cd`; `UK` maps to `Europe`.
+PRD1 CRM `address_book.csv` includes `address_type_txt` and `region_txt`. Natural-person addresses use `personal`; legal-person addresses use `corporate`. `region_txt` is derived from `country_cd`; European countries map to `Europe`.
 
-PRD1 CRM `product_catalog.csv` includes product metadata: `product_type_txt`, `underwriting_group_txt`, `regulatory_approval_cd`, `product_status_txt`, `product_lob_cd`, and `product_launch_dt`. `product_type_txt` equals `product_cd`; underwriting group is one of `GroupA`, `GroupB`, or `GroupC`; regulatory approval code follows `RAC###`; line-of-business code follows `LOB###`; launch date is before the earliest policy start date for that product.
+PRD1 CRM `product_catalog.csv` includes product metadata: `product_type_txt`, `product_variant`, `underwriting_group_txt`, `regulatory_approval_cd`, `product_status_txt`, `product_lob_cd`, and `product_launch_dt`. `product_type_txt` equals `product_cd`; `product_variant` equals `product_line`; underwriting group is one of `GroupA`, `GroupB`, or `GroupC`; regulatory approval code follows `RAC###`; line-of-business code follows `LOB###`; launch date is before the earliest policy start date for that product.
+
+PRD1 CRM `vehicle_asset.csv` includes `driver_experience_years`, derived from linked natural-person birth date as `max(age - 17, 0)` and capped to a realistic range. If a linked birth date is not available, the generator uses a deterministic vehicle-based fallback.
 
 PRD2 SAP/source-2 files:
 
@@ -319,7 +327,7 @@ Verify the raw Business Vault source contract after generation:
 
 This verifier checks all six SAP PRD2 files (`person.csv`, `address.csv`, `product.csv`, `home.csv`, `motor.csv`, `insured_object.csv`) exist, have rows, match the expected schema, reconcile counts/IDs to CRM PRD1 source files, and preserve the Business Vault person matching contract.
 
-Enhanced source-style add-on extracts are staged inside `data/raw/enhanced/prd_01/<run_id>/addons`, then packaged into flat CSVs under `data/raw/enhanced/prd_01/<run_id>/vault_ready_28`. Enhanced silver uses `vault_ready_28` and does not require separate enhanced `prd_02` or `prd_delta` folders. `data/raw/mlops/prd_delta/<run_id>` contains source-style raw extracts for the additional MLOps product. These extracts do not contain vault-shaped `hub_`, `link_`, or `sat_` files.
+Enhanced source-style add-on extracts are staged inside `data/raw/enhanced/prd_01/<run_id>/addons`, then packaged into flat CSVs under `data/raw/enhanced/prd_01/<run_id>/vault_ready_28`. Enhanced also writes SAP/source-2 raw under `data/raw/enhanced/prd_02/<run_id>` and a consolidated 34-file raw-vault package under `data/raw/enhanced/raw_vault/<run_id>`. Enhanced silver still uses `vault_ready_28`; `prd_delta` is only for MLOps. `data/raw/mlops/prd_delta/<run_id>` contains source-style raw extracts for the additional MLOps product. These extracts do not contain vault-shaped `hub_`, `link_`, or `sat_` files.
 
 `prd_delta` raw columns use `src_*` source names instead of vault names. For example, vault columns such as `policy_hash_key`, `load_date`, and `record_source` are stored as `src_policy_ref`, `src_extract_ts`, and `src_system`; `misc/build_product_combined_vault.py` maps them back to the MLOps vault schema during rebuild.
 

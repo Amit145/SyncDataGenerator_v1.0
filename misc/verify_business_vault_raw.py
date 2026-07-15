@@ -17,6 +17,17 @@ from generators.raw_prd_generator import (
     BUSINESS_VAULT_PERSON_MATCH_RULES,
 )
 
+EUROPE_COUNTRY_CODES = {
+    "AL", "ALB", "AD", "AND", "AT", "AUT", "BY", "BLR", "BE", "BEL", "BA", "BIH",
+    "BG", "BGR", "HR", "HRV", "CY", "CYP", "CZ", "CZE", "DK", "DNK", "EE", "EST",
+    "FI", "FIN", "FR", "FRA", "DE", "DEU", "GR", "GRC", "HU", "HUN", "IS", "ISL",
+    "IE", "IRL", "IT", "ITA", "XK", "LV", "LVA", "LI", "LIE", "LT", "LTU", "LU",
+    "LUX", "MT", "MLT", "MD", "MDA", "MC", "MCO", "ME", "MNE", "NL", "NLD", "MK",
+    "MKD", "NO", "NOR", "PL", "POL", "PT", "PRT", "RO", "ROU", "RU", "RUS", "SM",
+    "SMR", "RS", "SRB", "SK", "SVK", "SI", "SVN", "ES", "ESP", "SE", "SWE", "CH",
+    "CHE", "UA", "UKR", "UK", "GB", "GBR", "VA", "VAT",
+}
+
 
 def _latest_run(path: Path) -> str:
     runs = [item for item in path.iterdir() if item.is_dir()]
@@ -64,6 +75,7 @@ def verify(run_id: str | None = None, mode: str = "base") -> int:
         "party_master.csv": _read(prd1 / "party_master.csv"),
         "address_book.csv": _read(prd1 / "address_book.csv"),
         "product_catalog.csv": _read(prd1 / "product_catalog.csv"),
+        "customer_portfolio.csv": _read(prd1 / "customer_portfolio.csv"),
         "property_asset.csv": _read(prd1 / "property_asset.csv"),
         "vehicle_asset.csv": _read(prd1 / "vehicle_asset.csv"),
     }
@@ -121,21 +133,21 @@ def verify(run_id: str | None = None, mode: str = "base") -> int:
         errors += 1
     else:
         expected_address_type = crm_address["party_ref"].map(crm_party_type).map(
-            lambda value: "business address" if value == "LEGAL" else "personal"
+            lambda value: "corporate" if value == "LEGAL" else "personal"
         )
         actual_address_type = crm_address["address_type_txt"].astype(str).str.strip()
         address_type_ok = actual_address_type.eq(expected_address_type)
         country = crm_address["country_cd"].astype(str).str.strip().str.upper()
         region = crm_address["region_txt"].astype(str).str.strip()
-        uk_region_ok = region[country.eq("UK")].eq("Europe").all()
+        europe_region_ok = region[country.isin(EUROPE_COUNTRY_CODES)].eq("Europe").all()
         populated = int(crm_address[crm_address_required].astype(str).apply(lambda col: col.str.strip().ne("")).all(axis=1).sum())
-        if address_type_ok.all() and uk_region_ok and populated == len(crm_address):
+        if address_type_ok.all() and europe_region_ok and populated == len(crm_address):
             print(f"PASS: CRM PRD1 address_book.csv address_type/region valid {len(crm_address)}/{len(crm_address)}")
         else:
             print(
                 "FAIL: CRM PRD1 address_book.csv address_type/region invalid "
                 f"address_type_bad={int((~address_type_ok).sum())} "
-                f"uk_region_ok={uk_region_ok} populated={populated}/{len(crm_address)}"
+                f"europe_region_ok={europe_region_ok} populated={populated}/{len(crm_address)}"
             )
             errors += 1
 
@@ -143,6 +155,7 @@ def verify(run_id: str | None = None, mode: str = "base") -> int:
     crm_policy = _read(prd1 / "policy_register.csv")
     crm_product_required = [
         "product_type_txt",
+        "product_variant",
         "underwriting_group_txt",
         "regulatory_approval_cd",
         "product_status_txt",
@@ -157,6 +170,7 @@ def verify(run_id: str | None = None, mode: str = "base") -> int:
         populated = int(crm_product[crm_product_required].astype(str).apply(lambda col: col.str.strip().ne("")).all(axis=1).sum())
         group_ok = crm_product["underwriting_group_txt"].astype(str).str.strip().isin(["GroupA", "GroupB", "GroupC"])
         product_type_ok = crm_product["product_type_txt"].astype(str).str.strip().eq(crm_product["product_cd"].astype(str).str.strip())
+        product_variant_ok = crm_product["product_variant"].astype(str).str.strip().eq(crm_product["product_line"].astype(str).str.strip())
         rac_ok = crm_product["regulatory_approval_cd"].astype(str).str.strip().str.fullmatch(r"RAC\d{3}")
         lob_ok = crm_product["product_lob_cd"].astype(str).str.strip().str.fullmatch(r"LOB\d{3}")
         status_ok = crm_product["product_status_txt"].astype(str).str.strip().isin(["ACTIVE", "INACTIVE", "RETIRED"])
@@ -173,6 +187,7 @@ def verify(run_id: str | None = None, mode: str = "base") -> int:
         if (
             populated == len(crm_product)
             and product_type_ok.all()
+            and product_variant_ok.all()
             and group_ok.all()
             and rac_ok.all()
             and lob_ok.all()
@@ -185,6 +200,7 @@ def verify(run_id: str | None = None, mode: str = "base") -> int:
                 "FAIL: CRM PRD1 product_catalog.csv product metadata invalid "
                 f"populated={populated}/{len(crm_product)} "
                 f"product_type_bad={int((~product_type_ok).sum())} "
+                f"product_variant_bad={int((~product_variant_ok).sum())} "
                 f"group_bad={int((~group_ok).sum())} "
                 f"rac_bad={int((~rac_ok).sum())} "
                 f"lob_bad={int((~lob_ok).sum())} "
@@ -192,6 +208,175 @@ def verify(run_id: str | None = None, mode: str = "base") -> int:
                 f"launch_bad={int((~launch_before_policy).sum())}"
             )
             errors += 1
+
+    crm_vehicle = crm_sources["vehicle_asset.csv"].copy()
+    if "driver_experience_years" not in crm_vehicle.columns:
+        print("FAIL: CRM PRD1 vehicle_asset.csv missing column driver_experience_years")
+        errors += 1
+    else:
+        driver_experience = pd.to_numeric(crm_vehicle["driver_experience_years"], errors="coerce")
+        populated = int(crm_vehicle["driver_experience_years"].astype(str).str.strip().ne("").sum())
+        valid_range = driver_experience.between(0, 65)
+        if populated == len(crm_vehicle) and valid_range.all():
+            print(f"PASS: CRM PRD1 vehicle_asset.csv driver_experience_years valid {len(crm_vehicle)}/{len(crm_vehicle)}")
+        else:
+            print(
+                "FAIL: CRM PRD1 vehicle_asset.csv driver_experience_years invalid "
+                f"populated={populated}/{len(crm_vehicle)} range_bad={int((~valid_range).sum())}"
+            )
+            errors += 1
+
+    crm_customer = crm_sources["customer_portfolio.csv"].copy()
+    customer_feedback_required = ["customer_onboarding_satisfaction_score", "customer_onboarding_feedback"]
+    missing_customer_feedback = [col for col in customer_feedback_required if col not in crm_customer.columns]
+    if missing_customer_feedback:
+        print(f"FAIL: CRM PRD1 customer_portfolio.csv missing columns {missing_customer_feedback}")
+        errors += 1
+    else:
+        score = pd.to_numeric(crm_customer["customer_onboarding_satisfaction_score"], errors="coerce")
+        feedback_populated = crm_customer["customer_onboarding_feedback"].astype(str).str.strip().ne("")
+        score_valid = score.between(0, 5)
+        if score_valid.all() and feedback_populated.all():
+            print(f"PASS: CRM PRD1 customer_portfolio.csv onboarding feedback valid {len(crm_customer)}/{len(crm_customer)}")
+        else:
+            print(
+                "FAIL: CRM PRD1 customer_portfolio.csv onboarding feedback invalid "
+                f"score_bad={int((~score_valid).sum())} feedback_blank={int((~feedback_populated).sum())}"
+            )
+            errors += 1
+
+    if mode == "enhanced":
+        vault_ready_dir = prd1 / "vault_ready_28"
+        if not vault_ready_dir.exists():
+            print(f"FAIL: enhanced vault_ready_28 folder missing: {vault_ready_dir}")
+            errors += 1
+        else:
+            metadata_errors = []
+            for csv_path in sorted(vault_ready_dir.glob("*.csv")):
+                frame = _read(csv_path)
+                missing_metadata = [col for col in ["batch_ref", "pull_ts", "origin_sys"] if col not in frame.columns]
+                if missing_metadata:
+                    metadata_errors.append(f"{csv_path.name}:{missing_metadata}")
+            if metadata_errors:
+                print(f"FAIL: enhanced vault_ready_28 metadata columns missing {metadata_errors}")
+                errors += 1
+            else:
+                print("PASS: enhanced vault_ready_28 all files include batch_ref/pull_ts/origin_sys")
+
+            raw_field_checks = {
+                "policy_register.csv": [
+                    "is_auto_renew_enabled",
+                    "no_claims_discount_years",
+                    "payment_method",
+                    "is_direct_debit_cancellation",
+                    "missed_payment_count",
+                    "loyalty_discount_usage",
+                    "is_installment_default",
+                    "policy_renewal_satisfaction_score",
+                    "policy_renewal_feedback",
+                    "is_renewal_escalation",
+                ],
+                "quote_register.csv": [
+                    "quoted_premium",
+                    "quoted_date",
+                    "quote_month_name",
+                    "risk_score",
+                    "policy_complexity",
+                    "uw_approval_type",
+                    "rejection_reason",
+                ],
+                "campaign_touch.csv": [
+                    "has_retention_team_interaction",
+                    "customer_service_call_frequency",
+                    "average_call_sentiment",
+                    "engagement_score",
+                    "first_contact_resolution",
+                ],
+            }
+            for file_name, required_columns in raw_field_checks.items():
+                frame = _read(vault_ready_dir / file_name)
+                missing_columns = [col for col in required_columns if col not in frame.columns]
+                if missing_columns:
+                    print(f"FAIL: enhanced {file_name} missing columns {missing_columns}")
+                    errors += 1
+                    continue
+                required_nonblank = [col for col in required_columns if col not in {"rejection_reason", "policy_renewal_satisfaction_score", "policy_renewal_feedback"}]
+                blank_counts = {
+                    col: int(frame[col].astype(str).str.strip().eq("").sum())
+                    for col in required_nonblank
+                }
+                bad_blanks = {col: count for col, count in blank_counts.items() if count}
+                if bad_blanks:
+                    print(f"FAIL: enhanced {file_name} required raw extension columns have blanks {bad_blanks}")
+                    errors += 1
+                else:
+                    print(f"PASS: enhanced {file_name} raw extension columns present")
+
+        complaint_path = prd1 / "vault_ready_28" / "complaint_register.csv"
+        if not complaint_path.exists():
+            print(f"FAIL: enhanced vault_ready_28 complaint_register.csv missing: {complaint_path}")
+            errors += 1
+        else:
+            complaint = _read(complaint_path)
+            complaint_required = ["src_complaint_feedback", "src_customer_complaint_satisfaction_score"]
+            missing_complaint = [col for col in complaint_required if col not in complaint.columns]
+            if missing_complaint:
+                print(f"FAIL: enhanced complaint_register.csv missing columns {missing_complaint}")
+                errors += 1
+            elif len(complaint):
+                complaint_score = pd.to_numeric(complaint["src_customer_complaint_satisfaction_score"], errors="coerce")
+                open_status = complaint["src_complaint_status"].astype(str).str.strip().str.upper().isin(["OPEN", "PENDING"])
+                closed_rows = ~open_status
+                score_valid = complaint_score[closed_rows].between(0, 5)
+                feedback_populated = complaint.loc[closed_rows, "src_complaint_feedback"].astype(str).str.strip().ne("")
+                if score_valid.all() and feedback_populated.all():
+                    print(f"PASS: enhanced complaint_register.csv complaint feedback valid {int(closed_rows.sum())}/{len(complaint)} closed/non-open rows")
+                else:
+                    print(
+                        "FAIL: enhanced complaint_register.csv complaint feedback invalid "
+                        f"score_bad={int((~score_valid).sum())} feedback_blank={int((~feedback_populated).sum())}"
+                    )
+                    errors += 1
+
+        claim_path = prd1 / "vault_ready_28" / "claim_register.csv"
+        if not claim_path.exists():
+            print(f"FAIL: enhanced vault_ready_28 claim_register.csv missing: {claim_path}")
+            errors += 1
+        else:
+            claim = _read(claim_path)
+            claim_required = [
+                "src_is_fault_claim",
+                "src_claim_satisfaction_score",
+                "src_claims_feedback",
+                "src_is_claim_complaint_raised",
+            ]
+            missing_claim = [col for col in claim_required if col not in claim.columns]
+            if missing_claim:
+                print(f"FAIL: enhanced claim_register.csv missing columns {missing_claim}")
+                errors += 1
+            elif len(claim):
+                yn_valid = (
+                    claim[["src_is_fault_claim", "src_is_claim_complaint_raised"]]
+                    .astype(str)
+                    .apply(lambda col: col.str.strip().str.upper().isin(["Y", "N"]))
+                    .all(axis=1)
+                )
+                claim_score = pd.to_numeric(claim["src_claim_satisfaction_score"], errors="coerce")
+                open_status = claim["src_claim_status"].astype(str).str.strip().str.upper().isin(["OPEN", "PENDING"])
+                has_settlement = claim["src_claim_settlement_date"].astype(str).str.strip().ne("")
+                scored_rows = (~open_status) | has_settlement
+                score_valid = claim_score[scored_rows].between(0, 5)
+                feedback_populated = claim.loc[scored_rows, "src_claims_feedback"].astype(str).str.strip().ne("")
+                if yn_valid.all() and score_valid.all() and feedback_populated.all():
+                    print(f"PASS: enhanced claim_register.csv claim experience valid {int(scored_rows.sum())}/{len(claim)} scored rows")
+                else:
+                    print(
+                        "FAIL: enhanced claim_register.csv claim experience invalid "
+                        f"yn_bad={int((~yn_valid).sum())} "
+                        f"score_bad={int((~score_valid).sum())} "
+                        f"feedback_blank={int((~feedback_populated).sum())}"
+                    )
+                    errors += 1
 
     if sap_prd2_available:
         id_checks = [

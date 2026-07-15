@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import shutil
+from datetime import datetime
 from pathlib import Path
 
 from generators.raw_crm_generator import write_raw_crm_batch
@@ -188,6 +189,135 @@ def _money_value(*values: str) -> str:
         except ValueError:
             continue
     return ""
+
+
+def _date_obj(value: str):
+    text = str(value or "").strip()
+    if not text:
+        return None
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(text[:19], fmt)
+        except ValueError:
+            continue
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def _int_value(value, default=0) -> int:
+    try:
+        return int(float(str(value).replace(",", "").strip()))
+    except (TypeError, ValueError):
+        return default
+
+
+def _yn(value: str) -> str:
+    text = str(value or "").strip().upper()
+    return "Y" if text in {"Y", "YES", "TRUE", "1"} else "N"
+
+
+def _feedback_from_score(score: int) -> str:
+    if score >= 4:
+        return "POSITIVE"
+    if score >= 2:
+        return "NEUTRAL"
+    return "NEGATIVE"
+
+
+def _complaint_resolution_days(row: dict) -> int | None:
+    opened = _date_obj(row.get("complaint_date"))
+    resolved = _date_obj(row.get("complaint_resolved_date"))
+    if not opened or not resolved:
+        return None
+    return max(0, (resolved - opened).days)
+
+
+def _complaint_satisfaction_score(row: dict) -> str:
+    status = str(row.get("complaint_status") or "").strip().upper()
+    if status in {"OPEN", "PENDING"}:
+        return ""
+    days = _complaint_resolution_days(row)
+    score = 5
+    if days is None:
+        score = 3
+    elif days > 60:
+        score = 1
+    elif days > 30:
+        score = 2
+    elif days > 7:
+        score = 3
+    if _yn(row.get("is_financial_ombudsman_service_referral")) == "Y":
+        score -= 2
+    if str(row.get("complaint_upheld_status") or "").strip().upper() in {"UPHELD", "PARTIALLY_UPHELD"}:
+        score -= 1
+    return str(max(0, min(5, score)))
+
+
+def _with_complaint_feedback(row: dict) -> dict:
+    enriched = dict(row)
+    if str(enriched.get("complaint_resolved_date") or "").strip():
+        enriched["complaint_status"] = "Closed"
+    score = _complaint_satisfaction_score(enriched)
+    enriched["customer_complaint_satisfaction_score"] = score
+    enriched["complaint_feedback"] = _feedback_from_score(_int_value(score, 0)) if score != "" else ""
+    return enriched
+
+
+def _claim_fault_flag(row: dict) -> str:
+    explicit = str(row.get("is_fault_claim") or "").strip()
+    if explicit:
+        return _yn(explicit)
+    status = str(row.get("claim_status") or "").strip().upper()
+    if (
+        _yn(row.get("is_claim_fraud")) == "Y"
+        or _yn(row.get("is_claim_suspicious")) == "Y"
+        or _yn(row.get("is_litigation")) == "Y"
+        or status in {"REPUDIATED", "DENIED", "REJECTED", "DECLINED"}
+    ):
+        return "Y"
+    return "Y" if _stable_index(row.get("claim_id") or row.get("claim_hash_key"), 100) < 25 else "N"
+
+
+def _claim_satisfaction_score_raw(row: dict) -> str:
+    status = str(row.get("claim_status") or "").strip().upper()
+    if status in {"OPEN", "PENDING"} and not str(row.get("claim_settlement_date") or "").strip():
+        return ""
+    score = 5
+    if status in {"REPUDIATED", "DENIED", "REJECTED", "DECLINED"}:
+        score -= 3
+    elif status in {"OPEN", "PENDING"}:
+        score -= 1
+    if _yn(row.get("is_claim_fraud")) == "Y" or _yn(row.get("is_claim_suspicious")) == "Y":
+        score -= 2
+    if _yn(row.get("is_litigation")) == "Y":
+        score -= 2
+    if _yn(row.get("is_fault_claim")) == "Y":
+        score -= 1
+    if _int_value(row.get("outstanding_reserve"), 0) > 0:
+        score -= 1
+    if _int_value(row.get("claim_amount"), 0) >= 13000:
+        score -= 1
+    return str(max(0, min(5, score)))
+
+
+def _claim_feedback_text(score: int) -> str:
+    if score >= 4:
+        return "Claim settled clearly with helpful updates"
+    if score >= 2:
+        return "Claim progressed with some follow-up needed"
+    return "Claim experience delayed or disputed"
+
+
+def _with_claim_experience(row: dict, has_policy_complaint: bool) -> dict:
+    enriched = dict(row)
+    enriched["is_fault_claim"] = _claim_fault_flag(enriched)
+    score = _claim_satisfaction_score_raw(enriched)
+    enriched["claim_satisfaction_score"] = score
+    enriched["claims_feedback"] = _claim_feedback_text(_int_value(score, 0)) if score != "" else ""
+    enriched["is_claim_complaint_raised"] = "Y" if has_policy_complaint else "N"
+    return enriched
 
 
 def _home_insured_amount(row: dict, policy: dict) -> str:
@@ -557,23 +687,34 @@ def write_raw_prd2_from_mlops(
     _add_id_lookup(ref_lookup, hub_claim, "claim_hash_key", "claim_id")
     sat_claim = _index(_read_rows(source_dir, "sat_claim.csv"), "claim_hash_key")
     claim_policy = _index(_read_rows(source_dir, "link_claim_policy.csv"), "claim_hash_key")
-    claim_rows = [
-        _merge(
-            hub,
-            sat_claim.get(hub["claim_hash_key"]),
-            {"policy_id": policy_id.get(claim_policy.get(hub["claim_hash_key"], {}).get("policy_hash_key", ""), "")},
+    complaint_policy_links = _read_rows(source_dir, "link_complaint_policy.csv")
+    policies_with_complaints = {
+        row.get("policy_hash_key", "")
+        for row in complaint_policy_links
+        if row.get("policy_hash_key")
+    }
+    claim_rows = []
+    for hub in hub_claim:
+        policy_hash_key = claim_policy.get(hub["claim_hash_key"], {}).get("policy_hash_key", "")
+        claim_rows.append(
+            _with_claim_experience(
+                _merge(
+                    hub,
+                    sat_claim.get(hub["claim_hash_key"]),
+                    {"policy_id": policy_id.get(policy_hash_key, "")},
+                ),
+                policy_hash_key in policies_with_complaints,
+            )
         )
-        for hub in hub_claim
-    ]
 
     hub_complaint = _read_rows(source_dir, "hub_complaint.csv")
     _add_id_lookup(ref_lookup, hub_complaint, "complaint_hash_key", "complaint_id")
     sat_complaint = _index(_read_rows(source_dir, "sat_complaint.csv"), "complaint_hash_key")
-    complaint_policy = _index(_read_rows(source_dir, "link_complaint_policy.csv"), "complaint_hash_key")
+    complaint_policy = _index(complaint_policy_links, "complaint_hash_key")
     complaint_regulation = _index(_read_rows(source_dir, "link_complaint_regulation.csv"), "complaint_hash_key")
     regulation_by_hash = _id_lookup(_read_rows(source_dir, "hub_regulation.csv"), "regulation_hash_key", "regulation_id")
     complaint_rows = [
-        _merge(
+        _with_complaint_feedback(_merge(
             hub,
             sat_complaint.get(hub["complaint_hash_key"]),
             {
@@ -583,7 +724,7 @@ def write_raw_prd2_from_mlops(
                     "",
                 ),
             },
-        )
+        ))
         for hub in hub_complaint
     ]
 
@@ -877,6 +1018,31 @@ def _write_grouped_rows(addon_files: dict[str, Path], out_dir: Path, output_file
             writer.writerow({column: row.get(column, "") for column in columns})
 
 
+def _ensure_raw_metadata_columns(folder: Path, batch_id: str) -> None:
+    metadata_columns = ["batch_ref", "pull_ts", "origin_sys"]
+    for path in sorted(folder.glob("*.csv")):
+        rows = _read_csv_rows(path)
+        with path.open("r", newline="", encoding="utf-8") as f:
+            fieldnames = next(csv.reader(f), [])
+        if all(column in fieldnames for column in metadata_columns):
+            continue
+
+        output_fields = metadata_columns + [column for column in fieldnames if column not in metadata_columns]
+        enriched_rows = []
+        for row in rows:
+            enriched = dict(row)
+            enriched["batch_ref"] = enriched.get("batch_ref") or batch_id
+            enriched["pull_ts"] = enriched.get("pull_ts") or enriched.get("src_extract_ts") or ""
+            enriched["origin_sys"] = enriched.get("origin_sys") or enriched.get("src_system") or "CRM"
+            enriched_rows.append(enriched)
+
+        with path.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=output_fields)
+            writer.writeheader()
+            for row in enriched_rows:
+                writer.writerow({column: row.get(column, "") for column in output_fields})
+
+
 def write_enhanced_vault_ready_28(prd1_folder: str, output_folder: str = "vault_ready_28") -> str:
     """Create a 28-file enhanced raw package that can rebuild the full vault."""
     prd1_dir = Path(prd1_folder)
@@ -907,7 +1073,55 @@ def write_enhanced_vault_ready_28(prd1_folder: str, output_folder: str = "vault_
     for output_file, logical_files in VAULT_READY_ENRICHMENT_GROUPS.items():
         _write_grouped_rows(addon_files, out_dir, output_file, logical_files)
 
+    _ensure_raw_metadata_columns(out_dir, prd1_dir.name)
+
     output_count = len(list(out_dir.glob("*.csv")))
     if output_count != 28:
         raise RuntimeError(f"Enhanced vault-ready raw must contain 28 files, found {output_count} in {out_dir}")
+    return str(out_dir)
+
+
+def write_enhanced_consolidated_raw_vault(
+    vault_ready_folder: str,
+    prd2_folder: str,
+    raw_root: str,
+    batch_id: str,
+    mode: str = "enhanced",
+    output_folder: str = "raw_vault",
+) -> str:
+    """Write one flat enhanced raw-vault package from source-1 and source-2 raw.
+
+    The enhanced source-1 contract is the 28-file ``vault_ready_28`` package.
+    Source-2 is the SAP-style six-table PRD2 feed. Keeping the consolidated
+    folder flat makes it easy to upload as one bronze/raw-vault input while
+    preserving the individual source table names.
+    """
+    source1_dir = Path(vault_ready_folder)
+    source2_dir = Path(prd2_folder)
+    out_dir = Path(raw_root) / mode / output_folder / batch_id
+
+    if not source1_dir.exists():
+        raise FileNotFoundError(f"Enhanced vault-ready folder not found: {source1_dir}")
+    if not source2_dir.exists():
+        raise FileNotFoundError(f"Enhanced PRD2 folder not found: {source2_dir}")
+
+    if out_dir.exists():
+        shutil.rmtree(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    for source_file in sorted(source1_dir.glob("*.csv")):
+        shutil.copy2(source_file, out_dir / source_file.name)
+
+    for file_name in BASE_PRD2_SAP_TABLES:
+        source_file = source2_dir / file_name
+        if not source_file.exists():
+            raise FileNotFoundError(f"Enhanced PRD2 file missing: {source_file}")
+        shutil.copy2(source_file, out_dir / source_file.name)
+
+    expected_count = 28 + len(BASE_PRD2_SAP_TABLES)
+    output_count = len(list(out_dir.glob("*.csv")))
+    if output_count != expected_count:
+        raise RuntimeError(
+            f"Enhanced raw_vault must contain {expected_count} files, found {output_count} in {out_dir}"
+        )
     return str(out_dir)

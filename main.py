@@ -36,6 +36,7 @@ from generators.raw_crm_generator import write_raw_crm_batch
 from generators.raw_prd_generator import (
     copy_raw_prd2_folder,
     mirror_source1_delta_into_prd1,
+    write_enhanced_consolidated_raw_vault,
     write_enhanced_vault_ready_28,
     write_source1_delta_into_prd1,
     write_raw_base_prd2_variant,
@@ -767,8 +768,10 @@ base_context = {
 raw_base_prd1_out = None
 raw_base_prd2_out = None
 raw_enhanced_prd1_out = None
+raw_enhanced_prd2_out = None
 raw_enhanced_prd1_delta_files = []
 raw_enhanced_vault_ready_out = None
+raw_enhanced_raw_vault_out = None
 raw_mlops_prd1_out = None
 raw_mlops_prd2_out = None
 raw_mlops_prd_delta_out = None
@@ -870,6 +873,7 @@ if generate_prd_raw:
     raw_base_prd1_out = write_raw_prd1_batch(RAW_ROOT, folder_run_id, base_context, mode="base")
     raw_base_prd2_out = write_raw_base_prd2_variant(raw_base_prd1_out, RAW_ROOT, folder_run_id, mode="base")
     raw_enhanced_prd1_out = write_raw_prd1_batch(RAW_ROOT, folder_run_id, base_context, mode="enhanced")
+    raw_enhanced_prd2_out = write_raw_base_prd2_variant(raw_enhanced_prd1_out, RAW_ROOT, folder_run_id, mode="enhanced")
     raw_mlops_prd1_out = write_raw_prd1_batch(RAW_ROOT, folder_run_id, base_context, mode="mlops")
     raw_mlops_prd2_out = write_raw_base_prd2_variant(raw_mlops_prd1_out, RAW_ROOT, folder_run_id, mode="mlops")
 
@@ -881,6 +885,13 @@ if generate_prd_raw and not mlops_only and enhanced_synthetic:
         base_folder=out,
     )
     raw_enhanced_vault_ready_out = write_enhanced_vault_ready_28(raw_enhanced_prd1_out)
+    raw_enhanced_raw_vault_out = write_enhanced_consolidated_raw_vault(
+        raw_enhanced_vault_ready_out,
+        raw_enhanced_prd2_out,
+        RAW_ROOT,
+        folder_run_id,
+        mode="enhanced",
+    )
 if generate_prd_raw:
     raw_mlops_prd_delta_out = copy_raw_prd2_folder(
         mlops_synthetic,
@@ -1001,10 +1012,14 @@ if raw_base_prd2_out:
     print("RAW BASE PRD2:", raw_base_prd2_out)
 if raw_enhanced_prd1_out:
     print("RAW ENHANCED PRD1:", raw_enhanced_prd1_out)
+if raw_enhanced_prd2_out:
+    print("RAW ENHANCED PRD2:", raw_enhanced_prd2_out)
 if raw_enhanced_prd1_delta_files:
     print("RAW ENHANCED PRD1 ADDON FILES:", len(raw_enhanced_prd1_delta_files))
 if raw_enhanced_vault_ready_out:
     print("RAW ENHANCED VAULT READY 28:", raw_enhanced_vault_ready_out)
+if raw_enhanced_raw_vault_out:
+    print("RAW ENHANCED RAW VAULT:", raw_enhanced_raw_vault_out)
 if raw_mlops_prd1_out:
     print("RAW MLOPS PRD1:", raw_mlops_prd1_out)
 if raw_mlops_prd2_out:
