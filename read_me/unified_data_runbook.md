@@ -32,6 +32,24 @@ Legacy source-specific output generation:
 .\venv\Scripts\python.exe .\main.py --include-raw-silver --include-new-outputs-src
 ```
 
+Claims product generation:
+
+```powershell
+.\venv\Scripts\python.exe .\main.py --include-claims-product
+```
+
+Claims product creates a two-source claims raw split and a vault-ready consolidation:
+
+- `data/raw/claims/<run_id>/raw`
+- `data/raw/claims/<run_id>/prd_01`
+- `data/raw/claims/<run_id>/prd_02`
+- `data/raw/claims/<run_id>/raw_vault`
+- `data/bronze/claims/<run_id>`
+- `data/silver/claims/<run_id>`
+- `data/gold/claims/<run_id>`
+
+`prd_01` is the full 23-file claims LDM raw source, `prd_02` is SAP/source-2 from `claims/Claims_2Sources_DataTables.xlsx`, and `raw_vault` is the consolidated 23-file claims LDM input used by the claims vault builder.
+
 Large base-only streaming generation:
 
 ```powershell
@@ -49,6 +67,7 @@ Default synthetic and raw/silver folders:
 - `data/raw/base/prd_01/<run_id>`
 - `data/raw/enhanced/prd_01/<run_id>`
 - `data/raw/enhanced/prd_02/<run_id>`
+- `data/raw/enhanced/raw_vault/<run_id>`
 - `data/raw/mlops/prd_01/<run_id>`
 - `data/raw/mlops/prd_02/<run_id>`
 - `data/silver/base/<run_id>`
@@ -63,7 +82,10 @@ Optional legacy folders, only when requested:
 - `data/raw/crm/<run_id>`
 - `data/raw/crm_canonical/<run_id>`
 - `data/raw/api/<run_id>`
-- `data/raw/claims/<run_id>`
+- `data/raw/claims/<run_id>/raw`
+- `data/raw/claims/<run_id>/prd_01`
+- `data/raw/claims/<run_id>/prd_02`
+- `data/raw/claims/<run_id>/raw_vault`
 - `data/raw/claims_canonical/<run_id>`
 - `data/raw/data_source/<source>/<run_id>`
 - `data/raw/data_source_canonical/<run_id>`
@@ -85,6 +107,13 @@ Enhanced:
 
 ```powershell
 .\venv\Scripts\python.exe .\misc\verify_enhanced_synthetic.py .\data\synthetic\enhanced\<run_id>
+```
+
+Claims product:
+
+```powershell
+.\venv\Scripts\python.exe .\misc\verify_claims_two_source_raw.py --run-id <run_id>
+.\venv\Scripts\python.exe .\misc\verify_claims_product.py --run-id <run_id>
 ```
 
 MLOps:

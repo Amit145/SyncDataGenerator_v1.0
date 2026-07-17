@@ -140,6 +140,15 @@ def _map_rows(rows, mapping):
     ]
 
 
+def _timestamp_value(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if "T" in text or " " in text:
+        return text
+    return f"{text} 00:00:00"
+
+
 def read_prd1_raw(raw_dir):
     """Convert PRD1 source extracts into the canonical raw shape used by build_silver."""
     return {
@@ -215,6 +224,8 @@ def read_prd1_raw(raw_dir):
                 "city": "city_nm",
                 "state": "state_cd",
                 "country": "country_cd",
+                "address_type": "address_type_txt",
+                "region": "region_txt",
                 "pull_ts": "pull_ts",
                 "origin_sys": "origin_sys",
             },
@@ -318,6 +329,12 @@ def read_prd1_raw(raw_dir):
             {
                 "product_id": "product_ref",
                 "product_type": "product_line",
+                "product_type_text": "product_type_txt",
+                "underwriting_group": "underwriting_group_txt",
+                "regulatory_approval_code": "regulatory_approval_cd",
+                "product_status": "product_status_txt",
+                "product_line_of_business_code": "product_lob_cd",
+                "product_launch_date": "product_launch_dt",
                 "pull_ts": "pull_ts",
                 "origin_sys": "origin_sys",
             },
@@ -554,7 +571,7 @@ def build_silver(raw_dir, out_dir, hub_load_date=None, link_load_date=None, sat_
         if row.get("legal_person_id"):
             add_hub("hub_legal_person.csv", row, "legal_person_id")
             out["link_person_legal_person.csv"].append(link_row("person_legal_person_hash_key", "person_hash_key", ids["person"][pid], "legal_person_hash_key", ids["leg"][row["legal_person_id"]], link_load_date, record_source))
-            out["sat_legal_person.csv"].append({"legal_person_hash_key": ids["leg"][row["legal_person_id"]], "load_date": sat_load_date, "person_score": row.get("legal_person_score", ""), "job_title": row.get("legal_person_job_title", ""), "source_id": row.get("legal_source_id", ""), "source_type": row.get("legal_source_type", ""), "person_status": row.get("legal_person_status", ""), "converted_date": row.get("lead_converted_date", ""), "date_of_constitution": row.get("date_of_constitution", ""), "company_name": row.get("company_name", "")})
+            out["sat_legal_person.csv"].append({"legal_person_hash_key": ids["leg"][row["legal_person_id"]], "load_date": sat_load_date, "person_score": row.get("legal_person_score", ""), "job_title": row.get("legal_person_job_title", ""), "source_id": row.get("legal_source_id", ""), "source_type": row.get("legal_source_type", ""), "person_status": row.get("legal_person_status", ""), "converted_date": row.get("lead_converted_date", ""), "date_of_constitution": _timestamp_value(row.get("date_of_constitution", "")), "company_name": row.get("company_name", "")})
 
     simple = [
         ("contact", "hub_contact.csv", "contact_id", "person_id", "contact", "link_person_contact.csv", "person_contact_hash_key", "contact_hash_key", "sat_contact.csv", ["personal_email", "work_email", "work_phone", "home_phone"]),

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -144,9 +145,54 @@ def _hydrate_vault_hashes(row: dict) -> dict:
 
 
 def read_prd2_rows(prd2_dir: Path, file_name: str) -> list[dict]:
+    direct_aliases = {
+        "address_book.csv": "enhanced_address_book.csv",
+    }
+    alias_name = direct_aliases.get(file_name)
+    if alias_name:
+        alias_path = prd2_dir / alias_name
+        if alias_path.exists():
+            return [
+                _hydrate_vault_hashes({raw_to_vault_column(column): value for column, value in row.items()})
+                for row in read_rows(alias_path)
+            ]
+
+    for grouped_file in [
+        "enhanced_person_relationships.csv",
+        "enhanced_policy_relationships.csv",
+        "enhanced_enrichments.csv",
+    ]:
+        grouped_path = prd2_dir / grouped_file
+        if grouped_path.exists():
+            grouped_rows = []
+            for row in read_rows(grouped_path):
+                if row.get("source_extract") == file_name:
+                    grouped_rows.append({column: value for column, value in row.items() if column != "source_extract"})
+            if grouped_rows:
+                return [
+                    _hydrate_vault_hashes({raw_to_vault_column(column): value for column, value in row.items()})
+                    for row in grouped_rows
+                ]
+
+    bundle_path = prd2_dir / "enhanced_addon_bundle.csv"
+    if bundle_path.exists():
+        bundled_rows = []
+        for row in read_rows(bundle_path):
+            if row.get("file_name") == file_name and row.get("row_json"):
+                bundled_rows.append(json.loads(row["row_json"]))
+        if bundled_rows:
+            return [
+                _hydrate_vault_hashes({raw_to_vault_column(column): value for column, value in row.items()})
+                for row in bundled_rows
+            ]
+
+    path = prd2_dir / file_name
+    if not path.exists():
+        prefixed_path = prd2_dir / f"source1_{file_name}"
+        path = prefixed_path if prefixed_path.exists() else path
     return [
         _hydrate_vault_hashes({raw_to_vault_column(column): value for column, value in row.items()})
-        for row in read_rows(prd2_dir / file_name)
+        for row in read_rows(path)
     ]
 
 
@@ -190,6 +236,42 @@ def _fill_missing_from_supplement(row: dict, supplement: dict | None, columns: l
     return merged
 
 
+def _derive_insured_object_rows(prd2_dir: Path, schema_dir: str | Path | None, columns: list[str], table_name: str) -> list[dict]:
+    """Derive insured-object hub/sat rows from relationship extracts.
+
+    Enhanced raw no longer carries an explicit insured_object_register.csv. The
+    insured object identity is still present in policy/home/motor relationship
+    extracts, and remaining satellite attributes can be filled from the current
+    schema supplement when available.
+    """
+    source_rows = []
+    for bridge_file in [
+        "policy_insured_object_bridge.csv",
+        "insured_object_home_bridge.csv",
+        "insured_object_motor_bridge.csv",
+    ]:
+        source_rows.extend(read_prd2_rows(prd2_dir, bridge_file))
+
+    by_hash: dict[str, dict] = {}
+    for row in source_rows:
+        insured_hash = row.get("insured_object_hash_key", "")
+        if not insured_hash:
+            continue
+        existing = by_hash.setdefault(insured_hash, {"insured_object_hash_key": insured_hash})
+        for column in ["load_date", "record_source", "insured_object_id"]:
+            if not existing.get(column) and row.get(column):
+                existing[column] = row[column]
+
+    supplemental_key, supplemental_by_key = _supplemental_rows_by_key(schema_dir, table_name, columns)
+    derived = []
+    for insured_hash, row in by_hash.items():
+        if not row.get("insured_object_id"):
+            row["insured_object_id"] = insured_hash
+        supplement = supplemental_by_key.get(row.get(supplemental_key, "")) if supplemental_key else None
+        derived.append(_fill_missing_from_supplement(row, supplement, columns))
+    return derived
+
+
 def load_enrichments(prd2_dir: Path) -> dict[str, tuple[str, dict[str, dict]]]:
     enrichments = {}
     for file_name, (table_name, key_column) in ENRICHMENT_MAP.items():
@@ -215,10 +297,24 @@ def build_product_combined(
 
     if run_id:
         base_dir = Path(base_dir) if base_dir else ROOT / "data" / "synthetic" / "base" / run_id
-        prd2_dir = ROOT / "data" / "raw" / mode / delta_folder / run_id
+        if delta_folder == "prd_01_addons":
+            prd2_dir = ROOT / "data" / "raw" / mode / "prd_01" / run_id / "addons"
+        elif delta_folder == "vault_ready_28":
+            prd2_dir = ROOT / "data" / "raw" / mode / "prd_01" / run_id / "vault_ready_28"
+        else:
+            prd2_dir = ROOT / "data" / "raw" / mode / delta_folder / run_id
     else:
-        prd2_dir = latest_subdir(ROOT / "data" / "raw" / mode / delta_folder)
-        run_id = prd2_dir.name
+        if delta_folder == "prd_01_addons":
+            latest_prd1 = latest_subdir(ROOT / "data" / "raw" / mode / "prd_01")
+            prd2_dir = latest_prd1 / "addons"
+            run_id = latest_prd1.name
+        elif delta_folder == "vault_ready_28":
+            latest_prd1 = latest_subdir(ROOT / "data" / "raw" / mode / "prd_01")
+            prd2_dir = latest_prd1 / "vault_ready_28"
+            run_id = latest_prd1.name
+        else:
+            prd2_dir = latest_subdir(ROOT / "data" / "raw" / mode / delta_folder)
+            run_id = prd2_dir.name
         base_dir = Path(base_dir) if base_dir else ROOT / "data" / "synthetic" / "base" / run_id
 
     if not base_dir.exists():
@@ -261,6 +357,18 @@ def build_product_combined(
 
     for raw_file, (hub_table, sat_table) in ENTITY_MAP.items():
         rows = read_prd2_rows(prd2_dir, raw_file)
+        if raw_file == "insured_object_register.csv" and not rows:
+            hub_columns = schemas.get(hub_table, [])
+            sat_columns = schemas.get(sat_table, [])
+            hub_rows = _derive_insured_object_rows(prd2_dir, schema_dir, hub_columns, hub_table) if hub_columns else []
+            sat_rows = _derive_insured_object_rows(prd2_dir, schema_dir, sat_columns, sat_table) if sat_columns else []
+            if hub_table in schemas:
+                write_rows(out_dir, hub_table, hub_rows, schemas[hub_table])
+                written.add(hub_table)
+            if sat_table in schemas:
+                write_rows(out_dir, sat_table, sat_rows, schemas[sat_table])
+                written.add(sat_table)
+            continue
         if hub_table in schemas:
             write_rows(out_dir, hub_table, rows, schemas[hub_table])
             written.add(hub_table)

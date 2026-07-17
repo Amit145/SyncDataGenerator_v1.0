@@ -36,11 +36,15 @@ from generators.raw_crm_generator import write_raw_crm_batch
 from generators.raw_prd_generator import (
     copy_raw_prd2_folder,
     mirror_source1_delta_into_prd1,
+    write_enhanced_consolidated_raw_vault,
+    write_enhanced_vault_ready_28,
+    write_source1_delta_into_prd1,
     write_raw_base_prd2_variant,
     write_raw_prd1_batch,
 )
 from generators.raw_api_generator import write_raw_api_batch
 from generators.raw_claims_generator import write_raw_claims_batch
+from generators.claim_ldm_generator import write_claims_ldm_raw_batch, write_claims_two_source_raw
 from generators.raw_data_source_generator import generate_data_source_raw
 
 from helper.config_loader import load_config
@@ -58,6 +62,7 @@ from helper.source_context_builder import build_source_context
 from helper.streaming_base_generator import generate_streaming_base
 from helper.link_builder import build_links, make_link
 from misc.build_product_combined_vault import build_product_combined
+from misc.claims_product_pipeline import build_claims_product
 from misc.raw_to_silver_sample import build_silver
 from modules.module_parser import parse_ddl_module, file_ready
 from helper.pk_validator import assert_unique
@@ -140,6 +145,11 @@ parser.add_argument(
     help="Generate data/new_outputs_src outputs and SCD2 deltas. Requires --include-raw-silver.",
 )
 parser.add_argument(
+    "--include-claims-product",
+    action="store_true",
+    help="Generate claims product outputs under data/raw, data/bronze, data/silver, and data/gold.",
+)
+parser.add_argument(
     "--remove-working-output",
     action="store_true",
     help="Remove intermediate data/output/<run_id> files after they are normalized into data/synthetic/base. Kept by default.",
@@ -158,6 +168,9 @@ requested_prd_silver = (not skip_base_outputs) and bool(output_settings.get("gen
 generate_prd_silver = generate_prd_raw and requested_prd_silver
 include_new_outputs_src = include_raw_silver and (
     args.include_new_outputs_src or bool(output_settings.get("generate_new_outputs_src", False))
+)
+include_claims_product = (not skip_base_outputs) and (
+    args.include_claims_product or bool(output_settings.get("generate_claims_product", False))
 )
 
 # ---------------- Inputs ----------------
@@ -193,7 +206,7 @@ LINK_DATE = link_dt.isoformat()
 SAT_DATE = sat_dt.isoformat()
 
 ensure_data_roots(
-    include_optional_raw_silver=include_raw_silver or generate_prd_raw or generate_prd_silver,
+    include_optional_raw_silver=include_raw_silver or generate_prd_raw or generate_prd_silver or include_claims_product,
     include_new_outputs_src=include_new_outputs_src,
     include_product_combined=False,
     include_legacy_global_prd=False,
@@ -730,6 +743,7 @@ base_context = {
     "hub_load_date": HUB_DATE,
     "link_load_date": LINK_DATE,
     "sat_load_date": SAT_DATE,
+    "sat_date": SAT_DATE,
     "sat_nat": sat_nat,
     "sat_leg": sat_leg,
     "sat_per": sat_per,
@@ -755,15 +769,28 @@ raw_base_prd1_out = None
 raw_base_prd2_out = None
 raw_enhanced_prd1_out = None
 raw_enhanced_prd2_out = None
-raw_enhanced_prd_delta_out = None
 raw_enhanced_prd1_delta_files = []
+raw_enhanced_vault_ready_out = None
+raw_enhanced_raw_vault_out = None
 raw_mlops_prd1_out = None
 raw_mlops_prd2_out = None
 raw_mlops_prd_delta_out = None
 raw_mlops_prd1_delta_files = []
 silver_base_out = None
+silver_enhanced_prd1_base_out = None
+silver_mlops_prd1_base_out = None
 silver_enhanced_out = None
 silver_mlops_out = None
+claims_product_outputs = None
+if include_claims_product:
+    claims_ldm_raw_out = write_claims_ldm_raw_batch(RAW_ROOT, folder_run_id, base_context)
+    claims_two_source_raw = write_claims_two_source_raw(claims_ldm_raw_out, RAW_ROOT, folder_run_id)
+    claims_product_outputs = build_claims_product(claims_two_source_raw["raw_vault"], folder_run_id, load_date=SAT_DATE)
+    claims_product_outputs["source_raw"] = claims_ldm_raw_out
+    claims_product_outputs["prd_01"] = claims_two_source_raw["prd_01"]
+    claims_product_outputs["prd_02"] = claims_two_source_raw["prd_02"]
+    claims_product_outputs["raw_vault"] = claims_two_source_raw["raw_vault"]
+
 if include_raw_silver and not skip_base_outputs:
     raw_out = write_raw_crm_batch(RAW_BASE, folder_run_id, base_context)
     generated_crm_canonical = map_crm_raw_to_canonical(folder_run_id, raw_out)
@@ -856,15 +883,20 @@ if generate_prd_raw:
     raw_mlops_prd2_out = write_raw_base_prd2_variant(raw_mlops_prd1_out, RAW_ROOT, folder_run_id, mode="mlops")
 
 if generate_prd_raw and not mlops_only and enhanced_synthetic:
-    raw_enhanced_prd_delta_out = copy_raw_prd2_folder(
+    raw_enhanced_prd1_delta_files = write_source1_delta_into_prd1(
         enhanced_synthetic,
-        RAW_ROOT,
+        raw_enhanced_prd1_out,
         folder_run_id,
         base_folder=out,
-        mode="enhanced",
-        product_folder="prd_delta",
     )
-    raw_enhanced_prd1_delta_files = mirror_source1_delta_into_prd1(raw_enhanced_prd_delta_out, raw_enhanced_prd1_out)
+    raw_enhanced_vault_ready_out = write_enhanced_vault_ready_28(raw_enhanced_prd1_out)
+    raw_enhanced_raw_vault_out = write_enhanced_consolidated_raw_vault(
+        raw_enhanced_vault_ready_out,
+        raw_enhanced_prd2_out,
+        RAW_ROOT,
+        folder_run_id,
+        mode="enhanced",
+    )
 if generate_prd_raw:
     raw_mlops_prd_delta_out = copy_raw_prd2_folder(
         mlops_synthetic,
@@ -879,22 +911,40 @@ if generate_prd_raw:
 if generate_prd_silver and raw_base_prd1_out:
     silver_base_out = os.path.join(SILVER_BASE_ROOT, folder_run_id)
     build_silver(raw_base_prd1_out, silver_base_out, HUB_DATE, LINK_DATE, SAT_DATE, source_type="prd1")
+    silver_work_root = os.path.join(os.path.dirname(SILVER_BASE_ROOT), "_working")
+    enhanced_base_for_combined = silver_base_out
+    if raw_enhanced_vault_ready_out and enhanced_synthetic:
+        silver_enhanced_prd1_base_out = os.path.join(silver_work_root, "enhanced_prd1_base", folder_run_id)
+        build_silver(raw_enhanced_vault_ready_out, silver_enhanced_prd1_base_out, HUB_DATE, LINK_DATE, SAT_DATE, source_type="prd1")
+        enhanced_base_for_combined = silver_enhanced_prd1_base_out
     silver_enhanced_out = str(build_product_combined(
         run_id=folder_run_id,
         output_run_id=folder_run_id,
         output_root=SILVER_ENHANCED_ROOT,
         mode="enhanced",
-        base_dir=silver_base_out,
+        base_dir=enhanced_base_for_combined,
         schema_dir=enhanced_synthetic,
+        delta_folder="vault_ready_28",
     ))
+    if silver_enhanced_prd1_base_out and os.path.exists(silver_enhanced_prd1_base_out):
+        shutil.rmtree(silver_enhanced_prd1_base_out)
+        silver_enhanced_prd1_base_out = None
+    mlops_base_for_combined = silver_base_out
+    if raw_mlops_prd1_out and mlops_synthetic:
+        silver_mlops_prd1_base_out = os.path.join(silver_work_root, "mlops_prd1_base", folder_run_id)
+        build_silver(raw_mlops_prd1_out, silver_mlops_prd1_base_out, HUB_DATE, LINK_DATE, SAT_DATE, source_type="prd1")
+        mlops_base_for_combined = silver_mlops_prd1_base_out
     silver_mlops_out = str(build_product_combined(
         run_id=folder_run_id,
         output_run_id=folder_run_id,
         output_root=SILVER_MLOPS_ROOT,
         mode="mlops",
-        base_dir=silver_base_out,
+        base_dir=mlops_base_for_combined,
         schema_dir=mlops_synthetic,
     ))
+    if silver_mlops_prd1_base_out and os.path.exists(silver_mlops_prd1_base_out):
+        shutil.rmtree(silver_mlops_prd1_base_out)
+        silver_mlops_prd1_base_out = None
 
 previous_enhanced_run = None
 enhanced_scd2_output = None
@@ -933,6 +983,14 @@ assert_unique(hub_quo_rows, "Quote Hash Key")
 print("Basic PK validation OK")
 if not skip_base_outputs:
     print("DONE:", out)
+    if claims_product_outputs:
+        print("CLAIMS SOURCE RAW:", claims_product_outputs["source_raw"])
+        print("CLAIMS PRD1:", claims_product_outputs["prd_01"])
+        print("CLAIMS PRD2:", claims_product_outputs["prd_02"])
+        print("CLAIMS RAW VAULT:", claims_product_outputs["raw_vault"])
+        print("CLAIMS BRONZE:", claims_product_outputs["bronze"])
+        print("CLAIMS SILVER:", claims_product_outputs["silver"])
+        print("CLAIMS GOLD:", claims_product_outputs["gold"])
     if include_raw_silver:
         print("RAW CRM:", raw_out)
         print("RAW CRM CANONICAL:", generated_crm_canonical)
@@ -964,10 +1022,12 @@ if raw_enhanced_prd1_out:
     print("RAW ENHANCED PRD1:", raw_enhanced_prd1_out)
 if raw_enhanced_prd2_out:
     print("RAW ENHANCED PRD2:", raw_enhanced_prd2_out)
-if raw_enhanced_prd_delta_out:
-    print("RAW ENHANCED PRD_DELTA:", raw_enhanced_prd_delta_out)
 if raw_enhanced_prd1_delta_files:
-    print("RAW ENHANCED PRD1 SOURCE1 DELTA FILES:", len(raw_enhanced_prd1_delta_files))
+    print("RAW ENHANCED PRD1 ADDON FILES:", len(raw_enhanced_prd1_delta_files))
+if raw_enhanced_vault_ready_out:
+    print("RAW ENHANCED VAULT READY 28:", raw_enhanced_vault_ready_out)
+if raw_enhanced_raw_vault_out:
+    print("RAW ENHANCED RAW VAULT:", raw_enhanced_raw_vault_out)
 if raw_mlops_prd1_out:
     print("RAW MLOPS PRD1:", raw_mlops_prd1_out)
 if raw_mlops_prd2_out:
@@ -980,8 +1040,12 @@ if not generate_prd_raw and not skip_base_outputs:
     print("PRD RAW: skipped (set output_settings.generate_prd_raw=true in config/scenario_v1.json)")
 if silver_base_out:
     print("SILVER BASE:", silver_base_out)
+if silver_enhanced_prd1_base_out:
+    print("SILVER ENHANCED PRD1 BASE:", silver_enhanced_prd1_base_out)
 if silver_enhanced_out:
     print("SILVER ENHANCED:", silver_enhanced_out)
+if silver_mlops_prd1_base_out:
+    print("SILVER MLOPS PRD1 BASE:", silver_mlops_prd1_base_out)
 if silver_mlops_out:
     print("SILVER MLOPS:", silver_mlops_out)
 if not generate_prd_silver and not skip_base_outputs:

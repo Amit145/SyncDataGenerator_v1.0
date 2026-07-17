@@ -1,0 +1,296 @@
+with combined as (
+SELECT DISTINCT
+    MD5(CONCAT(origin_sys, party_ref)) AS person_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    party_ref AS person_id
+FROM crm_party_master_csv
+UNION ALL
+SELECT DISTINCT
+    MD5(CONCAT(origin_sys, person_id)) AS person_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    person_id AS person_id
+FROM sap_person_db)
+select distinct * from combined;
+
+with combined as (
+SELECT DISTINCT
+    MD5(CONCAT(origin_sys, natural_ref)) AS person_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    natural_ref AS person_id
+FROM crm_party_master_csv
+WHERE party_kind = 'NATURAL'
+UNION ALL
+SELECT DISTINCT
+    MD5(CONCAT(origin_sys, person_id)) AS person_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    person_id AS person_id
+FROM sap_person_db
+WHERE person_type = 'NATURAL')
+
+select distinct * from combined;
+
+
+with combined as (
+SELECT DISTINCT
+    MD5(CONCAT(origin_sys, legal_ref)) AS person_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    natural_ref AS person_id
+FROM crm_party_master_csv
+WHERE party_kind = 'LEGAL'
+UNION ALL
+SELECT DISTINCT
+    MD5(CONCAT(origin_sys, person_id)) AS person_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    person_id AS person_id
+FROM sap_person_db
+WHERE person_type = 'LEGAL')
+
+select distinct * from combined;
+
+
+SELECT DISTINCT
+    MD5(CONCAT(origin_sys, contact_ref)) AS contact_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    contact_ref AS contact_id
+FROM crm_contact_point_csv;
+
+
+SELECT DISTINCT
+    MD5(CONCAT(origin_sys, identity_ref)) AS identities_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    identity_ref AS identities_id
+FROM crm_identity_registry_csv;
+
+
+with combined as (
+SELECT DISTINCT
+    MD5(CONCAT(origin_sys, address_ref)) AS address_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    address_ref AS address_id
+FROM crm_address_book_csv
+UNION ALL
+SELECT DISTINCT
+    MD5(CONCAT(origin_sys, src_address_id)) AS address_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    src_address_id AS address_id
+FROM crm_enhanced_address_book_csv
+UNION ALL
+SELECT DISTINCT
+    MD5(CONCAT(origin_sys, address_id)) AS address_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    address_id AS address_id
+FROM sap_address_db)
+select distinct * from combined;
+
+SELECT DISTINCT
+    MD5(CONCAT(origin_sys, consent_ref)) AS consent_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    consent_ref AS consent_id
+FROM crm_consent_snapshot_csv;
+
+SELECT DISTINCT
+    MD5(CONCAT(origin_sys, preference_ref)) AS marketing_preference_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    preference_ref AS marketing_preference_id
+FROM crm_comm_preference_csv;
+
+SELECT DISTINCT
+    MD5(CONCAT(origin_sys, engagement_ref)) AS marketing_engagement_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    engagement_ref AS marketing_engagement_id
+FROM crm_campaign_touch_csv;
+
+SELECT DISTINCT
+    MD5(CONCAT(origin_sys, lead_ref)) AS lead_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    lead_ref AS lead_id
+FROM crm_lead_register_csv;
+
+SELECT DISTINCT
+    MD5(CONCAT(quote_ref, quote_ref)) AS quote_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    quote_ref AS quote_id
+FROM crm_quote_register_csv;
+
+
+with combined as (
+SELECT DISTINCT
+    MD5(CONCAT(origin_sys, policy_ref)) AS policy_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    policy_ref AS policy_id
+FROM crm_policy_register_csv
+UNION ALL
+SELECT DISTINCT
+    MD5(CONCAT(origin_sys, policy_id)) AS policy_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    policy_id AS policy_id
+FROM sap_home_db
+UNION ALL
+SELECT DISTINCT
+    MD5(CONCAT(origin_sys, policy_id)) AS policy_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    policy_id AS policy_id
+FROM sap_motor_db)
+select distinct * from combined;
+
+SELECT DISTINCT
+    MD5(CONCAT(origin_sys, account_ref)) AS account_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    account_ref AS account_id
+FROM crm_account_book_csv;
+
+SELECT DISTINCT
+    MD5(CONCAT(origin_sys, customer_ref)) AS customer_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    customer_ref AS customer_id
+FROM crm_customer_portfolio_csv;
+
+with combined as (
+SELECT DISTINCT
+    MD5(CONCAT(origin_sys, product_ref)) AS product_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    product_ref AS product_id
+FROM crm_product_catalog_csv
+UNION ALL
+SELECT DISTINCT
+    MD5(CONCAT(origin_sys, product_id)) AS product_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    product_id AS product_id
+FROM sap_product_db
+UNION ALL
+SELECT DISTINCT
+    MD5(CONCAT(origin_sys, product_id)) AS product_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    product_id AS product_id
+FROM sap_home_db
+UNION ALL
+SELECT DISTINCT
+    MD5(CONCAT(origin_sys, product_id)) AS product_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    product_id AS product_id
+FROM sap_motor_db)
+select distinct * from combined;
+
+with combined as (
+SELECT DISTINCT
+    MD5(CONCAT(origin_sys, vehicle_ref)) AS motor_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    vehicle_ref AS motor_id
+FROM crm_vehicle_asset_csv
+UNION ALL
+SELECT DISTINCT
+    MD5(CONCAT(origin_sys, motor_id)) AS motor_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    motor_id AS motor_id
+FROM sap_motor_db)
+select distinct * from combined;
+
+with combined as (
+SELECT DISTINCT
+    MD5(CONCAT(origin_sys, property_ref)) AS home_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    property_ref AS home_id
+FROM crm_property_asset_csv
+UNION ALL
+SELECT DISTINCT
+    MD5(CONCAT(origin_sys, home_id)) AS home_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    home_id AS home_id
+FROM sap_home_db)
+select distinct * from combined;
+
+SELECT DISTINCT
+    MD5(CONCAT(origin_sys, src_agent_id)) AS broker_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    src_agent_id AS agent_id
+FROM crm_broker_book_csv;
+
+SELECT DISTINCT
+    MD5(CONCAT(origin_sys, src_campaign_id)) AS campaign_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    src_campaign_id AS campaign_id
+FROM crm_campaign_register_csv;
+
+SELECT DISTINCT
+    MD5(CONCAT(origin_sys, src_channel_id)) AS channel_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    src_channel_id AS channel_id
+FROM crm_channel_catalog_csv;
+
+SELECT DISTINCT
+    MD5(CONCAT(origin_sys, src_claim_id)) AS claim_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    src_claim_id AS claim_id
+FROM crm_claim_register_csv;
+
+SELECT DISTINCT
+    MD5(CONCAT(origin_sys, src_complaint_id)) AS complaint_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    src_complaint_id AS complaint_id
+FROM crm_complaint_register_csv;
+
+with combined as (
+SELECT DISTINCT
+    MD5(CONCAT(origin_sys, insured_object_id)) AS insured_object_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    insured_object_id AS insured_object_id
+FROM crm_property_asset_csv
+UNION ALL
+SELECT DISTINCT
+    MD5(CONCAT(origin_sys, insured_object_id)) AS insured_object_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    insured_object_id AS insured_object_id
+FROM crm_vehicle_asset_csv)
+select distinct * from combined;
+
+
+SELECT DISTINCT
+    MD5(CONCAT(origin_sys, src_override_id)) AS override_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    src_override_id AS override_id
+FROM crm_override_register_csv;
+
+SELECT DISTINCT
+    MD5(CONCAT(origin_sys, src_regulation_id)) AS regulation_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    src_regulation_id AS regulation_id
+FROM crm_regulation_register_csv
+

@@ -21,6 +21,9 @@ PRODUCT_COMBINED_ROOT = os.path.join(DATA_ROOT, "product_combined")
 
 OUTPUT_ROOT = os.path.join(DATA_ROOT, "output")
 
+BRONZE_ROOT = os.path.join(DATA_ROOT, "bronze")
+BRONZE_CLAIMS_ROOT = os.path.join(BRONZE_ROOT, "claims")
+
 SYNTHETIC_ROOT = os.path.join(DATA_ROOT, "synthetic")
 SYNTHETIC_BASE_ROOT = os.path.join(SYNTHETIC_ROOT, "base")
 SYNTHETIC_ENHANCED_ROOT = os.path.join(SYNTHETIC_ROOT, "enhanced")
@@ -35,6 +38,9 @@ SILVER_REBUILT_ROOT = os.path.join(SILVER_ROOT, "rebuild")
 SILVER_API_ROOT = os.path.join(SILVER_ROOT, "api")
 SILVER_CLAIMS_ROOT = os.path.join(SILVER_ROOT, "claims")
 SILVER_DATA_SOURCE_ROOT = os.path.join(SILVER_ROOT, "data_source")
+
+GOLD_ROOT = os.path.join(DATA_ROOT, "gold")
+GOLD_CLAIMS_ROOT = os.path.join(GOLD_ROOT, "claims")
 
 SCD2_ROOT = os.path.join(DATA_ROOT, "scd2")
 SCD2_BASE_ROOT = os.path.join(SCD2_ROOT, "base")
@@ -76,6 +82,8 @@ def ensure_data_roots(
                 RAW_API_ROOT,
                 RAW_CLAIMS_ROOT,
                 RAW_CLAIMS_CANONICAL_ROOT,
+                BRONZE_ROOT,
+                BRONZE_CLAIMS_ROOT,
                 RAW_DATA_SOURCE_ROOT,
                 RAW_DATA_SOURCE_CANONICAL_ROOT,
                 SILVER_ROOT,
@@ -86,6 +94,8 @@ def ensure_data_roots(
                 SILVER_API_ROOT,
                 SILVER_CLAIMS_ROOT,
                 SILVER_DATA_SOURCE_ROOT,
+                GOLD_ROOT,
+                GOLD_CLAIMS_ROOT,
                 SCD2_UPDATED_ROOT,
                 SCD2_RAW_ROOT,
             ]

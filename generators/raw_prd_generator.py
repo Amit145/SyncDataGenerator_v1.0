@@ -2,9 +2,24 @@ from __future__ import annotations
 
 import csv
 import shutil
+from datetime import datetime
 from pathlib import Path
 
 from generators.raw_crm_generator import write_raw_crm_batch
+from helper.raw_metadata import RAW_PULL_TS
+
+
+ENHANCED_ASSET_INSURED_OBJECT_COLUMNS = [
+    "insured_object_id",
+    "insured_object_type",
+    "insured_object_sub_type",
+    "insured_object_description",
+    "insured_value",
+    "currency_code",
+    "insured_object_start_date",
+    "insured_object_end_date",
+    "insured_object_current_status",
+]
 
 
 def write_raw_prd1_batch(base_folder: str, batch_id: str, ctx: dict, mode: str | None = None) -> str:
@@ -105,6 +120,20 @@ BASE_PRD2_SAP_TABLES = {
         "gear_type",
         "motor_parked_location",
     ],
+    "insured_object.csv": [
+        "batch_ref",
+        "pull_ts",
+        "origin_sys",
+        "insured_object_id",
+        "policy_id",
+        "motor_id",
+        "home_id",
+        "insured_object_variant",
+        "insured_object_sub_variant",
+        "insured_amount",
+        "insured_object_begin_date",
+        "insured_object_finish_date",
+    ],
 }
 BUSINESS_VAULT_PERSON_MATCH_RULES = {
     "NATURAL": {
@@ -143,6 +172,182 @@ def _first_value(*values: str) -> str:
     return ""
 
 
+def _stable_index(value: str, modulo: int) -> int:
+    text = str(value or "")
+    return sum(ord(char) for char in text) % modulo if modulo else 0
+
+
+def _sap_middle_name(row: dict) -> str:
+    if str(row.get("party_kind", "")).upper() == "LEGAL":
+        return ""
+    names = [
+        "James", "Marie", "Lee", "Grace", "Anne", "David", "Rose", "John",
+        "Claire", "Michael", "Louise", "Peter", "Jane", "Thomas", "May",
+    ]
+    return names[_stable_index(row.get("party_ref", ""), len(names))]
+
+
+def _sap_address_line_2(row: dict) -> str:
+    options = ["Flat", "Unit", "Suite", "Apartment", "Floor"]
+    suffix = 1 + _stable_index(row.get("address_ref", ""), 90)
+    return f"{options[_stable_index(row.get('party_ref', ''), len(options))]} {suffix}"
+
+
+def _money_value(*values: str) -> str:
+    for value in values:
+        text = str(value or "").strip().replace(",", "")
+        if not text:
+            continue
+        try:
+            return f"{float(text):.2f}"
+        except ValueError:
+            continue
+    return ""
+
+
+def _date_obj(value: str):
+    text = str(value or "").strip()
+    if not text:
+        return None
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(text[:19], fmt)
+        except ValueError:
+            continue
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def _int_value(value, default=0) -> int:
+    try:
+        return int(float(str(value).replace(",", "").strip()))
+    except (TypeError, ValueError):
+        return default
+
+
+def _yn(value: str) -> str:
+    text = str(value or "").strip().upper()
+    return "Y" if text in {"Y", "YES", "TRUE", "1"} else "N"
+
+
+def _feedback_from_score(score: int) -> str:
+    if score >= 4:
+        return "POSITIVE"
+    if score >= 2:
+        return "NEUTRAL"
+    return "NEGATIVE"
+
+
+def _complaint_resolution_days(row: dict) -> int | None:
+    opened = _date_obj(row.get("complaint_date"))
+    resolved = _date_obj(row.get("complaint_resolved_date"))
+    if not opened or not resolved:
+        return None
+    return max(0, (resolved - opened).days)
+
+
+def _complaint_satisfaction_score(row: dict) -> str:
+    status = str(row.get("complaint_status") or "").strip().upper()
+    if status in {"OPEN", "PENDING"}:
+        return ""
+    days = _complaint_resolution_days(row)
+    score = 5
+    if days is None:
+        score = 3
+    elif days > 60:
+        score = 1
+    elif days > 30:
+        score = 2
+    elif days > 7:
+        score = 3
+    if _yn(row.get("is_financial_ombudsman_service_referral")) == "Y":
+        score -= 2
+    if str(row.get("complaint_upheld_status") or "").strip().upper() in {"UPHELD", "PARTIALLY_UPHELD"}:
+        score -= 1
+    return str(max(0, min(5, score)))
+
+
+def _with_complaint_feedback(row: dict) -> dict:
+    enriched = dict(row)
+    if str(enriched.get("complaint_resolved_date") or "").strip():
+        enriched["complaint_status"] = "Closed"
+    score = _complaint_satisfaction_score(enriched)
+    enriched["customer_complaint_satisfaction_score"] = score
+    enriched["complaint_feedback"] = _feedback_from_score(_int_value(score, 0)) if score != "" else ""
+    return enriched
+
+
+def _claim_fault_flag(row: dict) -> str:
+    explicit = str(row.get("is_fault_claim") or "").strip()
+    if explicit:
+        return _yn(explicit)
+    status = str(row.get("claim_status") or "").strip().upper()
+    if (
+        _yn(row.get("is_claim_fraud")) == "Y"
+        or _yn(row.get("is_claim_suspicious")) == "Y"
+        or _yn(row.get("is_litigation")) == "Y"
+        or status in {"REPUDIATED", "DENIED", "REJECTED", "DECLINED"}
+    ):
+        return "Y"
+    return "Y" if _stable_index(row.get("claim_id") or row.get("claim_hash_key"), 100) < 25 else "N"
+
+
+def _claim_satisfaction_score_raw(row: dict) -> str:
+    status = str(row.get("claim_status") or "").strip().upper()
+    if status in {"OPEN", "PENDING"} and not str(row.get("claim_settlement_date") or "").strip():
+        return ""
+    score = 5
+    if status in {"REPUDIATED", "DENIED", "REJECTED", "DECLINED"}:
+        score -= 3
+    elif status in {"OPEN", "PENDING"}:
+        score -= 1
+    if _yn(row.get("is_claim_fraud")) == "Y" or _yn(row.get("is_claim_suspicious")) == "Y":
+        score -= 2
+    if _yn(row.get("is_litigation")) == "Y":
+        score -= 2
+    if _yn(row.get("is_fault_claim")) == "Y":
+        score -= 1
+    if _int_value(row.get("outstanding_reserve"), 0) > 0:
+        score -= 1
+    if _int_value(row.get("claim_amount"), 0) >= 13000:
+        score -= 1
+    return str(max(0, min(5, score)))
+
+
+def _claim_feedback_text(score: int) -> str:
+    if score >= 4:
+        return "Claim settled clearly with helpful updates"
+    if score >= 2:
+        return "Claim progressed with some follow-up needed"
+    return "Claim experience delayed or disputed"
+
+
+def _with_claim_experience(row: dict, has_policy_complaint: bool) -> dict:
+    enriched = dict(row)
+    enriched["is_fault_claim"] = _claim_fault_flag(enriched)
+    score = _claim_satisfaction_score_raw(enriched)
+    enriched["claim_satisfaction_score"] = score
+    enriched["claims_feedback"] = _claim_feedback_text(_int_value(score, 0)) if score != "" else ""
+    enriched["is_claim_complaint_raised"] = "Y" if has_policy_complaint else "N"
+    return enriched
+
+
+def _home_insured_amount(row: dict, policy: dict) -> str:
+    amount = _money_value(
+        row.get("home_sum_insrd", ""),
+        policy.get("renewal_premium_curr", ""),
+        policy.get("renewal_premium_next", ""),
+    )
+    if amount:
+        value = float(amount)
+        if value < 10000:
+            value *= 250
+        return f"{value:.2f}"
+    return f"{100000 + _stable_index(row.get('property_ref', ''), 900000):.2f}"
+
+
 def write_raw_base_prd2_variant(prd1_folder: str, raw_root: str, batch_id: str, mode: str = "base") -> str:
     """Write the base PRD2 raw feed using the workbook Source2/SAP structure.
 
@@ -160,11 +365,12 @@ def write_raw_base_prd2_variant(prd1_folder: str, raw_root: str, batch_id: str, 
 
     party_rows = _read_rows(source_dir, "party_master.csv")
     contact_by_party = _index(_read_rows(source_dir, "contact_point.csv"), "party_ref")
+    policy_by_id = _index(_read_rows(source_dir, "policy_register.csv"), "policy_ref")
 
     def metadata(row: dict) -> dict:
         return {
             "batch_ref": row.get("batch_ref", batch_id),
-            "pull_ts": row.get("pull_ts", ""),
+            "pull_ts": RAW_PULL_TS,
             "origin_sys": "SAP",
         }
 
@@ -178,7 +384,7 @@ def write_raw_base_prd2_variant(prd1_folder: str, raw_root: str, batch_id: str, 
             "organization": row.get("legal_name", "") if is_legal else "",
             "org_establishment_date": _date_part(row.get("constitution_dt", "")) if is_legal else "",
             "first_name": row.get("given_nm", ""),
-            "middle_name": "",
+            "middle_name": _sap_middle_name(row),
             "last_name": row.get("family_nm", ""),
             "date_of_birth": _date_part(row.get("dob", "")),
             "gender": row.get("gender_txt", ""),
@@ -192,7 +398,7 @@ def write_raw_base_prd2_variant(prd1_folder: str, raw_root: str, batch_id: str, 
             "address_id": _sap_id(row.get("address_ref", "")),
             "person_id": _sap_id(row.get("party_ref", "")),
             "address_line_1": row.get("street_txt", ""),
-            "address_line_2": "",
+            "address_line_2": _sap_address_line_2(row),
             "city": row.get("city_nm", ""),
             "state": row.get("state_cd", ""),
             "country": row.get("country_cd", ""),
@@ -243,6 +449,34 @@ def write_raw_base_prd2_variant(prd1_folder: str, raw_root: str, batch_id: str, 
         for row in _read_rows(source_dir, "vehicle_asset.csv")
     ]
 
+    insured_object_rows = []
+    for row in _read_rows(source_dir, "vehicle_asset.csv"):
+        policy = policy_by_id.get(row.get("policy_ref", ""), {})
+        insured_object_rows.append({**metadata(row),
+            "insured_object_id": _sap_id(f"IO_{row.get('vehicle_ref', '')}"),
+            "policy_id": _sap_id(row.get("policy_ref", "")),
+            "motor_id": _sap_id(row.get("vehicle_ref", "")),
+            "home_id": "",
+            "insured_object_variant": row.get("vehicle_type_txt", ""),
+            "insured_object_sub_variant": _first_value(row.get("model_nm", ""), row.get("variant_nm", "")),
+            "insured_amount": _money_value(row.get("insured_value_amt", ""), policy.get("renewal_premium_curr", "")),
+            "insured_object_begin_date": _date_part(policy.get("policy_start_dt", "")),
+            "insured_object_finish_date": _date_part(policy.get("policy_end_dt", "")),
+        })
+    for row in _read_rows(source_dir, "property_asset.csv"):
+        policy = policy_by_id.get(row.get("policy_ref", ""), {})
+        insured_object_rows.append({**metadata(row),
+            "insured_object_id": _sap_id(f"IO_{row.get('property_ref', '')}"),
+            "policy_id": _sap_id(row.get("policy_ref", "")),
+            "motor_id": "",
+            "home_id": _sap_id(row.get("property_ref", "")),
+            "insured_object_variant": row.get("property_type_txt", ""),
+            "insured_object_sub_variant": _first_value(row.get("wall_material_txt", ""), row.get("roof_material_txt", "")),
+            "insured_amount": _home_insured_amount(row, policy),
+            "insured_object_begin_date": _date_part(policy.get("policy_start_dt", "")),
+            "insured_object_finish_date": _date_part(policy.get("policy_end_dt", "")),
+        })
+
     outputs = {
         "person.csv": person_rows,
         "address.csv": address_rows,
@@ -250,6 +484,8 @@ def write_raw_base_prd2_variant(prd1_folder: str, raw_root: str, batch_id: str, 
         "home.csv": home_rows,
         "motor.csv": motor_rows,
     }
+    if mode != "enhanced":
+        outputs["insured_object.csv"] = insured_object_rows
     for file_name, rows in outputs.items():
         _write_rows(out_dir, file_name, rows, BASE_PRD2_SAP_TABLES[file_name])
     return str(out_dir)
@@ -331,6 +567,93 @@ def _read_header(folder: Path, name: str) -> list[str]:
         return next(csv.reader(f), [])
 
 
+def _asset_insured_lookup_from_addons(addons_dir: Path, file_name: str, asset_column: str) -> dict[str, str]:
+    lookup = {}
+    for row in _read_rows(addons_dir, file_name):
+        asset_id = row.get(asset_column, "")
+        insured_id = row.get("src_insured_object_id", "")
+        if asset_id and insured_id:
+            lookup[asset_id] = insured_id
+    return lookup
+
+
+def _asset_insured_lookup_from_group(folder: Path, source_extract: str, asset_column: str) -> dict[str, str]:
+    lookup = {}
+    for row in _read_rows(folder, "enhanced_policy_relationships.csv"):
+        if row.get("source_extract") != source_extract:
+            continue
+        asset_id = row.get(asset_column, "")
+        insured_id = row.get("src_insured_object_id", "")
+        if asset_id and insured_id:
+            lookup[asset_id] = insured_id
+    return lookup
+
+
+def _asset_insured_lookup(folder: Path, asset_type: str) -> dict[str, str]:
+    addons_dir = folder / "addons"
+    if asset_type == "home":
+        lookup = _asset_insured_lookup_from_addons(addons_dir, "insured_object_home_bridge.csv", "src_home_id")
+        lookup.update(_asset_insured_lookup_from_group(folder, "insured_object_home_bridge.csv", "src_home_id"))
+    else:
+        lookup = _asset_insured_lookup_from_addons(addons_dir, "insured_object_motor_bridge.csv", "src_motor_id")
+        lookup.update(_asset_insured_lookup_from_group(folder, "insured_object_motor_bridge.csv", "src_motor_id"))
+    return lookup
+
+
+def enrich_enhanced_asset_insured_object_columns(folder: str | Path) -> None:
+    """Carry insured-object attributes on property/vehicle rows for enhanced raw.
+
+    Enhanced intentionally omits a standalone insured-object register. These
+    asset-level columns preserve the business attributes while bridge files keep
+    the relationship path used by vault creation.
+    """
+    folder = Path(folder)
+    policy_by_id = {row.get("policy_ref", ""): row for row in _read_rows(folder, "policy_register.csv")}
+    asset_specs = [
+        (
+            "property_asset.csv",
+            "property_ref",
+            "home",
+            lambda row: row.get("property_type_txt", ""),
+            lambda row: _first_value(row.get("wall_material_txt", ""), row.get("roof_material_txt", "")),
+            lambda row: _first_value(row.get("risk_address_txt", ""), row.get("property_type_txt", "")),
+            lambda row, policy: _home_insured_amount(row, policy),
+        ),
+        (
+            "vehicle_asset.csv",
+            "vehicle_ref",
+            "motor",
+            lambda row: row.get("vehicle_type_txt", ""),
+            lambda row: _first_value(row.get("model_nm", ""), row.get("variant_nm", "")),
+            lambda row: _first_value(row.get("model_nm", ""), row.get("vehicle_class_txt", ""), row.get("vehicle_type_txt", "")),
+            lambda row, policy: _money_value(row.get("insured_value_amt", ""), policy.get("renewal_premium_curr", "")),
+        ),
+    ]
+    for file_name, ref_column, asset_type, type_fn, sub_type_fn, description_fn, value_fn in asset_specs:
+        path = folder / file_name
+        if not path.exists():
+            continue
+        rows = _read_rows(folder, file_name)
+        fieldnames = _read_header(folder, file_name)
+        insured_lookup = _asset_insured_lookup(folder, asset_type)
+        for column in ENHANCED_ASSET_INSURED_OBJECT_COLUMNS:
+            if column not in fieldnames:
+                fieldnames.append(column)
+        for row in rows:
+            policy = policy_by_id.get(row.get("policy_ref", ""), {})
+            asset_ref = row.get(ref_column, "")
+            row["insured_object_id"] = insured_lookup.get(asset_ref, f"INS_OBJ_{asset_ref}")
+            row["insured_object_type"] = type_fn(row)
+            row["insured_object_sub_type"] = sub_type_fn(row)
+            row["insured_object_description"] = description_fn(row)
+            row["insured_value"] = value_fn(row, policy)
+            row["currency_code"] = "GBP"
+            row["insured_object_start_date"] = _date_part(policy.get("policy_start_dt", ""))
+            row["insured_object_end_date"] = _date_part(policy.get("policy_end_dt", ""))
+            row["insured_object_current_status"] = policy.get("policy_status_txt", "")
+        _write_rows(folder, file_name, rows, fieldnames)
+
+
 def _merge(hub: dict | None, sat: dict | None, extra: dict | None = None) -> dict:
     row = {}
     if hub:
@@ -375,6 +698,9 @@ def write_raw_prd2_from_mlops(
     base_folder: str | None = None,
     mode: str | None = None,
     product_folder: str = "prd_02",
+    target_folder: str | None = None,
+    output_prefix: str = "",
+    clean_output: bool = True,
 ) -> str:
     """Write PRD2 raw as the enhanced/MLOps table delta over base.
 
@@ -382,8 +708,10 @@ def write_raw_prd2_from_mlops(
     vault tables that are not already present in the base synthetic vault.
     """
     source_dir = Path(mlops_folder)
-    out_dir = Path(raw_root) / mode / product_folder / batch_id if mode else Path(raw_root) / product_folder / batch_id
-    if out_dir.exists():
+    out_dir = Path(target_folder) if target_folder else (
+        Path(raw_root) / mode / product_folder / batch_id if mode else Path(raw_root) / product_folder / batch_id
+    )
+    if clean_output and out_dir.exists():
         shutil.rmtree(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -461,23 +789,34 @@ def write_raw_prd2_from_mlops(
     _add_id_lookup(ref_lookup, hub_claim, "claim_hash_key", "claim_id")
     sat_claim = _index(_read_rows(source_dir, "sat_claim.csv"), "claim_hash_key")
     claim_policy = _index(_read_rows(source_dir, "link_claim_policy.csv"), "claim_hash_key")
-    claim_rows = [
-        _merge(
-            hub,
-            sat_claim.get(hub["claim_hash_key"]),
-            {"policy_id": policy_id.get(claim_policy.get(hub["claim_hash_key"], {}).get("policy_hash_key", ""), "")},
+    complaint_policy_links = _read_rows(source_dir, "link_complaint_policy.csv")
+    policies_with_complaints = {
+        row.get("policy_hash_key", "")
+        for row in complaint_policy_links
+        if row.get("policy_hash_key")
+    }
+    claim_rows = []
+    for hub in hub_claim:
+        policy_hash_key = claim_policy.get(hub["claim_hash_key"], {}).get("policy_hash_key", "")
+        claim_rows.append(
+            _with_claim_experience(
+                _merge(
+                    hub,
+                    sat_claim.get(hub["claim_hash_key"]),
+                    {"policy_id": policy_id.get(policy_hash_key, "")},
+                ),
+                policy_hash_key in policies_with_complaints,
+            )
         )
-        for hub in hub_claim
-    ]
 
     hub_complaint = _read_rows(source_dir, "hub_complaint.csv")
     _add_id_lookup(ref_lookup, hub_complaint, "complaint_hash_key", "complaint_id")
     sat_complaint = _index(_read_rows(source_dir, "sat_complaint.csv"), "complaint_hash_key")
-    complaint_policy = _index(_read_rows(source_dir, "link_complaint_policy.csv"), "complaint_hash_key")
+    complaint_policy = _index(complaint_policy_links, "complaint_hash_key")
     complaint_regulation = _index(_read_rows(source_dir, "link_complaint_regulation.csv"), "complaint_hash_key")
     regulation_by_hash = _id_lookup(_read_rows(source_dir, "hub_regulation.csv"), "regulation_hash_key", "regulation_id")
     complaint_rows = [
-        _merge(
+        _with_complaint_feedback(_merge(
             hub,
             sat_complaint.get(hub["complaint_hash_key"]),
             {
@@ -487,7 +826,7 @@ def write_raw_prd2_from_mlops(
                     "",
                 ),
             },
-        )
+        ))
         for hub in hub_complaint
     ]
 
@@ -623,9 +962,9 @@ def write_raw_prd2_from_mlops(
     )
     motor_enrichment_rows = enrichment_rows("sat_motor.csv", "motor_hash_key")
 
-    # The 7 entity registers are the business entities added by PRD2. The
-    # remaining bridge/enrichment extracts are required to rebuild the vault
-    # from PRD1+PRD2 without losing relationships or added satellite fields.
+    # The entity registers are the business entities added by enhanced/MLOps.
+    # Bridge/enrichment extracts are required to rebuild the wider vault from
+    # PRD1 without losing relationships or added satellite fields.
     outputs = {
         "address_book.csv": address_rows,
         "broker_book.csv": broker_rows,
@@ -662,7 +1001,7 @@ def write_raw_prd2_from_mlops(
         fieldnames = list(source_rows[0].keys()) if source_rows else []
         if not fieldnames:
             continue
-        _write_rows(out_dir, file_name, source_rows, fieldnames)
+        _write_rows(out_dir, f"{output_prefix}{file_name}", source_rows, fieldnames)
 
     return str(out_dir)
 
@@ -684,3 +1023,210 @@ def copy_raw_prd2_folder(
         mode=mode,
         product_folder=product_folder,
     )
+
+
+def write_source1_delta_into_prd1(
+    mlops_folder: str,
+    prd1_folder: str,
+    batch_id: str,
+    base_folder: str | None = None,
+    addon_folder: str = "addons",
+) -> list[str]:
+    """Write enhanced source tables under PRD1 without colliding with CRM files."""
+    target_folder = Path(prd1_folder) / addon_folder
+    out_dir = write_raw_prd2_from_mlops(
+        mlops_folder,
+        raw_root="",
+        batch_id=batch_id,
+        base_folder=base_folder,
+        target_folder=str(target_folder),
+        output_prefix="",
+        clean_output=True,
+    )
+    enrich_enhanced_asset_insured_object_columns(prd1_folder)
+    return [str(path) for path in sorted(Path(out_dir).glob("*.csv"))]
+
+
+VAULT_READY_ENTITY_ADDONS = {
+    "address_book.csv": "enhanced_address_book.csv",
+    "broker_book.csv": "broker_book.csv",
+    "campaign_register.csv": "campaign_register.csv",
+    "channel_catalog.csv": "channel_catalog.csv",
+    "claim_register.csv": "claim_register.csv",
+    "complaint_register.csv": "complaint_register.csv",
+    "override_register.csv": "override_register.csv",
+    "regulation_register.csv": "regulation_register.csv",
+}
+
+VAULT_READY_RELATIONSHIP_GROUPS = {
+    "enhanced_person_relationships.csv": [
+        "broker_person_bridge.csv",
+        "person_address_bridge.csv",
+        "person_campaign_bridge.csv",
+    ],
+    "enhanced_policy_relationships.csv": [
+        "claim_policy_bridge.csv",
+        "complaint_policy_bridge.csv",
+        "complaint_regulation_bridge.csv",
+        "insured_object_home_bridge.csv",
+        "insured_object_motor_bridge.csv",
+        "policy_broker_bridge.csv",
+        "policy_channel_bridge.csv",
+        "policy_insured_object_bridge.csv",
+        "policy_override_bridge.csv",
+        "policy_quote_bridge.csv",
+        "quote_broker_bridge.csv",
+        "quote_channel_bridge.csv",
+    ],
+}
+
+VAULT_READY_ENRICHMENT_GROUPS = {
+    "enhanced_enrichments.csv": [
+        "customer_enrichment.csv",
+        "marketing_engagement_enrichment.csv",
+        "motor_enrichment.csv",
+        "policy_enrichment.csv",
+    ],
+}
+
+
+def _read_csv_rows(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    with path.open("r", newline="", encoding="utf-8") as f:
+        return list(csv.DictReader(f))
+
+
+def _write_grouped_rows(addon_files: dict[str, Path], out_dir: Path, output_file: str, logical_files: list[str]) -> None:
+    grouped_rows: list[dict] = []
+    columns = ["source_extract"]
+    seen_columns = {"source_extract"}
+    for logical_file in logical_files:
+        source_path = addon_files.get(logical_file)
+        if not source_path:
+            continue
+        for row in _read_csv_rows(source_path):
+            grouped_row = {"source_extract": logical_file, **row}
+            grouped_rows.append(grouped_row)
+            for column in grouped_row:
+                if column not in seen_columns:
+                    columns.append(column)
+                    seen_columns.add(column)
+
+    with (out_dir / output_file).open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=columns)
+        writer.writeheader()
+        for row in grouped_rows:
+            writer.writerow({column: row.get(column, "") for column in columns})
+
+
+def _ensure_raw_metadata_columns(folder: Path, batch_id: str) -> None:
+    metadata_columns = ["batch_ref", "pull_ts", "origin_sys"]
+    for path in sorted(folder.glob("*.csv")):
+        rows = _read_csv_rows(path)
+        with path.open("r", newline="", encoding="utf-8") as f:
+            fieldnames = next(csv.reader(f), [])
+        output_fields = metadata_columns + [column for column in fieldnames if column not in metadata_columns]
+        enriched_rows = []
+        for row in rows:
+            enriched = dict(row)
+            enriched["batch_ref"] = enriched.get("batch_ref") or batch_id
+            enriched["pull_ts"] = RAW_PULL_TS
+            enriched["origin_sys"] = enriched.get("origin_sys") or enriched.get("src_system") or "CRM"
+            enriched_rows.append(enriched)
+
+        with path.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=output_fields)
+            writer.writeheader()
+            for row in enriched_rows:
+                writer.writerow({column: row.get(column, "") for column in output_fields})
+
+
+def write_enhanced_vault_ready_28(prd1_folder: str, output_folder: str = "vault_ready_28") -> str:
+    """Create a 28-file enhanced raw package that can rebuild the full vault."""
+    prd1_dir = Path(prd1_folder)
+    addons_dir = prd1_dir / "addons"
+    out_dir = prd1_dir / output_folder
+    if not prd1_dir.exists():
+        raise FileNotFoundError(f"Enhanced PRD1 folder not found: {prd1_dir}")
+    if not addons_dir.exists():
+        raise FileNotFoundError(f"Enhanced PRD1 addons folder not found: {addons_dir}")
+
+    if out_dir.exists():
+        shutil.rmtree(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    root_files = sorted(path for path in prd1_dir.glob("*.csv") if not path.name.startswith("source1_"))
+    addon_files = {path.name: path for path in addons_dir.glob("*.csv")}
+
+    for source_file in root_files:
+        shutil.copy2(source_file, out_dir / source_file.name)
+
+    for source_name, output_name in VAULT_READY_ENTITY_ADDONS.items():
+        source_file = addon_files.get(source_name)
+        if source_file:
+            shutil.copy2(source_file, out_dir / output_name)
+
+    for output_file, logical_files in VAULT_READY_RELATIONSHIP_GROUPS.items():
+        _write_grouped_rows(addon_files, out_dir, output_file, logical_files)
+    for output_file, logical_files in VAULT_READY_ENRICHMENT_GROUPS.items():
+        _write_grouped_rows(addon_files, out_dir, output_file, logical_files)
+
+    enrich_enhanced_asset_insured_object_columns(out_dir)
+    _ensure_raw_metadata_columns(out_dir, prd1_dir.name)
+
+    expected_count = 27
+    output_count = len(list(out_dir.glob("*.csv")))
+    if output_count != expected_count:
+        raise RuntimeError(
+            f"Enhanced vault-ready raw must contain {expected_count} active files, found {output_count} in {out_dir}"
+        )
+    return str(out_dir)
+
+
+def write_enhanced_consolidated_raw_vault(
+    vault_ready_folder: str,
+    prd2_folder: str,
+    raw_root: str,
+    batch_id: str,
+    mode: str = "enhanced",
+    output_folder: str = "raw_vault",
+) -> str:
+    """Write one flat enhanced raw-vault package from source-1 and source-2 raw.
+
+    The enhanced source-1 contract is the 27-file ``vault_ready_28`` package.
+    Source-2 is the SAP-style five-table PRD2 feed. Keeping the consolidated
+    folder flat makes it easy to upload as one bronze/raw-vault input while
+    preserving the individual source table names.
+    """
+    source1_dir = Path(vault_ready_folder)
+    source2_dir = Path(prd2_folder)
+    out_dir = Path(raw_root) / mode / output_folder / batch_id
+
+    if not source1_dir.exists():
+        raise FileNotFoundError(f"Enhanced vault-ready folder not found: {source1_dir}")
+    if not source2_dir.exists():
+        raise FileNotFoundError(f"Enhanced PRD2 folder not found: {source2_dir}")
+
+    if out_dir.exists():
+        shutil.rmtree(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    for source_file in sorted(source1_dir.glob("*.csv")):
+        shutil.copy2(source_file, out_dir / source_file.name)
+
+    prd2_files = [file_name for file_name in BASE_PRD2_SAP_TABLES if file_name != "insured_object.csv"]
+    for file_name in prd2_files:
+        source_file = source2_dir / file_name
+        if not source_file.exists():
+            raise FileNotFoundError(f"Enhanced PRD2 file missing: {source_file}")
+        shutil.copy2(source_file, out_dir / source_file.name)
+
+    expected_sap_files = len(BASE_PRD2_SAP_TABLES) - 1
+    expected_count = 27 + expected_sap_files
+    output_count = len(list(out_dir.glob("*.csv")))
+    if output_count != expected_count:
+        raise RuntimeError(
+            f"Enhanced raw_vault must contain {expected_count} files, found {output_count} in {out_dir}"
+        )
+    return str(out_dir)

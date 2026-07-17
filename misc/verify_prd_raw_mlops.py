@@ -7,6 +7,14 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+SAP_PRD2_FILES = {
+    "person.csv",
+    "address.csv",
+    "product.csv",
+    "home.csv",
+    "motor.csv",
+    "insured_object.csv",
+}
 
 
 def latest_run(root: Path) -> str:
@@ -65,13 +73,22 @@ def find_hashed_source_refs(path: Path) -> list[dict]:
     return hashed_refs
 
 
-def compare_folders_exact(source: Path, target: Path) -> list[str]:
+def compare_folders_exact(
+    source: Path,
+    target: Path,
+    allowed_extra_prefixes: tuple[str, ...] = (),
+    allowed_extra_columns_by_file: dict[str, set[str]] | None = None,
+) -> list[str]:
     issues: list[str] = []
     source_files = {path.name.lower(): path for path in source.glob("*.csv")}
     target_files = {path.name.lower(): path for path in target.glob("*.csv")}
 
     missing = sorted(source_files.keys() - target_files.keys())
-    extra = sorted(target_files.keys() - source_files.keys())
+    extra = sorted(
+        name
+        for name in target_files.keys() - source_files.keys()
+        if not any(name.startswith(prefix) for prefix in allowed_extra_prefixes)
+    )
     for name in missing:
         issues.append(f"missing in {target}: {name}")
     for name in extra:
@@ -81,7 +98,13 @@ def compare_folders_exact(source: Path, target: Path) -> list[str]:
         src_header, src_rows, src_keys, src_key_col = read_header_and_keys(source_files[name])
         tgt_header, tgt_rows, tgt_keys, tgt_key_col = read_header_and_keys(target_files[name])
 
-        if src_header != tgt_header:
+        allowed_extra_columns = (allowed_extra_columns_by_file or {}).get(name, set())
+        extra_columns = [column for column in tgt_header if column not in src_header]
+        if src_header != tgt_header and not (
+            allowed_extra_columns
+            and [column for column in tgt_header if column in src_header] == src_header
+            and set(extra_columns).issubset(allowed_extra_columns)
+        ):
             issues.append(f"{name}: header mismatch")
         if src_rows != tgt_rows:
             issues.append(f"{name}: row count mismatch source={src_rows} target={tgt_rows}")
@@ -170,6 +193,40 @@ def compare_prd2_delta(base_dir: Path, mlops_dir: Path, prd2_dir: Path) -> list[
     return issues
 
 
+def compare_enhanced_raw_vault(prd1_dir: Path, prd2_dir: Path, raw_vault_dir: Path) -> list[str]:
+    issues: list[str] = []
+    vault_ready_dir = prd1_dir / "vault_ready_28"
+    expected_sap_files = SAP_PRD2_FILES - {"insured_object.csv"}
+    if not vault_ready_dir.exists():
+        return [f"enhanced vault_ready_28 folder not found: {vault_ready_dir}"]
+    if not prd2_dir.exists():
+        return [f"enhanced SAP PRD2 folder not found: {prd2_dir}"]
+    if not raw_vault_dir.exists():
+        return [f"enhanced raw_vault folder not found: {raw_vault_dir}"]
+
+    prd2_files = {path.name.lower(): path for path in prd2_dir.glob("*.csv")}
+    missing_sap = sorted(expected_sap_files - set(prd2_files))
+    extra_sap = sorted(set(prd2_files) - expected_sap_files)
+    for name in missing_sap:
+        issues.append(f"enhanced PRD2 missing SAP file: {name}")
+    for name in extra_sap:
+        issues.append(f"enhanced PRD2 unexpected file: {name}")
+
+    expected_raw_vault = {path.name.lower() for path in vault_ready_dir.glob("*.csv")} | expected_sap_files
+    actual_raw_vault = {path.name.lower() for path in raw_vault_dir.glob("*.csv")}
+    missing_raw_vault = sorted(expected_raw_vault - actual_raw_vault)
+    extra_raw_vault = sorted(actual_raw_vault - expected_raw_vault)
+    for name in missing_raw_vault:
+        issues.append(f"enhanced raw_vault missing file: {name}")
+    for name in extra_raw_vault:
+        issues.append(f"enhanced raw_vault unexpected file: {name}")
+
+    if len(expected_raw_vault) != 32:
+        issues.append(f"enhanced raw_vault expected contract should be 32 files, computed {len(expected_raw_vault)}")
+
+    return issues
+
+
 def compare_crm_to_prd1(crm_dir: Path, prd1_dir: Path) -> list[str]:
     if not crm_dir.exists():
         return [f"CRM raw folder not found: {crm_dir}"]
@@ -190,6 +247,8 @@ def main() -> int:
     base_prd1_dir = ROOT / "data" / "raw" / "base" / "prd_01" / run_id
     prd1_dir = ROOT / "data" / "raw" / args.mode / "prd_01" / run_id
     prd2_dir = ROOT / "data" / "raw" / args.mode / "prd_02" / run_id
+    product_delta_dir = ROOT / "data" / "raw" / args.mode / "prd_delta" / run_id
+    raw_vault_dir = ROOT / "data" / "raw" / args.mode / "raw_vault" / run_id
     base_dir = ROOT / "data" / "synthetic" / "base" / run_id
     target_dir = ROOT / "data" / "synthetic" / args.mode / run_id
 
@@ -201,20 +260,52 @@ def main() -> int:
             if not prd1_dir.exists():
                 prd1_issues.append(f"PRD1 raw folder not found: {prd1_dir}")
         else:
-            prd1_issues = compare_folders_exact(base_prd1_dir, prd1_dir)
+            allowed_extra_prefixes = ("source1_",) if args.mode == "mlops" else ()
+            insured_asset_columns = {
+                "insured_object_id",
+                "insured_object_type",
+                "insured_object_sub_type",
+                "insured_object_description",
+                "insured_value",
+                "currency_code",
+                "insured_object_start_date",
+                "insured_object_end_date",
+                "insured_object_current_status",
+            }
+            allowed_extra_columns = (
+                {
+                    "property_asset.csv": insured_asset_columns,
+                    "vehicle_asset.csv": insured_asset_columns,
+                }
+                if args.mode == "enhanced"
+                else None
+            )
+            prd1_issues = compare_folders_exact(
+                base_prd1_dir,
+                prd1_dir,
+                allowed_extra_prefixes=allowed_extra_prefixes,
+                allowed_extra_columns_by_file=allowed_extra_columns,
+            )
         if prd1_issues:
             print("FAIL: PRD1 raw does not match base PRD1 raw")
             issues.extend(f"PRD1: {issue}" for issue in prd1_issues)
         else:
             print("PASS: PRD1 raw matches base PRD1 raw")
 
-    if args.mode != "base":
-        prd2_issues = compare_prd2_delta(base_dir, target_dir, prd2_dir)
-        if prd2_issues:
-            print(f"FAIL: PRD2 raw does not match {args.mode} added entities/bridges")
-            issues.extend(f"PRD2: {issue}" for issue in prd2_issues)
+    if args.mode == "enhanced":
+        enhanced_issues = compare_enhanced_raw_vault(prd1_dir, prd2_dir, raw_vault_dir)
+        if enhanced_issues:
+            print("FAIL: enhanced PRD raw_vault contract failed")
+            issues.extend(f"ENHANCED_RAW: {issue}" for issue in enhanced_issues)
         else:
-            print(f"PASS: PRD2 source-style raw files reconcile to {args.mode} added entities/relationships")
+            print("PASS: enhanced SAP PRD2 and consolidated raw_vault are present")
+    elif args.mode != "base":
+        prd2_issues = compare_prd2_delta(base_dir, target_dir, product_delta_dir)
+        if prd2_issues:
+            print(f"FAIL: product delta raw does not match {args.mode} added entities/bridges")
+            issues.extend(f"PRD_DELTA: {issue}" for issue in prd2_issues)
+        else:
+            print(f"PASS: product delta source-style raw files reconcile to {args.mode} added entities/relationships")
 
     if issues:
         print(f"PRD raw validation failed with {len(issues)} issue(s).")

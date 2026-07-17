@@ -1,8 +1,11 @@
 import os
+import calendar
+from datetime import datetime, timedelta
 
 from helper.crm_raw_layout import to_crm_raw_column, to_crm_raw_file
 from helper.csv_writer import write_csv
 from helper.key_factory import get_now_iso
+from helper.raw_metadata import RAW_PULL_TS
 
 
 def _as_list(value):
@@ -45,9 +48,262 @@ def _date_part(value):
     return str(value or "").strip().split(" ")[0].split("T")[0]
 
 
+def _address_type_for_person(sat_person):
+    return "corporate" if str((sat_person or {}).get("Type", "")).upper() == "LEGAL" else "personal"
+
+
+def _region_from_country(country):
+    normalized = str(country or "").strip().upper()
+    europe = {
+        "AL", "ALB", "ALBANIA", "AD", "AND", "ANDORRA", "AT", "AUT", "AUSTRIA",
+        "BY", "BLR", "BELARUS", "BE", "BEL", "BELGIUM", "BA", "BIH", "BOSNIA AND HERZEGOVINA",
+        "BG", "BGR", "BULGARIA", "HR", "HRV", "CROATIA", "CY", "CYP", "CYPRUS",
+        "CZ", "CZE", "CZECHIA", "CZECH REPUBLIC", "DK", "DNK", "DENMARK",
+        "EE", "EST", "ESTONIA", "FI", "FIN", "FINLAND", "FR", "FRA", "FRANCE",
+        "DE", "DEU", "GERMANY", "GR", "GRC", "GREECE", "HU", "HUN", "HUNGARY",
+        "IS", "ISL", "ICELAND", "IE", "IRL", "IRELAND", "IT", "ITA", "ITALY",
+        "XK", "KOSOVO", "LV", "LVA", "LATVIA", "LI", "LIE", "LIECHTENSTEIN",
+        "LT", "LTU", "LITHUANIA", "LU", "LUX", "LUXEMBOURG", "MT", "MLT", "MALTA",
+        "MD", "MDA", "MOLDOVA", "MC", "MCO", "MONACO", "ME", "MNE", "MONTENEGRO",
+        "NL", "NLD", "NETHERLANDS", "MK", "MKD", "NORTH MACEDONIA", "NO", "NOR", "NORWAY",
+        "PL", "POL", "POLAND", "PT", "PRT", "PORTUGAL", "RO", "ROU", "ROMANIA",
+        "RU", "RUS", "RUSSIA", "SM", "SMR", "SAN MARINO", "RS", "SRB", "SERBIA",
+        "SK", "SVK", "SLOVAKIA", "SI", "SVN", "SLOVENIA", "ES", "ESP", "SPAIN",
+        "SE", "SWE", "SWEDEN", "CH", "CHE", "SWITZERLAND", "UA", "UKR", "UKRAINE",
+        "UK", "GB", "GBR", "UNITED KINGDOM", "ENGLAND", "SCOTLAND", "WALES", "NORTHERN IRELAND",
+        "VA", "VAT", "VATICAN CITY",
+    }
+    if normalized in europe:
+        return "Europe"
+    if normalized in {"US", "USA", "UNITED STATES", "CA", "CAN"}:
+        return "North America"
+    if normalized in {"IN", "IND"}:
+        return "Asia"
+    return "Unknown" if normalized else ""
+
+
+def _stable_index(value, modulo):
+    text = str(value or "")
+    return sum(ord(char) for char in text) % modulo if modulo else 0
+
+
+def _product_metadata(product_code, launch_date):
+    idx = _stable_index(product_code, 900) + 100
+    groups = ["GroupA", "GroupB", "GroupC"]
+    status = "ACTIVE"
+    return {
+        "underwriting_group": groups[_stable_index(product_code, len(groups))],
+        "regulatory_approval_code": f"RAC{idx:03d}",
+        "product_status": status,
+        "product_line_of_business_code": f"LOB{idx:03d}",
+        "product_launch_date": launch_date,
+    }
+
+
+def _product_launch_dates(policy_to_product_id, sat_policy_by_hk):
+    earliest_by_product = {}
+    for policy_hk, product_code in policy_to_product_id.items():
+        sat_policy = sat_policy_by_hk.get(policy_hk, {})
+        start_text = _date_part(sat_policy.get("Policy Start Date"))
+        if not product_code or not start_text:
+            continue
+        try:
+            start_date = datetime.fromisoformat(start_text).date()
+        except ValueError:
+            continue
+        current = earliest_by_product.get(product_code)
+        if current is None or start_date < current:
+            earliest_by_product[product_code] = start_date
+
+    launch_dates = {}
+    for product_code, earliest_date in earliest_by_product.items():
+        offset_days = 30 + _stable_index(product_code, 91)
+        launch_dates[product_code] = (earliest_date - timedelta(days=offset_days)).isoformat()
+    return launch_dates
+
+
+def _driver_experience_years(sat_nat: dict | None, reference_ts: str, fallback_seed: str = "") -> int:
+    """Derive driving experience from birth date, capped to a realistic range."""
+    birth_text = _date_part((sat_nat or {}).get("Birth Date"))
+    reference_text = _date_part(reference_ts)
+    try:
+        birth_date = datetime.fromisoformat(birth_text).date()
+        reference_date = datetime.fromisoformat(reference_text).date()
+        age_years = reference_date.year - birth_date.year - (
+            (reference_date.month, reference_date.day) < (birth_date.month, birth_date.day)
+        )
+        return max(0, min(65, age_years - 17))
+    except (TypeError, ValueError):
+        return 2 + _stable_index(fallback_seed, 45)
+
+
+def _int_value(value, default=0):
+    try:
+        return int(float(str(value).replace(",", "").strip()))
+    except (TypeError, ValueError):
+        return default
+
+
+def _feedback_from_score(score: int) -> str:
+    if score >= 4:
+        return "POSITIVE"
+    if score >= 2:
+        return "NEUTRAL"
+    return "NEGATIVE"
+
+
+def _customer_onboarding_satisfaction_score(row: dict) -> str:
+    nps = _int_value(row.get("NPS Score"), 5)
+    if nps >= 9:
+        score = 5
+    elif nps >= 7:
+        score = 4
+    elif nps >= 4:
+        score = 3
+    elif nps >= 2:
+        score = 2
+    else:
+        score = 1
+    return str(max(0, min(5, score)))
+
+
+def _customer_onboarding_feedback(score: int, seed_value: str = "") -> str:
+    phrases = {
+        "POSITIVE": [
+            "Comprehensive cover for the price for appropriate policy",
+            "Flexible excess options available",
+            "Policy documents easy to understand",
+            "Good cover options for the premium",
+        ],
+        "NEUTRAL": [
+            "Cover options mostly met expectations",
+            "Onboarding completed with minor clarifications",
+            "Price and benefits were acceptable",
+        ],
+        "NEGATIVE": [
+            "Policy exclusions not clear",
+            "Courtesy car not in standard cover",
+            "Additional cover options were difficult to compare",
+            "Price felt high for the selected cover",
+        ],
+    }
+    sentiment = _feedback_from_score(score)
+    options = phrases[sentiment]
+    return options[(_stable_index(seed_value, len(options)) + score) % len(options)]
+
+
+def _policy_payment_profile(policy_row: dict, policy_id: str = "") -> dict:
+    status = str(policy_row.get("Policy Status") or "").strip().upper()
+    policy_cycle = _int_value(policy_row.get("Policy Cycle"), 1)
+    previous_claims = _int_value(policy_row.get("Number of Previous Claim"), 0)
+    active_claims = _int_value(policy_row.get("Number of Active Claim"), 0)
+    current = float(str(policy_row.get("Renewal Amount Current Period") or "0").replace(",", "") or 0)
+    next_amt = float(str(policy_row.get("Renewal Amount Next Period") or current).replace(",", "") or current)
+    premium_increase = next_amt - current
+    pct_increase = (premium_increase / current) if current else 0.0
+    index = _stable_index(policy_id, 100)
+
+    missed = 0
+    if status in {"LAPSED", "CANCELLED"}:
+        missed = 1 + (index % 3)
+    elif index < 8:
+        missed = 1
+
+    payment_method = "ANNUAL" if index < 42 else ("MONTHLY_DD" if index < 82 else "CARD_MANUAL")
+    dd_cancel = "Y" if payment_method == "MONTHLY_DD" and (status in {"LAPSED", "CANCELLED"} or missed >= 2) else "N"
+    installment_default = "Y" if missed >= 2 or (payment_method != "ANNUAL" and status == "CANCELLED") else "N"
+    auto_renew = "Y" if status == "ACTIVE" and policy_cycle > 1 and index < 76 else "N"
+    loyalty = "RETAINED" if policy_cycle >= 3 and status == "ACTIVE" else ("REMOVED" if status in {"LAPSED", "CANCELLED"} else "NOT_APPLIED")
+    ncd_years = max(0, min(9, policy_cycle - previous_claims - active_claims))
+
+    return {
+        "is_auto_renew_enabled": auto_renew,
+        "no_claims_discount_years": str(ncd_years),
+        "payment_method": payment_method,
+        "is_direct_debit_cancellation": dd_cancel,
+        "missed_payment_count": str(max(0, missed)),
+        "loyalty_discount_usage": loyalty,
+        "is_installment_default": installment_default,
+        "_premium_increase": premium_increase,
+        "_premium_pct_increase": pct_increase,
+    }
+
+
+def _policy_renewal_satisfaction(policy_row: dict, profile: dict) -> tuple[str, str, str]:
+    if _int_value(policy_row.get("Policy Cycle"), 1) <= 1:
+        return "", "", "N"
+    score = 5
+    if profile["_premium_increase"] > 100 or profile["_premium_pct_increase"] > 0.10:
+        score -= 3
+    elif profile["_premium_increase"] > 50 or profile["_premium_pct_increase"] > 0.05:
+        score -= 2
+    elif profile["_premium_increase"] > 0:
+        score -= 1
+    if str(policy_row.get("Policy Status") or "").strip().upper() in {"LAPSED", "CANCELLED"}:
+        score -= 2
+    if profile["is_direct_debit_cancellation"] == "Y" or profile["is_installment_default"] == "Y":
+        score -= 1
+    if _int_value(profile["missed_payment_count"], 0) >= 2:
+        score -= 1
+    if profile["loyalty_discount_usage"] == "RETAINED":
+        score += 1
+    score = max(0, min(5, score))
+    return str(score), _feedback_from_score(score), "Y" if score <= 2 else "N"
+
+
+def _quote_profile(quote_row: dict, quote_id: str, extract_ts: str) -> dict:
+    quoted_premium = quote_row.get("Renewal Amt Current Period") or quote_row.get("Gross Revenue") or quote_row.get("Net Revenue") or ""
+    extract_date = datetime.fromisoformat(str(extract_ts).replace("Z", "").split(".")[0]).date()
+    quoted_date = extract_date - timedelta(days=7 + _stable_index(quote_id, 45))
+    risk_score = 20 + _stable_index(quote_id, 81)
+    complexity = "LOW" if risk_score < 45 else ("MEDIUM" if risk_score < 75 else "HIGH")
+    status = str(quote_row.get("Quote Status") or "").strip().upper()
+    if status in {"REJECTED", "DECLINED"}:
+        approval = "DECLINED"
+        rejection = "Risk outside underwriting appetite" if risk_score >= 75 else "Incomplete quote information"
+    elif complexity == "HIGH":
+        approval = "MANUAL_REVIEW"
+        rejection = ""
+    else:
+        approval = "AUTO_APPROVED"
+        rejection = ""
+    return {
+        "quoted_premium": quoted_premium,
+        "quoted_date": quoted_date.isoformat(),
+        "quote_month_name": calendar.month_name[quoted_date.month],
+        "risk_score": str(risk_score),
+        "policy_complexity": complexity,
+        "uw_approval_type": approval,
+        "rejection_reason": rejection,
+    }
+
+
+def _marketing_engagement_profile(row: dict, engagement_id: str = "") -> dict:
+    opened = str(row.get("Opened Email") or "").strip().upper() in {"Y", "YES", "TRUE", "1"}
+    status = str(row.get("Marketing Status") or "").strip().upper()
+    index = _stable_index(engagement_id, 100)
+    score = 65 if opened else 35
+    if status in {"ACTIVE", "ENGAGED", "OPENED", "CLICKED"}:
+        score += 15
+    elif status in {"BOUNCED", "UNSUBSCRIBED"}:
+        score -= 20
+    score = max(0, min(100, score + (index % 11) - 5))
+    sentiment = "POSITIVE" if score >= 70 else ("NEUTRAL" if score >= 40 else "NEGATIVE")
+    calls = "0" if score >= 70 else ("1" if score >= 50 else str(2 + (index % 4)))
+    retention = "Y" if score < 45 or index < 12 else "N"
+    first_resolution = "Y" if int(calls) <= 1 and sentiment != "NEGATIVE" and score >= 60 else "N"
+    return {
+        "has_retention_team_interaction": retention,
+        "customer_service_call_frequency": calls,
+        "average_call_sentiment": sentiment,
+        "engagement_score": str(score),
+        "first_contact_resolution": first_resolution,
+    }
+
+
 def write_raw_crm_batch(base_folder, batch_id, ctx, source_dir_name="crm", source_system="CRM"):
     out_dir = os.path.join(base_folder, source_dir_name, batch_id)
-    extract_ts = ctx.get("extract_ts") or get_now_iso()
+    extract_ts = RAW_PULL_TS
 
     hub_person_by_hk = _index_by(ctx["hub_person_rows"], "Person Hash Key")
     hub_nat_by_hk = _index_by(ctx["hub_nat"], "Natural Person Hash Key")
@@ -141,7 +397,7 @@ def write_raw_crm_batch(base_folder, batch_id, ctx, source_dir_name="crm", sourc
         ],
         "crm_person_address.csv": [
             "_batch_id", "_extract_ts", "_source_system", "person_id", "address_id",
-            "street", "postcode", "city", "state", "country",
+            "street", "postcode", "city", "state", "country", "address_type", "region",
         ],
         "crm_lead.csv": [
             "_batch_id", "_extract_ts", "_source_system", "person_id", "lead_id",
@@ -152,7 +408,8 @@ def write_raw_crm_batch(base_folder, batch_id, ctx, source_dir_name="crm", sourc
             "_batch_id", "_extract_ts", "_source_system", "person_id", "customer_id",
             "customer_number", "customer_status", "customer_status_reason",
             "customer_since", "customer_rating", "customer_segment",
-            "line_of_business", "nps_score",
+            "line_of_business", "nps_score", "customer_onboarding_satisfaction_score",
+            "customer_onboarding_feedback",
         ],
         "crm_customer_lead.csv": [
             "_batch_id", "_extract_ts", "_source_system", "customer_id", "lead_id",
@@ -169,7 +426,9 @@ def write_raw_crm_batch(base_folder, batch_id, ctx, source_dir_name="crm", sourc
         "crm_marketing_engagement.csv": [
             "_batch_id", "_extract_ts", "_source_system", "person_id",
             "marketing_engagement_id", "promotion_code", "opened_email",
-            "marketing_status",
+            "marketing_status", "has_retention_team_interaction",
+            "customer_service_call_frequency", "average_call_sentiment",
+            "engagement_score", "first_contact_resolution",
         ],
         "crm_account.csv": [
             "_batch_id", "_extract_ts", "_source_system", "person_id", "account_id",
@@ -178,12 +437,16 @@ def write_raw_crm_batch(base_folder, batch_id, ctx, source_dir_name="crm", sourc
         ],
         "crm_product.csv": [
             "_batch_id", "_extract_ts", "_source_system", "product_id", "product_code",
-            "product_type",
+            "product_type", "product_type_text", "underwriting_group", "regulatory_approval_code",
+            "product_status", "product_line_of_business_code", "product_launch_date",
+            "product_variant",
         ],
         "crm_quote.csv": [
             "_batch_id", "_extract_ts", "_source_system", "person_id", "quote_id",
             "product_id", "product_code", "gross_revenue", "net_revenue", "quote_number",
             "quote_status", "renewal_amt_current_period", "renewal_amt_next_period",
+            "quoted_premium", "quoted_date", "quote_month_name", "risk_score",
+            "policy_complexity", "uw_approval_type", "rejection_reason",
         ],
         "crm_policy.csv": [
             "_batch_id", "_extract_ts", "_source_system", "person_id", "customer_id",
@@ -193,6 +456,11 @@ def write_raw_crm_batch(base_folder, batch_id, ctx, source_dir_name="crm", sourc
             "policy_end_date", "policy_length", "policy_number", "policy_start_date",
             "policy_status", "renewal_amount_current_period",
             "renewal_amount_next_period", "renewal_date", "sales_channel",
+            "is_auto_renew_enabled", "no_claims_discount_years", "payment_method",
+            "is_direct_debit_cancellation", "missed_payment_count",
+            "loyalty_discount_usage", "is_installment_default",
+            "policy_renewal_satisfaction_score", "policy_renewal_feedback",
+            "is_renewal_escalation",
         ],
         "crm_home.csv": [
             "_batch_id", "_extract_ts", "_source_system", "policy_id", "product_id",
@@ -208,7 +476,7 @@ def write_raw_crm_batch(base_folder, batch_id, ctx, source_dir_name="crm", sourc
             "motor_lapsed_policies", "motor_risk_address", "risk_class_code",
             "variant", "vehicle_owner_type", "vehicle_regstate", "vehicle_class",
             "vehicle_model", "vehicle_type", "motor_sum_insrd", "vehicle_year",
-            "vehicle_age",
+            "vehicle_age", "driver_experience_years",
         ],
     }
 
@@ -275,6 +543,7 @@ def write_raw_crm_batch(base_folder, batch_id, ctx, source_dir_name="crm", sourc
 
     for addr_hk, hub_addr in hub_addr_by_hk.items():
         person_hk = person_by_addr_hk.get(addr_hk)
+        sat_person = sat_person_by_hk.get(person_hk, {})
         sat_addr = sat_addr_by_hk.get(addr_hk, {})
         raw_rows["crm_person_address.csv"].append(_with_meta({
             "person_id": _safe_get(hub_person_by_hk, person_hk, "Person Id"),
@@ -284,6 +553,8 @@ def write_raw_crm_batch(base_folder, batch_id, ctx, source_dir_name="crm", sourc
             "city": sat_addr.get("City"),
             "state": sat_addr.get("State"),
             "country": sat_addr.get("Country"),
+            "address_type": _address_type_for_person(sat_person),
+            "region": _region_from_country(sat_addr.get("Country")),
         }, batch_id, extract_ts, source_system))
 
     for person_hk, lead_hks in ctx["person_to_lead"].items():
@@ -301,6 +572,7 @@ def write_raw_crm_batch(base_folder, batch_id, ctx, source_dir_name="crm", sourc
     for customer_hk, hub_customer in hub_customer_by_hk.items():
         person_hk = person_by_customer_hk.get(customer_hk)
         sat_customer = sat_customer_by_hk.get(customer_hk, {})
+        onboarding_score = _customer_onboarding_satisfaction_score(sat_customer)
         raw_rows["crm_customer.csv"].append(_with_meta({
             "person_id": _safe_get(hub_person_by_hk, person_hk, "Person Id"),
             "customer_id": hub_customer["Customer Id"],
@@ -312,6 +584,11 @@ def write_raw_crm_batch(base_folder, batch_id, ctx, source_dir_name="crm", sourc
             "customer_segment": sat_customer.get("Customer Segment"),
             "line_of_business": sat_customer.get("Line Of Business"),
             "nps_score": sat_customer.get("NPS Score"),
+            "customer_onboarding_satisfaction_score": onboarding_score,
+            "customer_onboarding_feedback": _customer_onboarding_feedback(
+                _int_value(onboarding_score, 0),
+                hub_customer["Customer Id"],
+            ),
         }, batch_id, extract_ts, source_system))
 
     for row in ctx["links"].get("Link_Customer_Lead", []):
@@ -349,12 +626,14 @@ def write_raw_crm_batch(base_folder, batch_id, ctx, source_dir_name="crm", sourc
     for men_hk, hub_men in hub_men_by_hk.items():
         person_hk = person_by_men_hk.get(men_hk)
         sat_men = sat_men_by_hk.get(men_hk, {})
+        engagement_profile = _marketing_engagement_profile(sat_men, hub_men["Marketing Engagement Id"])
         raw_rows["crm_marketing_engagement.csv"].append(_with_meta({
             "person_id": _safe_get(hub_person_by_hk, person_hk, "Person Id"),
             "marketing_engagement_id": hub_men["Marketing Engagement Id"],
             "promotion_code": sat_men.get("Promotion Code"),
             "opened_email": sat_men.get("Opened Email"),
             "marketing_status": sat_men.get("Marketing Status"),
+            **engagement_profile,
         }, batch_id, extract_ts, source_system))
 
     for account_hk, hub_account in hub_account_by_hk.items():
@@ -371,11 +650,17 @@ def write_raw_crm_batch(base_folder, batch_id, ctx, source_dir_name="crm", sourc
             "account_status": sat_account.get("Account Status"),
         }, batch_id, extract_ts, source_system))
 
+    product_launch_dates = _product_launch_dates(ctx["policy_to_product_id"], sat_policy_by_hk)
     for product_hk, hub_product in hub_product_by_hk.items():
+        product_code = product_code_by_hk.get(product_hk)
+        product_meta = _product_metadata(product_code, product_launch_dates.get(product_code, "2019-01-01"))
         raw_rows["crm_product.csv"].append(_with_meta({
             "product_id": hub_product["Product Id"],
-            "product_code": product_code_by_hk.get(product_hk),
-            "product_type": product_code_by_hk.get(product_hk),
+            "product_code": product_code,
+            "product_type": product_code,
+            "product_type_text": product_code,
+            "product_variant": product_code,
+            **product_meta,
         }, batch_id, extract_ts, source_system))
 
     for quote_hk, hub_quote in hub_quote_by_hk.items():
@@ -383,6 +668,7 @@ def write_raw_crm_batch(base_folder, batch_id, ctx, source_dir_name="crm", sourc
         product_code = ctx["quote_to_product_id"].get(quote_hk)
         product_hk = product_hk_by_code.get(product_code)
         sat_quote = sat_quote_by_hk.get(quote_hk, {})
+        quote_profile = _quote_profile(sat_quote, hub_quote["Quote Id"], extract_ts)
         raw_rows["crm_quote.csv"].append(_with_meta({
             "person_id": _safe_get(hub_person_by_hk, person_hk, "Person Id"),
             "quote_id": hub_quote["Quote Id"],
@@ -394,6 +680,7 @@ def write_raw_crm_batch(base_folder, batch_id, ctx, source_dir_name="crm", sourc
             "quote_status": sat_quote.get("Quote Status"),
             "renewal_amt_current_period": sat_quote.get("Renewal Amt Current Period"),
             "renewal_amt_next_period": sat_quote.get("Renewal Amt Next Period"),
+            **quote_profile,
         }, batch_id, extract_ts, source_system))
 
     for policy_hk, hub_policy in hub_policy_by_hk.items():
@@ -403,6 +690,8 @@ def write_raw_crm_batch(base_folder, batch_id, ctx, source_dir_name="crm", sourc
         product_code = ctx["policy_to_product_id"].get(policy_hk)
         product_hk = product_hk_by_code.get(product_code)
         sat_policy = sat_policy_by_hk.get(policy_hk, {})
+        policy_profile = _policy_payment_profile(sat_policy, hub_policy["Policy Id"])
+        renewal_score, renewal_feedback, renewal_escalation = _policy_renewal_satisfaction(sat_policy, policy_profile)
         raw_rows["crm_policy.csv"].append(_with_meta({
             "person_id": _safe_get(hub_person_by_hk, person_hk, "Person Id"),
             "customer_id": _safe_get(hub_customer_by_hk, customer_hk, "Customer Id"),
@@ -427,6 +716,16 @@ def write_raw_crm_batch(base_folder, batch_id, ctx, source_dir_name="crm", sourc
             "renewal_amount_next_period": sat_policy.get("Renewal Amount Next Period"),
             "renewal_date": sat_policy.get("Renewal Date"),
             "sales_channel": sat_policy.get("Sales Channel"),
+            "is_auto_renew_enabled": policy_profile["is_auto_renew_enabled"],
+            "no_claims_discount_years": policy_profile["no_claims_discount_years"],
+            "payment_method": policy_profile["payment_method"],
+            "is_direct_debit_cancellation": policy_profile["is_direct_debit_cancellation"],
+            "missed_payment_count": policy_profile["missed_payment_count"],
+            "loyalty_discount_usage": policy_profile["loyalty_discount_usage"],
+            "is_installment_default": policy_profile["is_installment_default"],
+            "policy_renewal_satisfaction_score": renewal_score,
+            "policy_renewal_feedback": renewal_feedback,
+            "is_renewal_escalation": renewal_escalation,
         }, batch_id, extract_ts, source_system))
 
     for policy_hk, home_hk in ctx["policy_to_home"].items():
@@ -456,6 +755,9 @@ def write_raw_crm_batch(base_folder, batch_id, ctx, source_dir_name="crm", sourc
     for policy_hk, motor_hks in ctx["policy_to_motor"].items():
         product_code = ctx["policy_to_product_id"].get(policy_hk)
         product_hk = product_hk_by_code.get(product_code)
+        person_hk = person_by_policy_hk.get(policy_hk)
+        nat_hk = nat_hk_by_person.get(person_hk)
+        sat_nat = sat_nat_by_hk.get(nat_hk, {})
         for motor_hk in _as_list(motor_hks):
             sat_motor = sat_motor_by_hk.get(motor_hk, {})
             raw_rows["crm_motor.csv"].append(_with_meta({
@@ -480,6 +782,7 @@ def write_raw_crm_batch(base_folder, batch_id, ctx, source_dir_name="crm", sourc
                 "motor_sum_insrd": sat_motor.get("Motor Sum Insrd"),
                 "vehicle_year": sat_motor.get("Vehicle Year"),
                 "vehicle_age": sat_motor.get("Vehicle Age"),
+                "driver_experience_years": _driver_experience_years(sat_nat, extract_ts, motor_hk),
             }, batch_id, extract_ts, source_system))
 
     os.makedirs(out_dir, exist_ok=True)

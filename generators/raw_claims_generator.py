@@ -1,6 +1,7 @@
 import os
 
 from helper.csv_writer import write_csv
+from helper.raw_metadata import RAW_PULL_TS
 
 
 def _as_list(value):
@@ -37,7 +38,7 @@ def _source_id(value, prefix="CLM"):
 def write_raw_claims_batch(base_folder, batch_id, ctx):
     out_dir = os.path.join(base_folder, "claims", batch_id)
     os.makedirs(out_dir, exist_ok=True)
-    extract_ts = ctx.get("extract_ts", "")
+    extract_ts = RAW_PULL_TS
 
     hub_person_by_hk = _index_by(ctx["hub_person_rows"], "Person Hash Key")
     hub_contact_by_hk = _index_by(ctx["hub_con_rows"], "Contact Hash Key")
