@@ -1,0 +1,360 @@
+link_person_natural_person:
+with combined as (
+SELECT DISTINCT
+    md5(concat( MD5(CONCAT(origin_sys, party_ref)),MD5(CONCAT(origin_sys, natural_ref))))AS person_natural_person_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    MD5(CONCAT(origin_sys, party_ref)) AS person_hash_key,
+    MD5(CONCAT(origin_sys, natural_ref)) AS natural_person_hash_key
+FROM crm_party_master_csv
+WHERE where party_kind = 'NATURAL'
+UNION ALL
+SELECT DISTINCT
+    md5(concat( MD5(CONCAT(origin_sys, person_id)),MD5(CONCAT(origin_sys, person_id))))AS person_natural_person_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    MD5(CONCAT(origin_sys, person_id)) AS person_hash_key,
+    MD5(CONCAT(origin_sys, person_id)) AS natural_person_hash_key
+FROM sap_person_db 
+WHERE person_type = 'NATURAL')
+select distinct * from combined;
+
+link_person_legal_person:
+with combined as (
+SELECT DISTINCT
+    md5(concat( MD5(CONCAT(origin_sys, party_ref)),MD5(CONCAT(origin_sys, legal_ref))))AS person_legal_person_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    MD5(CONCAT(origin_sys, party_ref)) AS person_hash_key,
+    MD5(CONCAT(origin_sys, legal_ref)) AS legal_person_hash_key
+FROM crm_party_master_csv
+WHERE where party_kind = 'LEGAL'
+UNION ALL
+SELECT DISTINCT
+    md5(concat( MD5(CONCAT(origin_sys, person_id)),MD5(CONCAT(origin_sys, person_id))))AS person_legal_person_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    MD5(CONCAT(origin_sys, person_id)) AS person_hash_key,
+    MD5(CONCAT(origin_sys, person_id)) AS legal_person_hash_key
+FROM sap_person_db 
+WHERE person_type = 'LEGAL')
+select distinct * from combined;
+
+link_person_contact:
+SELECT DISTINCT
+    md5(concat( MD5(CONCAT(origin_sys, party_ref)),MD5(CONCAT(origin_sys, contact_ref))))AS person_contact_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    MD5(CONCAT(origin_sys, party_ref)) AS person_hash_key,
+    MD5(CONCAT(origin_sys,contact_ref)) AS contact_hash_key
+FROM crm_contact_point_csv;
+
+
+link_person_identities:
+SELECT DISTINCT
+    md5(concat( MD5(CONCAT(origin_sys, party_ref)),MD5(CONCAT(origin_sys, identity_ref))))AS person_identities_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    MD5(CONCAT(origin_sys, party_ref)) AS person_hash_key,
+    MD5(CONCAT(origin_sys,identity_ref)) AS identities_hash_key
+FROM crm_identity_registry_csv
+
+link_person_address:
+with combined as (
+SELECT DISTINCT
+    md5(concat( MD5(CONCAT(origin_sys, party_ref)),MD5(CONCAT(origin_sys, address_ref))))AS person_address_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    MD5(CONCAT(origin_sys, party_ref)) AS person_hash_key,
+    MD5(CONCAT(origin_sys,address_ref)) AS address_hash_key
+FROM crm_address_book_csv
+UNION ALL
+SELECT DISTINCT
+    md5(concat( MD5(CONCAT(origin_sys, src_person_id)),MD5(CONCAT(origin_sys, src_address_id))))AS person_address_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    MD5(CONCAT(origin_sys, src_person_id)) AS person_hash_key,
+    MD5(CONCAT(origin_sys,src_address_id)) AS address_hash_key
+FROM crm_enhanced_person_relationships_csv
+WHERE source_extract = 'person_address_bridge.csv'
+UNION ALL
+SELECT DISTINCT
+    md5(concat( MD5(CONCAT(origin_sys, person_id)),MD5(CONCAT(origin_sys, address_id))))AS person_address_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    MD5(CONCAT(origin_sys, person_id)) AS person_hash_key,
+    MD5(CONCAT(origin_sys,address_id)) AS address_hash_key
+FROM sap_address_db)
+select distinct * from combined;
+
+link_person_consent:
+SELECT DISTINCT
+    md5(concat( MD5(CONCAT(origin_sys, party_ref)),MD5(CONCAT(origin_sys, consent_ref))))AS person_consent_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    MD5(CONCAT(origin_sys, party_ref)) AS person_hash_key,
+    MD5(CONCAT(origin_sys,consent_ref)) AS consent_hash_key
+FROM crm_consent_snapshot_csv;
+
+link_person_marketing_preference:
+SELECT DISTINCT
+    md5(concat( MD5(CONCAT(origin_sys, party_ref)),MD5(CONCAT(origin_sys, preference_ref))))AS person_marketing_preference_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    MD5(CONCAT(origin_sys, party_ref)) AS person_hash_key,
+    MD5(CONCAT(origin_sys,preference_ref)) AS marketing_preference_hash_key
+FROM crm_comm_preference_csv;
+
+link_person_marketing_engagement:
+SELECT DISTINCT
+    md5(concat( MD5(CONCAT(origin_sys, party_ref)),MD5(CONCAT(origin_sys, engagement_ref))))AS person_marketing_engagement_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    MD5(CONCAT(origin_sys, party_ref)) AS person_hash_key,
+    MD5(CONCAT(origin_sys,engagement_ref)) AS marketing_engagement_hash_key
+FROM crm_campaign_touch_csv;
+
+link_person_lead:
+SELECT DISTINCT
+    md5(concat( MD5(CONCAT(origin_sys, party_ref)),MD5(CONCAT(origin_sys, lead_ref))))AS person_lead_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    MD5(CONCAT(origin_sys, party_ref)) AS person_hash_key,
+    MD5(CONCAT(origin_sys,lead_ref)) AS lead_hash_key
+FROM crm_lead_register_csv;
+
+link_person_account:
+SELECT DISTINCT
+    md5(concat( MD5(CONCAT(origin_sys, party_ref)),MD5(CONCAT(origin_sys, account_ref))))AS person_account_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    MD5(CONCAT(origin_sys, party_ref)) AS person_hash_key,
+    MD5(CONCAT(origin_sys,account_ref)) AS account_hash_key
+FROM crm_account_book_csv;
+
+link_customer_person:
+SELECT DISTINCT
+    md5(concat( MD5(CONCAT(origin_sys, party_ref)),MD5(CONCAT(origin_sys, customer_ref))))AS customer_person_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    MD5(CONCAT(origin_sys, party_ref)) AS person_hash_key,
+    MD5(CONCAT(origin_sys,customer_ref)) AS customer_hash_key
+FROM crm_customer_portfolio_csv;
+
+link_customer_lead:
+SELECT DISTINCT
+    md5(concat( MD5(CONCAT(origin_sys, lead_ref)),MD5(CONCAT(origin_sys, customer_ref))))AS customer_lead_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    MD5(CONCAT(origin_sys, lead_ref)) AS lead_hash_key,
+    MD5(CONCAT(origin_sys,customer_ref)) AS customer_hash_key
+FROM crm_customer_lead_bridge_csv;
+
+link_quote_person:
+SELECT DISTINCT
+    md5(concat( MD5(CONCAT(origin_sys, party_ref)),MD5(CONCAT(origin_sys, quote_ref))))AS quote_person_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    MD5(CONCAT(origin_sys, party_ref)) AS person_hash_key,
+    MD5(CONCAT(origin_sys,quote_ref)) AS quote_hash_key
+FROM crm_quote_register_csv;
+
+link_quote_product:
+SELECT DISTINCT
+    md5(concat( MD5(CONCAT(origin_sys, product_ref)),MD5(CONCAT(origin_sys, quote_ref))))AS quote_product_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    MD5(CONCAT(origin_sys, product_ref)) AS product_hash_key,
+    MD5(CONCAT(origin_sys,quote_ref)) AS quote_hash_key
+FROM crm_quote_register_csv;
+
+link_policy_customer:
+SELECT DISTINCT
+    md5(concat( MD5(CONCAT(origin_sys, policy_ref)),MD5(CONCAT(origin_sys, customer_ref))))AS policy_customer_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    MD5(CONCAT(origin_sys, policy_ref)) AS policy_hash_key,
+    MD5(CONCAT(origin_sys,customer_ref)) AS customer_hash_key
+FROM crm_policy_register_csv;
+
+link_policy_product:
+with combined as (
+SELECT DISTINCT
+    md5(concat( MD5(CONCAT(origin_sys, policy_ref)),MD5(CONCAT(origin_sys, product_ref))))AS policy_product_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    MD5(CONCAT(origin_sys, policy_ref)) AS policy_hash_key,
+    MD5(CONCAT(origin_sys, product_ref)) AS product_hash_key
+FROM crm_policy_register_csv
+UNION ALL
+SELECT DISTINCT
+    md5(concat( MD5(CONCAT(origin_sys, policy_id)),MD5(CONCAT(origin_sys, product_id))))AS policy_product_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    MD5(CONCAT(origin_sys, policy_id)) AS policy_hash_key,
+    MD5(CONCAT(origin_sys, product_id)) AS product_hash_key
+FROM sap_home_db
+UNION ALL
+SELECT DISTINCT
+    md5(concat( MD5(CONCAT(origin_sys, policy_id)),MD5(CONCAT(origin_sys, product_id))))AS policy_product_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    MD5(CONCAT(origin_sys, policy_id)) AS policy_hash_key,
+    MD5(CONCAT(origin_sys, product_id)) AS product_hash_key
+FROM sap_motor_db)
+select distinct * from combined;
+
+link_policy_quote:
+with combined as (
+SELECT DISTINCT
+    md5(concat( MD5(CONCAT(origin_sys, policy_ref)),MD5(CONCAT(origin_sys, quote_ref))))AS policy_quote_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    MD5(CONCAT(origin_sys, policy_ref)) AS policy_hash_key,
+    MD5(CONCAT(origin_sys, quote_ref)) AS quote_hash_key
+FROM crm_policy_register_csv
+UNION ALL
+SELECT DISTINCT
+    md5(concat( MD5(CONCAT(origin_sys, src_policy_id)),MD5(CONCAT(origin_sys, src_quote_id))))AS policy_quote_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    MD5(CONCAT(origin_sys, src_policy_id)) AS policy_hash_key,
+    MD5(CONCAT(origin_sys, src_quote_id)) AS quote_hash_key
+FROM crm_enhanced_policy_relationships_csv)
+select distinct * from combined;
+
+link_broker_person:
+SELECT DISTINCT
+    md5(concat( MD5(CONCAT(origin_sys, src_agent_id)),MD5(CONCAT(origin_sys, src_person_id))))AS broker_person_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    MD5(CONCAT(origin_sys, src_agent_id)) AS broker_hash_key,
+    MD5(CONCAT(origin_sys, src_person_id)) AS person_hash_key
+FROM crm_enhanced_person_relationships_csv
+WHERE source_extract = 'broker_person_bridge.csv';
+
+
+link_person_campaign:
+SELECT DISTINCT
+    md5(concat( MD5(CONCAT(origin_sys, src_person_id)),MD5(CONCAT(origin_sys, src_campaign_id))))AS person_campaign_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    MD5(CONCAT(origin_sys, src_person_id)) AS person_hash_key,
+    MD5(CONCAT(origin_sys, src_campaign_id)) AS campaign_hash_key
+FROM crm_enhanced_person_relationships_csv
+WHERE source_extract = 'person_campaign_bridge.csv';
+
+link_claim_policy:
+SELECT DISTINCT
+    md5(concat( MD5(CONCAT(origin_sys, src_claim_id)),MD5(CONCAT(origin_sys, src_policy_id))))AS claim_policy_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    MD5(CONCAT(origin_sys, src_claim_id)) AS claim_hash_key,
+    MD5(CONCAT(origin_sys, src_policy_id)) AS policy_hash_key
+FROM crm_enhanced_policy_relationships_csv
+WHERE source_extract = 'claim_policy_bridge.csv';
+
+link_complaint_policy:
+SELECT DISTINCT
+    md5(concat( MD5(CONCAT(origin_sys, src_complaint_id)),MD5(CONCAT(origin_sys, src_policy_id))))AS complaint_policy_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    MD5(CONCAT(origin_sys, src_complaint_id)) AS complaint_hash_key,
+    MD5(CONCAT(origin_sys, src_policy_id)) AS policy_hash_key
+FROM crm_enhanced_policy_relationships_csv
+WHERE source_extract = 'complaint_policy_bridge.csv';
+
+link_complaint_regulation:
+SELECT DISTINCT
+    md5(concat( MD5(CONCAT(origin_sys, src_complaint_id)),MD5(CONCAT(origin_sys, src_regulation_id))))AS complaint_regulation_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    MD5(CONCAT(origin_sys, src_complaint_id)) AS complaint_hash_key,
+    MD5(CONCAT(origin_sys, src_regulation_id)) AS regulation_hash_key
+FROM crm_enhanced_policy_relationships_csv
+WHERE source_extract = 'complaint_regulation_bridge.csv';
+
+
+link_insured_object_home:
+SELECT DISTINCT
+    md5(concat( MD5(CONCAT(origin_sys, src_insured_object_id)),MD5(CONCAT(origin_sys, src_home_id))))AS insured_object_home_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    MD5(CONCAT(origin_sys, src_insured_object_id)) AS insured_object_hash_key,
+    MD5(CONCAT(origin_sys, src_home_id)) AS home_hash_key
+FROM crm_enhanced_policy_relationships_csv
+WHERE source_extract = 'insured_object_home_bridge.csv';
+
+
+link_insured_object_motor:
+SELECT DISTINCT
+    md5(concat( MD5(CONCAT(origin_sys, src_insured_object_id)),MD5(CONCAT(origin_sys, src_motor_id))))AS insured_object_motor_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    MD5(CONCAT(origin_sys, src_insured_object_id)) AS insured_object_hash_key,
+    MD5(CONCAT(origin_sys, src_motor_id)) AS motor_hash_key
+FROM crm_enhanced_policy_relationships_csv
+WHERE source_extract = 'insured_object_motor_bridge.csv';
+
+link_policy_broker:
+SELECT DISTINCT
+    md5(concat( MD5(CONCAT(origin_sys, src_policy_id)),MD5(CONCAT(origin_sys, src_agent_id))))AS policy_broker_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    MD5(CONCAT(origin_sys, src_policy_id)) AS policy_hash_key,
+    MD5(CONCAT(origin_sys, src_agent_id)) AS broker_hash_key
+FROM crm_enhanced_policy_relationships_csv
+WHERE source_extract = 'policy_broker_bridge.csv';
+
+link_policy_channel:
+SELECT DISTINCT
+    md5(concat( MD5(CONCAT(origin_sys, src_policy_id)),MD5(CONCAT(origin_sys, src_channel_id))))AS policy_channel_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    MD5(CONCAT(origin_sys, src_policy_id)) AS policy_hash_key,
+    MD5(CONCAT(origin_sys, src_channel_id)) AS channel_hash_key
+FROM crm_enhanced_policy_relationships_csv
+WHERE source_extract = 'policy_channel_bridge.csv';
+
+link_policy_insured_object:
+SELECT DISTINCT
+    md5(concat( MD5(CONCAT(origin_sys, src_policy_id)),MD5(CONCAT(origin_sys, src_insured_object_id))))AS policy_insured_object_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    MD5(CONCAT(origin_sys, src_policy_id)) AS policy_hash_key,
+    MD5(CONCAT(origin_sys, src_insured_object_id)) AS insured_object_hash_key
+FROM crm_enhanced_policy_relationships_csv
+WHERE source_extract = 'policy_insured_object_bridge.csv';
+
+link_policy_override:
+SELECT DISTINCT
+    md5(concat( MD5(CONCAT(origin_sys, src_policy_id)),MD5(CONCAT(origin_sys, src_override_id))))AS policy_override_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    MD5(CONCAT(origin_sys, src_policy_id)) AS policy_hash_key,
+    MD5(CONCAT(origin_sys, src_override_id)) AS override_hash_key
+FROM crm_enhanced_policy_relationships_csv
+WHERE source_extract = 'policy_override_bridge.csv';
+
+link_quote_broker:
+SELECT DISTINCT
+    md5(concat( MD5(CONCAT(origin_sys, src_quote_id)),MD5(CONCAT(origin_sys, src_agent_id))))AS quote_broker_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    MD5(CONCAT(origin_sys, src_quote_id)) AS quote_hash_key,
+    MD5(CONCAT(origin_sys, src_agent_id)) AS broker_hash_key
+FROM crm_enhanced_policy_relationships_csv
+WHERE source_extract = 'quote_broker_bridge.csv';
+
+link_quote_channel:
+SELECT DISTINCT
+    md5(concat( MD5(CONCAT(origin_sys, src_quote_id)),MD5(CONCAT(origin_sys, src_channel_id))))AS quote_channel_hash_key,
+    CAST(pull_ts AS timestamp) AS load_date,
+    origin_sys AS record_source,
+    MD5(CONCAT(origin_sys, src_quote_id)) AS quote_hash_key,
+    MD5(CONCAT(origin_sys, src_channel_id)) AS channel_hash_key
+FROM crm_enhanced_policy_relationships_csv
+WHERE  source_extract = 'quote_channel_bridge.csv';
+
+
+

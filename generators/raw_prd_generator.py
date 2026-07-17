@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 from generators.raw_crm_generator import write_raw_crm_batch
+from helper.raw_metadata import RAW_PULL_TS
 
 
 ENHANCED_ASSET_INSURED_OBJECT_COLUMNS = [
@@ -369,7 +370,7 @@ def write_raw_base_prd2_variant(prd1_folder: str, raw_root: str, batch_id: str, 
     def metadata(row: dict) -> dict:
         return {
             "batch_ref": row.get("batch_ref", batch_id),
-            "pull_ts": row.get("pull_ts", ""),
+            "pull_ts": RAW_PULL_TS,
             "origin_sys": "SAP",
         }
 
@@ -1125,15 +1126,12 @@ def _ensure_raw_metadata_columns(folder: Path, batch_id: str) -> None:
         rows = _read_csv_rows(path)
         with path.open("r", newline="", encoding="utf-8") as f:
             fieldnames = next(csv.reader(f), [])
-        if all(column in fieldnames for column in metadata_columns):
-            continue
-
         output_fields = metadata_columns + [column for column in fieldnames if column not in metadata_columns]
         enriched_rows = []
         for row in rows:
             enriched = dict(row)
             enriched["batch_ref"] = enriched.get("batch_ref") or batch_id
-            enriched["pull_ts"] = enriched.get("pull_ts") or enriched.get("src_extract_ts") or ""
+            enriched["pull_ts"] = RAW_PULL_TS
             enriched["origin_sys"] = enriched.get("origin_sys") or enriched.get("src_system") or "CRM"
             enriched_rows.append(enriched)
 

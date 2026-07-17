@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from helper.csv_writer import write_csv
+from helper.raw_metadata import RAW_PULL_TS
 
 
 CLAIMS_LDM_SCHEMAS = {'coverage.csv': ['coverage_identifier',
@@ -420,6 +421,10 @@ def _first_value(*values) -> str:
     return ""
 
 
+def _batch_pull_ts(batch_id: str) -> str:
+    return RAW_PULL_TS
+
+
 def _read_csv_rows(path: Path) -> list[dict]:
     if not path.exists():
         return []
@@ -474,32 +479,17 @@ def _write_claims_source_view(
     columns = ["batch_ref", "pull_ts", "origin_sys"]
     columns.extend(entry["src2"] for entry in mapping_rows if entry["src2"])
     out_rows = []
+    extract_ts = _batch_pull_ts(batch_id)
     for row in rows:
         out = {
             "batch_ref": batch_id,
-            "pull_ts": "",
+            "pull_ts": extract_ts,
             "origin_sys": origin_sys,
         }
         for entry in mapping_rows:
             source_col = entry["src2"]
             if source_col:
                 out[source_col] = row.get(entry["logical"], "")
-        out["pull_ts"] = _first_value(
-            row.get("claim_status_date"),
-            row.get("movement_date"),
-            row.get("loss_date"),
-            row.get("claim_investigation_start_date"),
-            out.get("stage_update_date"),
-            out.get("first_notice_date"),
-            out.get("claim_settlement_date"),
-            out.get("incident_reported_date"),
-            out.get("last_activity_date"),
-            out.get("approval_date"),
-            out.get("payment_release_date"),
-            out.get("event_date"),
-            out.get("case_open_date"),
-            batch_id,
-        )
         out_rows.append(out)
     write_csv(str(source_dir), table_name, out_rows, fieldnames=columns)
 

@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from helper.crm_raw_layout import to_crm_raw_column, to_crm_raw_file
 from helper.csv_writer import write_csv
 from helper.key_factory import get_now_iso
+from helper.raw_metadata import RAW_PULL_TS
 
 
 def _as_list(value):
@@ -302,7 +303,7 @@ def _marketing_engagement_profile(row: dict, engagement_id: str = "") -> dict:
 
 def write_raw_crm_batch(base_folder, batch_id, ctx, source_dir_name="crm", source_system="CRM"):
     out_dir = os.path.join(base_folder, source_dir_name, batch_id)
-    extract_ts = ctx.get("extract_ts") or get_now_iso()
+    extract_ts = RAW_PULL_TS
 
     hub_person_by_hk = _index_by(ctx["hub_person_rows"], "Person Hash Key")
     hub_nat_by_hk = _index_by(ctx["hub_nat"], "Natural Person Hash Key")

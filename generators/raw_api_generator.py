@@ -1,6 +1,8 @@
 import json
 import os
 
+from helper.raw_metadata import RAW_PULL_TS
+
 
 def _as_list(value):
     if value is None:
@@ -46,7 +48,7 @@ def _write_jsonl(path, rows):
 
 def write_raw_api_batch(base_folder, batch_id, ctx, source_dir_name="api", source_system="API", source_prefix="API"):
     out_dir = os.path.join(base_folder, source_dir_name, batch_id)
-    extract_ts = ctx["extract_ts"]
+    extract_ts = RAW_PULL_TS
     src = source_system
 
     def make_id(value):
