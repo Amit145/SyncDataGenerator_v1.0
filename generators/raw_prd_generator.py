@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import csv
 import shutil
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from generators.raw_crm_generator import write_raw_crm_batch
@@ -218,6 +218,63 @@ def _date_obj(value: str):
         return datetime.fromisoformat(text)
     except ValueError:
         return None
+
+
+def _date_time_text(value: datetime | None, end_of_day: bool = False) -> str:
+    if value is None:
+        return ""
+    time_text = "23:59:59" if end_of_day else "00:00:00"
+    return value.strftime(f"%Y-%m-%d {time_text}")
+
+
+def _sap_body_colour(row: dict) -> str:
+    colours = [
+        "WHITE", "BLACK", "SILVER", "GREY", "BLUE", "RED", "GREEN",
+        "BROWN", "BEIGE", "MAROON", "GOLD", "PEARL WHITE",
+    ]
+    return colours[_stable_index(row.get("vehicle_ref", "") or row.get("model_nm", ""), len(colours))]
+
+
+def _sap_gear_type(row: dict) -> str:
+    gears = ["MANUAL", "AUTOMATIC", "SEMI_AUTOMATIC", "CVT", "DCT"]
+    return gears[_stable_index(row.get("vehicle_ref", "") or row.get("variant_nm", ""), len(gears))]
+
+
+def _policy_date_lookup(hub_policy: list[dict], sat_policy: list[dict]) -> dict[str, dict]:
+    sat_by_hash = _index(sat_policy, "policy_hash_key")
+    lookup = {}
+    for hub in hub_policy:
+        policy_id = hub.get("policy_id", "")
+        sat = sat_by_hash.get(hub.get("policy_hash_key", ""), {})
+        if policy_id:
+            lookup[policy_id] = sat
+    return lookup
+
+
+def _with_claim_policy_date_flow(row: dict, policy: dict) -> dict:
+    """Clamp exported claim dates so each claim reads as part of its policy journey."""
+    if not policy:
+        return row
+    enriched = dict(row)
+    policy_start = _date_obj(policy.get("policy_start_date"))
+    policy_end = _date_obj(policy.get("policy_end_date"))
+    reported = _date_obj(enriched.get("claim_reported_date"))
+    settlement = _date_obj(enriched.get("claim_settlement_date"))
+    if policy_start and reported and reported < policy_start:
+        reported = policy_start
+    if policy_end and reported and reported > policy_end:
+        reported = policy_end
+    if policy_start and not reported:
+        reported = policy_start
+    if settlement and reported and settlement < reported:
+        settlement = reported
+    if policy_end and settlement and settlement > policy_end:
+        settlement = policy_end if not reported or policy_end >= reported else reported
+    if reported:
+        enriched["claim_reported_date"] = _date_time_text(reported)
+    if settlement:
+        enriched["claim_settlement_date"] = _date_time_text(settlement, end_of_day=True)
+    return enriched
 
 
 def _int_value(value, default=0) -> int:
@@ -441,9 +498,9 @@ def write_raw_base_prd2_variant(prd1_folder: str, raw_root: str, batch_id: str, 
             "motor_model": row.get("model_nm", ""),
             "motor_type": row.get("vehicle_type_txt", ""),
             "manufacturing_date": row.get("manufacture_yr", ""),
-            "body_colour": row.get("body_style_txt", ""),
+            "body_colour": _sap_body_colour(row),
             "fuel_type": row.get("fuel_type_txt", ""),
-            "gear_type": row.get("variant_nm", ""),
+            "gear_type": _sap_gear_type(row),
             "motor_parked_location": row.get("garage_address_txt", ""),
         }
         for row in _read_rows(source_dir, "vehicle_asset.csv")
@@ -737,6 +794,7 @@ def write_raw_prd2_from_mlops(
 
     person_id = _id_lookup(hub_person, "person_hash_key", "person_id")
     policy_id = _id_lookup(hub_policy, "policy_hash_key", "policy_id")
+    policy_dates_by_id = _policy_date_lookup(hub_policy, _read_rows(source_dir, "sat_policy.csv"))
     quote_id = _id_lookup(hub_quote, "quote_hash_key", "quote_id")
     home_id = _id_lookup_first(hub_home, "home_hash_key", ["home_id", "insured_object_home_id"])
     motor_id = _id_lookup_first(hub_motor, "motor_hash_key", ["motor_id", "insured_object_motor_id"])
@@ -798,14 +856,18 @@ def write_raw_prd2_from_mlops(
     claim_rows = []
     for hub in hub_claim:
         policy_hash_key = claim_policy.get(hub["claim_hash_key"], {}).get("policy_hash_key", "")
+        linked_policy_id = policy_id.get(policy_hash_key, "")
         claim_rows.append(
-            _with_claim_experience(
-                _merge(
-                    hub,
-                    sat_claim.get(hub["claim_hash_key"]),
-                    {"policy_id": policy_id.get(policy_hash_key, "")},
+            _with_claim_policy_date_flow(
+                _with_claim_experience(
+                    _merge(
+                        hub,
+                        sat_claim.get(hub["claim_hash_key"]),
+                        {"policy_id": linked_policy_id},
+                    ),
+                    policy_hash_key in policies_with_complaints,
                 ),
-                policy_hash_key in policies_with_complaints,
+                policy_dates_by_id.get(linked_policy_id, {}),
             )
         )
 
