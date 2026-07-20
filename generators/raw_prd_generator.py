@@ -260,6 +260,7 @@ def _with_claim_policy_date_flow(row: dict, policy: dict) -> dict:
     policy_end = _date_obj(policy.get("policy_end_date"))
     reported = _date_obj(enriched.get("claim_reported_date"))
     settlement = _date_obj(enriched.get("claim_settlement_date"))
+    status = str(enriched.get("claim_status") or "").strip().upper()
     if policy_start and reported and reported < policy_start:
         reported = policy_start
     if policy_end and reported and reported > policy_end:
@@ -270,10 +271,14 @@ def _with_claim_policy_date_flow(row: dict, policy: dict) -> dict:
         settlement = reported
     if policy_end and settlement and settlement > policy_end:
         settlement = policy_end if not reported or policy_end >= reported else reported
+    if status in {"OPEN", "PENDING", "UNDER REVIEW"}:
+        settlement = None
     if reported:
         enriched["claim_reported_date"] = _date_time_text(reported)
     if settlement:
         enriched["claim_settlement_date"] = _date_time_text(settlement, end_of_day=True)
+    else:
+        enriched["claim_settlement_date"] = ""
     return enriched
 
 

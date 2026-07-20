@@ -480,7 +480,7 @@ def _write_claims_source_view(
     columns.extend(entry["src2"] for entry in mapping_rows if entry["src2"])
     out_rows = []
     extract_ts = _batch_pull_ts(batch_id)
-    for row in rows:
+    for row_index, row in enumerate(rows):
         out = {
             "batch_ref": batch_id,
             "pull_ts": extract_ts,
@@ -489,7 +489,10 @@ def _write_claims_source_view(
         for entry in mapping_rows:
             source_col = entry["src2"]
             if source_col:
-                out[source_col] = row.get(entry["logical"], "")
+                value = row.get(entry["logical"], "")
+                if table_name == "claim.csv" and source_col == "claim_ref_id" and row_index % 3 == 0:
+                    value = f"{origin_sys}_{value}"
+                out[source_col] = value
         out_rows.append(out)
     write_csv(str(source_dir), table_name, out_rows, fieldnames=columns)
 
@@ -795,19 +798,57 @@ def write_claims_ldm_raw_batch(base_folder, batch_id, ctx):
             approval_date = "" if is_active else _bounded_date(open_date + timedelta(days=7), open_date, close_date)
             payment_date = "" if is_active else _bounded_date(open_date + timedelta(days=12), open_date, close_date)
             event_window_end = close_date if close_date else policy_end
+            recovery_expected = round(requested * (0.18 if litigation == "Y" else 0.08), 2)
+            recovery_actual = round(recovery_expected * (0.65 if not is_active else 0.20), 2)
+            recovery_type = "Third Party" if litigation == "Y" else "Salvage" if policy_type == "Motor" else "Subrogation"
+            risk_level = "High" if fraud == "Y" or litigation == "Y" or requested >= 15000 else "Medium" if requested >= 7000 else "Low"
+            hospitalized = "Y" if bodily == "Y" and claim_index % 2 == 0 else "N"
+            work_status = ["Employed", "Self Employed", "Retired", "Unemployed"][claim_seq % 4]
+            if hospitalized == "Y":
+                return_to_work = "Pending" if is_active else "Returned With Adjustments"
+            elif bodily == "Y":
+                return_to_work = "Returned Full Duty" if not is_active else "Pending"
+            else:
+                return_to_work = "Not Applicable"
+            rejection_reason = "Fraud suspected" if fraud == "Y" and status == "Closed" else ""
+            finalization_reason = "" if is_active else "Settled" if not rejection_reason else "Denied"
+            reimbursable_claim = round(max(incurred - paid, 0), 2)
+            reimbursable_treatment = round(requested * 0.12, 2) if bodily == "Y" else 0
+            settlement_offer = round(incurred * (0.95 if not is_active else 0.75), 2)
             rows["claim.csv"].append({
                 "claim_identifier": claim_identifier,
                 "claim_number": f"CLM-{batch_id}-{claim_seq:06d}",
+                "third_party_claim_number": f"TP-{batch_id}-{claim_seq:06d}",
                 "claim_type": policy_type,
                 "claim_status": status,
+                "claim_state": "In Progress" if is_active else "Finalized",
+                "claim_status_date": _iso(open_date if is_active else close_date),
                 "claim_open_date": _iso(open_date),
                 "claim_close_date": _iso(close_date) if close_date else "",
+                "claims_made_date": _iso(open_date),
+                "movement_date": _iso(open_date if is_active else close_date),
+                "claim_duration": (event_window_end - open_date).days,
+                "claim_type_code": policy_type.upper()[:3],
                 "claim_requested_amount": requested,
+                "claim_sensitivity": risk_level,
+                "hospitalized_indicator": hospitalized,
+                "outstanding_subrogation_amount": recovery_expected,
+                "recovery_actual": recovery_actual,
+                "recovery_type": recovery_type,
+                "claims_rejection_reason": rejection_reason,
+                "finalization_reason": finalization_reason,
+                "subrogation_paid_date": _iso(payment_date) if payment_date and recovery_actual else "",
+                "pre_accident_work_status": work_status,
+                "return_to_work_status": return_to_work,
                 "total_incurred": incurred,
                 "total_payment_amount": paid,
+                "reimbursable_claim_amount": reimbursable_claim,
+                "reimbursable_treatment_amount": reimbursable_treatment,
+                "settlement_amount_pc": settlement_offer,
                 "policy_identifier": policy_identifier,
                 "policy_coverage_identifier": policy_coverage_identifier,
                 "insured_entity_identifier": insured_entity_identifier,
+                "coverage_identifier": coverage_identifier,
                 "claim_process_method": "Automated" if requested < 5000 else "Manual",
                 "applicable_deductible_flag": "Y",
                 "bodily_injury_indicator": bodily,
@@ -895,6 +936,7 @@ def write_claims_ldm_raw_batch(base_folder, batch_id, ctx):
             })
             event_seq += 1
             last_event_identifier = registered_event_identifier
+            investigation_event_identifier = registered_event_identifier
             if not is_active:
                 last_event_identifier = f"CE_{batch_id}_{event_seq:06d}"
                 rows["claim_event.csv"].append({
@@ -914,6 +956,7 @@ def write_claims_ldm_raw_batch(base_folder, batch_id, ctx):
                     "event_date": _iso(_bounded_date(open_date + timedelta(days=2), open_date, event_window_end)),
                     "event_description": "Claim investigation ongoing",
                 })
+                investigation_event_identifier = last_event_identifier
                 event_seq += 1
 
             claim_participant_identifier = f"CP_{batch_id}_{participant_seq:06d}"
@@ -1039,7 +1082,7 @@ def write_claims_ldm_raw_batch(base_folder, batch_id, ctx):
             if status == "Under Review" or fraud == "Y":
                 rows["claim_investigation.csv"].append({
                     "claim_investigation_identifier": f"INV_{batch_id}_{claim_seq:06d}",
-                    "claim_event_identifier": last_event_identifier,
+                    "claim_event_identifier": investigation_event_identifier,
                     "claim_handler_identifier": f"CH{claim_seq % 1000:04d}",
                     "claim_handler_notes": "Investigation opened due to claim risk indicators",
                     "investigator_flag": "Y",

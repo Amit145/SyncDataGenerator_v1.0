@@ -35,6 +35,29 @@ def _header(path: Path) -> list[str]:
         return next(csv.reader(f), [])
 
 
+def _key_counts(rows: list[dict], columns: list[str]) -> dict[tuple[str, ...], int]:
+    counts: dict[tuple[str, ...], int] = {}
+    for row in rows:
+        key = tuple(str(row.get(column, "")).strip() for column in columns)
+        counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def _matched_row_count(
+    left_rows: list[dict],
+    left_columns: list[str],
+    right_rows: list[dict],
+    right_columns: list[str],
+) -> tuple[int, int, int]:
+    left_counts = _key_counts(left_rows, left_columns)
+    right_counts = _key_counts(right_rows, right_columns)
+    common_keys = set(left_counts) & set(right_counts)
+    matched = sum(min(left_counts[key], right_counts[key]) for key in common_keys)
+    left_unmatched = sum(left_counts[key] for key in set(left_counts) - set(right_counts))
+    right_unmatched = sum(right_counts[key] for key in set(right_counts) - set(left_counts))
+    return matched, left_unmatched, right_unmatched
+
+
 def verify(run_id: str | None = None) -> int:
     base = ROOT / "data" / "raw" / "claims"
     run_id = run_id or _latest_run(base)
@@ -110,6 +133,66 @@ def verify(run_id: str | None = None) -> int:
                 f"unique_nonblank={len(unique_pull_ts)}"
             )
             errors += 1
+
+    claim_prd1_rows = _read(prd1 / "claim_register.csv")
+    claim_prd2_rows = _read(prd2 / "claim.csv")
+    matched, prd1_unmatched, prd2_unmatched = _matched_row_count(
+        claim_prd1_rows,
+        ["policy_identifier", "coverage_identifier", "claim_type", "claim_open_date"],
+        claim_prd2_rows,
+        ["policy_reference", "coverage_reference", "loss_category", "first_notice_date"],
+    )
+    differing_claim_refs = sum(
+        1
+        for left, right in zip(claim_prd1_rows, claim_prd2_rows)
+        if str(left.get("claim_identifier", "")).strip() != str(right.get("claim_ref_id", "")).strip()
+    )
+    if matched == len(claim_prd1_rows) == len(claim_prd2_rows) and differing_claim_refs > 0:
+        print(
+            "PASS: claims PRD1/PRD2 claim business match works "
+            f"rows={matched}, differing_claim_refs={differing_claim_refs}"
+        )
+    else:
+        print(
+            "FAIL: claims PRD1/PRD2 claim business match issue "
+            f"matched={matched} prd1_unmatched={prd1_unmatched} prd2_unmatched={prd2_unmatched} "
+            f"differing_claim_refs={differing_claim_refs}"
+        )
+        errors += 1
+
+    loss_prd1_rows = _read(prd1 / "loss_event_register.csv")
+    loss_prd2_rows = _read(prd2 / "loss_event.csv")
+    matched, prd1_unmatched, prd2_unmatched = _matched_row_count(
+        loss_prd1_rows,
+        ["loss_event_identifier"],
+        loss_prd2_rows,
+        ["incident_id"],
+    )
+    if matched == len(loss_prd1_rows) == len(loss_prd2_rows):
+        print(f"PASS: claims PRD1/PRD2 loss event reference match works rows={matched}")
+    else:
+        print(
+            "FAIL: claims PRD1/PRD2 loss event reference match issue "
+            f"matched={matched} prd1_unmatched={prd1_unmatched} prd2_unmatched={prd2_unmatched}"
+        )
+        errors += 1
+
+    investigation_prd1_rows = _read(prd1 / "claim_investigation_register.csv")
+    investigation_prd2_rows = _read(prd2 / "claim_investigation.csv")
+    matched, prd1_unmatched, prd2_unmatched = _matched_row_count(
+        investigation_prd1_rows,
+        ["claim_event_identifier", "claim_investigation_start_date"],
+        investigation_prd2_rows,
+        ["case_event_id", "case_open_date"],
+    )
+    if matched == len(investigation_prd1_rows) == len(investigation_prd2_rows):
+        print(f"PASS: claims PRD1/PRD2 investigation event/start-date match works rows={matched}")
+    else:
+        print(
+            "FAIL: claims PRD1/PRD2 investigation event/start-date match issue "
+            f"matched={matched} prd1_unmatched={prd1_unmatched} prd2_unmatched={prd2_unmatched}"
+        )
+        errors += 1
 
     raw_vault_files = sorted(path.name for path in raw_vault.glob("*.csv"))
     expected_raw_vault = sorted(CLAIMS_RAW_FILE_NAMES.values())

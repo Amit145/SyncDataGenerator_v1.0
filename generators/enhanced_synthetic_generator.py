@@ -4180,6 +4180,9 @@ def _add_enhanced_entities(tables: dict[str, list[dict]], ctx: dict, cfg: dict |
         settlement = _date_obj(sample.get("ClaimSettlementDate"))
         if reported and settlement and settlement < reported:
             settlement = reported
+        claim_status = str(sample.get("ClaimStatus", "") or "").strip().upper()
+        if claim_status in {"OPEN", "PENDING", "UNDER REVIEW"}:
+            settlement = None
         recovery_happened = _yn(sample.get("Recovery_Happened"))
         first_recovery = _date_obj(sample.get("First_Recovery_Date"))
         last_recovery = _date_obj(sample.get("Last_Recovery_Date"))

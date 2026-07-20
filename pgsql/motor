@@ -1,0 +1,124 @@
+INSERT INTO business_vault.bv_motor_master
+WITH latest_policy_product AS (
+    -- Pick the latest product link per CRM policy.
+    SELECT *
+    FROM raw_vault.link_policy_product
+    QUALIFY row_number() OVER (
+        PARTITION BY policy_hash_key
+        ORDER BY load_date DESC
+    ) = 1
+),
+
+crm_motor AS (
+    -- CRM is the ownership anchor:
+    -- CRM policy -> insured object -> motor.
+    SELECT DISTINCT
+        hm.insured_object_motor_id AS crm_motor_id,
+        hm.motor_hash_key AS crm_motor_hash_key,
+        hp.policy_id AS crm_policy_id,
+        hprod.product_id AS crm_product_id,
+        smc.*
+    FROM raw_vault.hub_motor hm
+
+    JOIN raw_vault.link_insured_object_motor liom
+      ON liom.motor_hash_key = hm.motor_hash_key
+
+    JOIN raw_vault.link_policy_insured_object lpio
+      ON lpio.insured_object_hash_key = liom.insured_object_hash_key
+
+    JOIN raw_vault.hub_policy hp
+      ON hp.policy_hash_key = lpio.policy_hash_key
+     AND hp.record_source = 'CRM'
+
+    LEFT JOIN latest_policy_product lpp
+      ON lpp.policy_hash_key = hp.policy_hash_key
+
+    LEFT JOIN raw_vault.hub_product hprod
+      ON hprod.product_hash_key = lpp.product_hash_key
+
+    JOIN raw_vault.sat_motor_crm smc
+      ON smc.motor_hash_key = hm.motor_hash_key
+
+    WHERE hm.record_source = 'CRM'
+),
+
+motor_rows AS (
+    -- SAP is enrichment.
+    -- For dummy data:
+    --   CRM policy id = POL_...
+    --   SAP policy id = SAP_POL_...
+    -- We remove source prefixes before comparing.
+    SELECT
+        concat(crm.crm_motor_id, '||', hsap.insured_object_motor_id) AS global_motor_identifier,
+        concat(crm.crm_motor_hash_key, '||', hsap.motor_hash_key) AS master_motor_hash_key,
+        concat(crm.crm_policy_id, '||', sms.policy_id) AS policy_identifier,
+
+        coalesce(nullif(sms.motor_class, ''), nullif(crm.vehicle_class, '')) AS motor_class,
+        coalesce(nullif(sms.motor_model, ''), nullif(crm.vehicle_model, '')) AS motor_model,
+        coalesce(nullif(sms.motor_type, ''), nullif(crm.vehicle_type, '')) AS motor_type,
+
+        crm.variant AS motor_variant,
+        crm.body_type,
+        coalesce(nullif(sms.fuel_type, ''), nullif(crm.fuel_type, '')) AS fuel_type,
+
+        sms.gear_type,
+        sms.body_colour,
+        sms.motor_parked_location,
+
+        crm.vehicle_regstate AS motor_registration_state,
+        to_date(nullif(coalesce(sms.manufacturing_date, crm.vehicle_year), ''), 'yyyy') AS motor_manufacturing_date,
+        cast(nullif(crm.vehicle_age, '') AS int) AS motor_age,
+        crm.risk_class_code AS motor_risk_class_code,
+        crm.vehicle_owner_type AS motor_owner_type,
+        cast(nullif(crm.driver_experience_years, '') AS int) AS driver_experience_years,
+        crm.license_status,
+        cast(nullif(crm.motor_sum_insrd, '') AS double) AS motor_sum_insured,
+        crm.is_existing_motor_customer,
+        crm.motor_lapsed_policies,
+
+        concat(crm.crm_product_id, '||', sms.product_id) AS global_product_identifier
+
+    FROM crm_motor crm
+
+    JOIN raw_vault.sat_motor_sap sms
+      ON regexp_replace(sms.policy_id, '^(SAP_|CRM_)', '')
+       = regexp_replace(crm.crm_policy_id, '^(SAP_|CRM_)', '')
+
+    JOIN raw_vault.hub_motor hsap
+      ON hsap.motor_hash_key = sms.motor_hash_key
+     AND hsap.record_source = 'SAP'
+
+    QUALIFY row_number() OVER (
+        PARTITION BY concat(crm.crm_motor_id, '||', hsap.insured_object_motor_id)
+        ORDER BY crm.crm_motor_hash_key, hsap.motor_hash_key
+    ) = 1
+)
+
+SELECT
+    global_motor_identifier,
+    master_motor_hash_key,
+    policy_identifier,
+    motor_class,
+    motor_model,
+    motor_type,
+    motor_variant,
+    body_type,
+    fuel_type,
+    gear_type,
+    body_colour,
+    motor_parked_location,
+    motor_registration_state,
+    motor_manufacturing_date,
+    motor_age,
+    motor_risk_class_code,
+    motor_owner_type,
+    driver_experience_years,
+    license_status,
+    motor_sum_insured,
+    is_existing_motor_customer,
+    motor_lapsed_policies,
+    current_date() AS effective_from,
+    DATE '9999-12-31' AS effective_to,
+    'Y' AS current_active_flag,
+    global_product_identifier
+FROM motor_rows;s

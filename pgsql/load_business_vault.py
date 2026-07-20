@@ -605,7 +605,8 @@ LOAD_SQL = [
             crm.is_existing_home_customer,
             concat(crm.crm_product_id, '||', shs.product_id) AS global_product_identifier
         FROM crm_home crm
-        JOIN raw_vault.sat_home_sap shs ON shs.policy_id = concat('SAP_', crm.crm_policy_id)
+        JOIN raw_vault.sat_home_sap shs
+          ON regexp_replace(shs.policy_id, '^(SAP_|CRM_)', '') = regexp_replace(crm.crm_policy_id, '^(SAP_|CRM_)', '')
         JOIN raw_vault.hub_home hsap ON hsap.home_hash_key = shs.home_hash_key AND hsap.record_source = 'SAP'
     )
     SELECT
@@ -653,7 +654,8 @@ LOAD_SQL = [
                 hsap.home_hash_key AS sap_home_hash_key,
                 hsap.load_date AS sap_load_date
             FROM crm_home crm
-            JOIN raw_vault.sat_home_sap shs ON shs.policy_id = concat('SAP_', crm.crm_policy_id)
+            JOIN raw_vault.sat_home_sap shs
+              ON regexp_replace(shs.policy_id, '^(SAP_|CRM_)', '') = regexp_replace(crm.crm_policy_id, '^(SAP_|CRM_)', '')
             JOIN raw_vault.hub_home hsap ON hsap.home_hash_key = shs.home_hash_key AND hsap.record_source = 'SAP'
         )
         SELECT global_home_identifier, 'CRM' AS source_name, crm_home_id AS business_key, crm_home_hash_key AS hash_key, crm_load_date AS load_date FROM rows
@@ -711,7 +713,8 @@ LOAD_SQL = [
             crm.motor_lapsed_policies,
             concat(crm.crm_product_id, '||', sms.product_id) AS global_product_identifier
         FROM crm_motor crm
-        JOIN raw_vault.sat_motor_sap sms ON sms.policy_id = concat('SAP_', crm.crm_policy_id)
+        JOIN raw_vault.sat_motor_sap sms
+          ON regexp_replace(sms.policy_id, '^(SAP_|CRM_)', '') = regexp_replace(crm.crm_policy_id, '^(SAP_|CRM_)', '')
         JOIN raw_vault.hub_motor hsap ON hsap.motor_hash_key = sms.motor_hash_key AND hsap.record_source = 'SAP'
     )
     SELECT
@@ -766,7 +769,8 @@ LOAD_SQL = [
                 hsap.motor_hash_key AS sap_motor_hash_key,
                 hsap.load_date AS sap_load_date
             FROM crm_motor crm
-            JOIN raw_vault.sat_motor_sap sms ON sms.policy_id = concat('SAP_', crm.crm_policy_id)
+            JOIN raw_vault.sat_motor_sap sms
+              ON regexp_replace(sms.policy_id, '^(SAP_|CRM_)', '') = regexp_replace(crm.crm_policy_id, '^(SAP_|CRM_)', '')
             JOIN raw_vault.hub_motor hsap ON hsap.motor_hash_key = sms.motor_hash_key AND hsap.record_source = 'SAP'
         )
         SELECT global_motor_identifier, 'CRM' AS source_name, crm_motor_id AS business_key, crm_motor_hash_key AS hash_key, crm_load_date AS load_date FROM rows
