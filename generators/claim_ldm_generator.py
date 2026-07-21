@@ -194,6 +194,7 @@ CLAIMS_LDM_SCHEMAS = {'coverage.csv': ['coverage_identifier',
                 'is_lead',
                 'tenant_identifier',
                 'person_type',
+                'person_status',
                 'preferred_language',
                 'source_identifier',
                 'source_type',
@@ -205,6 +206,7 @@ CLAIMS_LDM_SCHEMAS = {'coverage.csv': ['coverage_identifier',
                 'identification_type',
                 'legal_consent_flag',
                 'credit_rating',
+                'rate_class',
                 'credit_rating_provider'],
  'claim_participant.csv': ['claim_participant_identifier',
                            'role_in_claim',
@@ -687,17 +689,25 @@ def write_claims_ldm_raw_batch(base_folder, batch_id, ctx):
         person_identifier = _source_identifier("PER", person.get("Person Id"))
         if person_identifier and person_identifier not in seen_people:
             seen_people.add(person_identifier)
+            person_type = sat_person.get("Type", "NATURAL")
+            credit_rating = "A" if policy_index % 3 else "B"
+            if person_type == "LEGAL":
+                rate_class = "Commercial"
+            elif credit_rating == "A" and sat_person.get("Operational Paperless Consent", "Y") == "Y":
+                rate_class = "Preferred"
+            else:
+                rate_class = "Standard"
             rows["person.csv"].append({
                 "person_identifier": person_identifier,
-                "person_type": sat_person.get("Type", "NATURAL"),
+                "person_type": person_type,
                 "person_status": "Active",
                 "tenant_identifier": f"TENANT_{policy_index % 5 + 1:03d}",
                 "source_identifier": person_identifier,
                 "source_type": "CLAIMS",
                 "preferred_language": sat_person.get("Preferred Language", "English"),
-                "credit_rating": "A" if policy_index % 3 else "B",
+                "credit_rating": credit_rating,
                 "credit_rating_provider": "Experian",
-                "rate_class": "Preferred" if policy_index % 4 else "Standard",
+                "rate_class": rate_class,
                 "identification_type": "Driving Licence" if nat else "Company Registration",
                 "digital_identifier": f"DIGI{policy_index:08d}",
                 "is_lead": sat_person.get("Is Lead", "N"),
