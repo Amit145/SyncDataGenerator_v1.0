@@ -13,6 +13,9 @@ data/
 # C extensions
 *.so
 
+# azure
+.Allianz_COE/
+
 # Distribution / packaging
 .Python
 build/
