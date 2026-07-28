@@ -377,6 +377,14 @@ CLAIMS_LDM_SCHEMAS = {'coverage.csv': ['coverage_identifier',
                    'claim_event_identifier']}
 
 
+CLAIMS_METADATA_COLUMNS = ["batch_ref", "pull_ts", "origin_sys"]
+
+CLAIMS_LDM_SCHEMAS = {
+    name: CLAIMS_METADATA_COLUMNS + [column for column in schema if column not in CLAIMS_METADATA_COLUMNS]
+    for name, schema in CLAIMS_LDM_SCHEMAS.items()
+}
+
+
 CLAIMS_RAW_FILE_NAMES = {
     "coverage.csv": "coverage_catalog.csv",
     "policy_coverage.csv": "policy_coverage_register.csv",
@@ -509,6 +517,9 @@ def _rebuild_claims_table_from_sources(
     for index, src1 in enumerate(src1_rows):
         src2 = src2_rows[index] if index < len(src2_rows) else {}
         row = {column: "" for column in schema}
+        for column in CLAIMS_METADATA_COLUMNS:
+            if column in row:
+                row[column] = src1.get(column, "") or src2.get(column, "")
         for entry in mapping_rows:
             value = src1.get(entry["logical"], "")
             if str(value).strip() == "" and entry["src2"]:
@@ -1105,8 +1116,17 @@ def write_claims_ldm_raw_batch(base_folder, batch_id, ctx):
             claim_seq += 1
 
     for name, schema in CLAIMS_LDM_SCHEMAS.items():
+        extract_ts = _batch_pull_ts(batch_id)
         schema_rows = [
-            {field: row.get(field, "") for field in schema}
+            {
+                field: (
+                    batch_id if field == "batch_ref"
+                    else extract_ts if field == "pull_ts"
+                    else "CRM" if field == "origin_sys"
+                    else row.get(field, "")
+                )
+                for field in schema
+            }
             for row in rows[name]
         ]
         write_csv(out_dir, CLAIMS_RAW_FILE_NAMES[name], schema_rows, fieldnames=schema)
