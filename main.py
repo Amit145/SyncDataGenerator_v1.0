@@ -698,6 +698,7 @@ if not skip_base_outputs:
 
 extract_ts = (hub_dt - timedelta(days=7)).isoformat()
 base_context = {
+    "country": cfg.get("run_settings", {}).get("country", "UK"),
     "seed": seed,
     "hub_person_rows": hub_person_rows,
     "hub_nat": hub_nat,

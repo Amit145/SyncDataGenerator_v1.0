@@ -48,6 +48,34 @@ def _date_part(value):
     return str(value or "").strip().split(" ")[0].split("T")[0]
 
 
+def _datetime_value(value):
+    text = str(value or "").strip().replace("T", " ")
+    if not text:
+        return None
+    for candidate in (text[:19], text[:10]):
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+            try:
+                return datetime.strptime(candidate, fmt)
+            except ValueError:
+                continue
+    return None
+
+
+def _bounded_datetime(value, start_value, end_value):
+    current = _datetime_value(value)
+    start = _datetime_value(start_value)
+    end = _datetime_value(end_value)
+    if current is None:
+        current = end or start
+    if current is None:
+        return value
+    if start and current < start:
+        current = start
+    if end and current > end:
+        current = end
+    return current.isoformat(sep=" ")
+
+
 def _address_type_for_person(sat_person):
     return "corporate" if str((sat_person or {}).get("Type", "")).upper() == "LEGAL" else "personal"
 
@@ -356,6 +384,9 @@ def write_raw_crm_batch(base_folder, batch_id, ctx, source_dir_name="crm", sourc
     person_by_policy_hk = _invert_multi_map(ctx["policy_person_map"])
     person_by_addr_hk = _invert_multi_map(ctx["person_to_home_address"])
     customer_by_person_hk = ctx["person_to_customer"]
+    contact_hk_by_person = {}
+    for contact_hk, person_hk in person_by_contact_hk.items():
+        contact_hk_by_person.setdefault(person_hk, contact_hk)
 
     raw_rows = {
         "crm_person.csv": [],
@@ -386,6 +417,14 @@ def write_raw_crm_batch(base_folder, batch_id, ctx, source_dir_name="crm", sourc
             "role", "job_title", "legal_person_id", "company_name", "legal_person_score",
             "legal_person_status", "legal_person_job_title", "legal_source_id",
             "legal_source_type", "date_of_constitution", "lead_converted_date",
+            "personal_email", "work_email", "work_phone", "home_phone",
+            "person_identifier", "claims_is_lead", "tenant_identifier",
+            "claims_person_type", "claims_person_status", "claims_preferred_language",
+            "source_identifier", "claims_source_type", "assessed_disability_degree",
+            "is_operational_paperless_consent", "is_opt_in_legitimate_interest",
+            "is_opt_in_validated", "digital_identifier", "identification_type",
+            "legal_consent_flag", "credit_rating", "rate_class",
+            "credit_rating_provider",
         ],
         "crm_contact.csv": [
             "_batch_id", "_extract_ts", "_source_system", "person_id", "contact_id",
@@ -486,9 +525,14 @@ def write_raw_crm_batch(base_folder, batch_id, ctx, source_dir_name="crm", sourc
         leg_hk = leg_hk_by_person.get(person_hk)
         sat_nat = sat_nat_by_hk.get(nat_hk, {})
         sat_leg = sat_leg_by_hk.get(leg_hk, {})
+        contact_hk = contact_hk_by_person.get(person_hk)
+        sat_contact = sat_contact_by_hk.get(contact_hk, {}) if contact_hk else {}
+        person_id = hub_person["Person Id"]
+        is_legal = str(sat_person.get("Type", "")).upper() == "LEGAL"
+        credit_rating = "A" if sat_person.get("Operational Paperless Consent") == "Y" else "B"
 
         raw_rows["crm_person.csv"].append(_with_meta({
-            "person_id": hub_person["Person Id"],
+            "person_id": person_id,
             "person_type": sat_person.get("Type"),
             "tenant_id": sat_person.get("Tenant Id"),
             "is_lead": sat_person.get("Is Lead"),
@@ -519,6 +563,28 @@ def write_raw_crm_batch(base_folder, batch_id, ctx, source_dir_name="crm", sourc
             "legal_source_type": sat_leg.get("Source Type"),
             "date_of_constitution": _date_part(sat_leg.get("Date of Constitution")),
             "lead_converted_date": sat_leg.get("Converted Date"),
+            "personal_email": sat_contact.get("Personal Email"),
+            "work_email": sat_contact.get("Work Email"),
+            "work_phone": sat_contact.get("Work Phone"),
+            "home_phone": sat_contact.get("Home Phone"),
+            "person_identifier": person_id,
+            "claims_is_lead": sat_person.get("Is Lead"),
+            "tenant_identifier": sat_person.get("Tenant Id"),
+            "claims_person_type": sat_person.get("Type"),
+            "claims_person_status": sat_leg.get("Person Status") if is_legal else "Active",
+            "claims_preferred_language": sat_person.get("Preferred Language"),
+            "source_identifier": sat_person.get("Source Id"),
+            "claims_source_type": sat_person.get("Source Type"),
+            "assessed_disability_degree": sat_nat.get("Assesed Disability Degree"),
+            "is_operational_paperless_consent": sat_person.get("Operational Paperless Consent"),
+            "is_opt_in_legitimate_interest": sat_person.get("Legal Consent"),
+            "is_opt_in_validated": "Y",
+            "digital_identifier": f"DIGI_{person_id}",
+            "identification_type": "Company Registration" if is_legal else "Driving Licence",
+            "legal_consent_flag": sat_person.get("Legal Consent"),
+            "credit_rating": credit_rating,
+            "rate_class": "Commercial" if is_legal else "Preferred" if credit_rating == "A" else "Standard",
+            "credit_rating_provider": "Experian",
         }, batch_id, extract_ts, source_system))
 
     for contact_hk, hub_contact in hub_contact_by_hk.items():
@@ -692,6 +758,11 @@ def write_raw_crm_batch(base_folder, batch_id, ctx, source_dir_name="crm", sourc
         sat_policy = sat_policy_by_hk.get(policy_hk, {})
         policy_profile = _policy_payment_profile(sat_policy, hub_policy["Policy Id"])
         renewal_score, renewal_feedback, renewal_escalation = _policy_renewal_satisfaction(sat_policy, policy_profile)
+        renewal_date = _bounded_datetime(
+            sat_policy.get("Renewal Date"),
+            sat_policy.get("Policy Start Date"),
+            sat_policy.get("Policy End Date"),
+        )
         raw_rows["crm_policy.csv"].append(_with_meta({
             "person_id": _safe_get(hub_person_by_hk, person_hk, "Person Id"),
             "customer_id": _safe_get(hub_customer_by_hk, customer_hk, "Customer Id"),
@@ -714,7 +785,7 @@ def write_raw_crm_batch(base_folder, batch_id, ctx, source_dir_name="crm", sourc
             "policy_status": sat_policy.get("Policy Status"),
             "renewal_amount_current_period": sat_policy.get("Renewal Amount Current Period"),
             "renewal_amount_next_period": sat_policy.get("Renewal Amount Next Period"),
-            "renewal_date": sat_policy.get("Renewal Date"),
+            "renewal_date": renewal_date,
             "sales_channel": sat_policy.get("Sales Channel"),
             "is_auto_renew_enabled": policy_profile["is_auto_renew_enabled"],
             "no_claims_discount_years": policy_profile["no_claims_discount_years"],

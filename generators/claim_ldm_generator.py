@@ -190,7 +190,42 @@ CLAIMS_LDM_SCHEMAS = {'coverage.csv': ['coverage_identifier',
                      'cresta_zone',
                      'nat_cat_event_code',
                      'loss_event_identifier'],
- 'person.csv': ['person_identifier',
+ 'person.csv': ['party_ref',
+                'party_kind',
+                'tenant_cd',
+                'lead_ind',
+                'paperless_ind',
+                'src_party_ref',
+                'src_party_type',
+                'natural_ref',
+                'given_nm',
+                'family_nm',
+                'display_nm',
+                'title_txt',
+                'occupation_txt',
+                'dob',
+                'birth_yr',
+                'nationality_txt',
+                'gender_txt',
+                'marital_txt',
+                'disability_degree',
+                'language_pref',
+                'role_txt',
+                'job_title_txt',
+                'legal_ref',
+                'legal_name',
+                'legal_score_no',
+                'legal_status_txt',
+                'legal_job_title_txt',
+                'legal_src_ref',
+                'legal_src_type',
+                'constitution_dt',
+                'lead_conv_dt',
+                'email_home_txt',
+                'email_work_txt',
+                'phone_work_txt',
+                'phone_home_txt',
+                'person_identifier',
                 'is_lead',
                 'tenant_identifier',
                 'person_type',
@@ -224,6 +259,22 @@ CLAIMS_LDM_SCHEMAS = {'coverage.csv': ['coverage_identifier',
                         'insured_object_owner_identifier',
                         'insured_object_address_flag',
                         'insured_object_sum_insured',
+                        'insured_object_description',
+                        'insured_object_current_status',
+                        'insured_object_start_date',
+                        'insured_object_end_date',
+                        'wall_construction_material_type',
+                        'home_risk_address',
+                        'home_type',
+                        'home_state',
+                        'vehicle_body_type',
+                        'vehicle_fuel_type',
+                        'vehicle_risk_address',
+                        'vehicle_risk_class_code',
+                        'vehicle_variant',
+                        'vehicle_reg_state',
+                        'vehicle_class',
+                        'vehicle_model',
                         'exposure_base',
                         'grouped_location_flag',
                         'replacement_value',
@@ -263,6 +314,26 @@ CLAIMS_LDM_SCHEMAS = {'coverage.csv': ['coverage_identifier',
                'outstanding_subrogation_amount',
                'recovery_actual',
                'recovery_type',
+               'outstanding_reserve',
+               'claims_expense',
+               'is_claim_suspicious',
+               'suspected_amt',
+               'fraud_amt',
+               'is_recovery_happened',
+               'days_to_first_recovery',
+               'days_to_last_recovery',
+               'litigation_duration_days',
+               'claim_reason',
+               'claim_channel',
+               'claim_product',
+               'claim_band',
+               'claim_band_sort',
+               'claim_fraud_status',
+               'claim_fraud_type',
+               'claim_fraud_detection_method',
+               'recovery_band',
+               'recovery_category',
+               'recovery_source',
                'claims_rejection_reason',
                'finalization_reason',
                'indemnity_logic',
@@ -418,6 +489,29 @@ CLAIMS_TWO_SOURCE_TABLES = {
     "Claim Investigation": ("claim_investigation.csv", "claim_investigation_register.csv"),
 }
 
+CLAIMS_PRD2_CLAIM_EXTRA_COLUMNS = [
+    "outstanding_reserve",
+    "claims_expense",
+    "is_claim_suspicious",
+    "suspected_amt",
+    "fraud_amt",
+    "is_recovery_happened",
+    "days_to_first_recovery",
+    "days_to_last_recovery",
+    "litigation_duration_days",
+    "claim_reason",
+    "claim_channel",
+    "claim_product",
+    "claim_band",
+    "claim_band_sort",
+    "claim_fraud_status",
+    "claim_fraud_type",
+    "claim_fraud_detection_method",
+    "recovery_band",
+    "recovery_category",
+    "recovery_source",
+]
+
 
 def _snake(value: str) -> str:
     return "_".join(str(value or "").strip().lower().replace("-", " ").split())
@@ -475,6 +569,11 @@ def _load_claims_two_source_spec() -> dict[str, list[dict]]:
             "src1": _snake(src1_attr) if src1_attr else "",
             "src2": _snake(src2_attr) if src2_attr else "",
         })
+    claim_mapping = mapping["claim.csv"]
+    existing_src2 = {entry["src2"] for entry in claim_mapping}
+    for column in CLAIMS_PRD2_CLAIM_EXTRA_COLUMNS:
+        if column not in existing_src2:
+            claim_mapping.append({"logical": column, "src1": column, "src2": column})
     return mapping
 
 
@@ -500,6 +599,8 @@ def _write_claims_source_view(
             source_col = entry["src2"]
             if source_col:
                 value = row.get(entry["logical"], "")
+                if table_name == "claim.csv" and source_col == "recovery_category" and row.get("recovery_category"):
+                    value = row.get("recovery_category", "")
                 if table_name == "claim.csv" and source_col == "claim_ref_id" and row_index % 3 == 0:
                     value = f"{origin_sys}_{value}"
                 out[source_col] = value
@@ -643,32 +744,55 @@ def _has_existing(rows, key, value):
     return any(row.get(key) == value for row in rows)
 
 
+def _jurisdiction_from_country(country):
+    normalized = str(country or "").strip().upper()
+    if normalized in {"UK", "GB", "GBR", "UNITED KINGDOM", "ENGLAND", "SCOTLAND", "WALES", "NORTHERN IRELAND"}:
+        return "UK"
+    if normalized in {"IN", "IND", "INDIA"}:
+        return "India"
+    return str(country or "").strip() or "UK"
+
+
 def write_claims_ldm_raw_batch(base_folder, batch_id, ctx):
     out_dir = os.path.join(base_folder, "claims", batch_id, "raw")
     os.makedirs(out_dir, exist_ok=True)
 
     hub_person_by_hk = _index_by(ctx["hub_person_rows"], "Person Hash Key")
+    hub_contact_by_hk = _index_by(ctx["hub_con_rows"], "Contact Hash Key")
+    hub_nat_by_hk = _index_by(ctx["hub_nat"], "Natural Person Hash Key")
+    hub_leg_by_hk = _index_by(ctx["hub_leg"], "Legal Person Hash Key")
     hub_policy_by_hk = _index_by(ctx["hub_pol_rows"], "Policy Hash Key")
     hub_product_by_hk = _index_by(ctx["hub_prod_rows"], "Product Hash Key")
 
     sat_person_by_hk = _index_by(ctx["sat_per"], "Person Hash Key")
+    sat_contact_by_hk = _index_by(ctx["sat_con"], "Contact Hash Key")
     sat_nat_by_hk = _index_by(ctx["sat_nat"], "Natural Person Hash Key")
+    sat_leg_by_hk = _index_by(ctx["sat_leg"], "Legal Person Hash Key")
     sat_policy_by_hk = _index_by(ctx["sat_pol"], "Policy Hash Key")
+    sat_motor_by_hk = _index_by(ctx["sat_mot"], "Motor Hash Key")
+    sat_home_by_hk = _index_by(ctx["sat_hom"], "Home Hash Key")
 
     person_by_policy_hk = _invert_multi_map(ctx["policy_person_map"])
+    contact_hk_by_person = {
+        person_hk: _as_list(contact_hks)[0]
+        for person_hk, contact_hks in ctx["person_to_contact"].items()
+        if _as_list(contact_hks)
+    }
     nat_by_person_hk = {
         person_hk: _as_list(nat_hks)[0]
         for person_hk, nat_hks in ctx["person_to_nat"].items()
         if _as_list(nat_hks)
     }
+    leg_by_person_hk = dict(ctx["person_to_leg"])
     product_hk_by_code = {code: hk for hk, code in ctx["product_code_by_hk"].items()}
 
     rows = {name: [] for name in CLAIMS_LDM_SCHEMAS}
+    applicable_jurisdiction = _jurisdiction_from_country(ctx.get("country", "UK"))
     place_templates = [
-        ("Delhi NCR", "28.6139", "77.2090", "Low", "Road Intersection", "25", "150000", "CEN001", "COM001", "ROOFTOP", "Central"),
-        ("Mumbai", "19.0760", "72.8777", "Medium", "Residential Area", "14", "220000", "CEN002", "COM002", "STREET", "West"),
-        ("Bangalore", "12.9716", "77.5946", "Low", "Commercial Zone", "920", "180000", "CEN003", "COM003", "PARCEL", "South"),
         ("Manchester", "53.4808", "-2.2426", "Medium", "Urban Junction", "38", "260000", "CEN004", "COM004", "ROOFTOP", "North West"),
+        ("London", "51.5074", "-0.1278", "Low", "Urban Street", "11", "420000", "CEN005", "COM005", "ROOFTOP", "Greater London"),
+        ("Birmingham", "52.4862", "-1.8904", "Medium", "Residential Area", "140", "210000", "CEN006", "COM006", "STREET", "West Midlands"),
+        ("Glasgow", "55.8642", "-4.2518", "Medium", "Commercial Zone", "40", "230000", "CEN007", "COM007", "PARCEL", "Scotland"),
     ]
     condition_templates = [
         ("MC_FRAC", "Fracture", "Temporary", "N"),
@@ -695,7 +819,12 @@ def write_claims_ldm_raw_batch(base_folder, batch_id, ctx):
         sat_policy = sat_policy_by_hk.get(policy_hk, {})
         person = hub_person_by_hk.get(person_hk, {})
         sat_person = sat_person_by_hk.get(person_hk, {})
-        nat = sat_nat_by_hk.get(nat_by_person_hk.get(person_hk), {})
+        nat_hk = nat_by_person_hk.get(person_hk)
+        leg_hk = leg_by_person_hk.get(person_hk)
+        nat = sat_nat_by_hk.get(nat_hk, {}) if nat_hk else {}
+        leg = sat_leg_by_hk.get(leg_hk, {}) if leg_hk else {}
+        contact_hk = contact_hk_by_person.get(person_hk)
+        sat_contact = sat_contact_by_hk.get(contact_hk, {}) if contact_hk else {}
 
         person_identifier = _source_identifier("PER", person.get("Person Id"))
         if person_identifier and person_identifier not in seen_people:
@@ -709,6 +838,41 @@ def write_claims_ldm_raw_batch(base_folder, batch_id, ctx):
             else:
                 rate_class = "Standard"
             rows["person.csv"].append({
+                "party_ref": person.get("Person Id"),
+                "party_kind": person_type,
+                "tenant_cd": sat_person.get("Tenant Id", f"TENANT_{policy_index % 5 + 1:03d}"),
+                "lead_ind": sat_person.get("Is Lead", "N"),
+                "paperless_ind": sat_person.get("Operational Paperless Consent", "Y"),
+                "src_party_ref": person_identifier,
+                "src_party_type": "CLAIMS",
+                "natural_ref": hub_nat_by_hk.get(nat_hk, {}).get("Natural Person Id", "") if nat_hk else "",
+                "given_nm": nat.get("First Name", "") if person_type != "LEGAL" else "",
+                "family_nm": nat.get("Last Name", "") if person_type != "LEGAL" else "",
+                "display_nm": nat.get("Full Name", "") if person_type != "LEGAL" else leg.get("Company Name", ""),
+                "title_txt": nat.get("Courtesy Title", "") if person_type != "LEGAL" else "",
+                "occupation_txt": nat.get("Occupation", "") if person_type != "LEGAL" else "",
+                "dob": nat.get("Birth Date", "") if person_type != "LEGAL" else "",
+                "birth_yr": nat.get("Birth Year", "") if person_type != "LEGAL" else "",
+                "nationality_txt": nat.get("Nationality", "") if person_type != "LEGAL" else "",
+                "gender_txt": nat.get("Gender", "") if person_type != "LEGAL" else "",
+                "marital_txt": nat.get("Marital Status", "") if person_type != "LEGAL" else "",
+                "disability_degree": nat.get("Assesed Disability Degree", "") if person_type != "LEGAL" else "",
+                "language_pref": sat_person.get("Preferred Language", "English"),
+                "role_txt": nat.get("Role", "") if person_type != "LEGAL" else "Policy Holder",
+                "job_title_txt": nat.get("Job Title", "") if person_type != "LEGAL" else leg.get("Job Title", ""),
+                "legal_ref": hub_leg_by_hk.get(leg_hk, {}).get("Legal Person Id", "") if leg_hk else "",
+                "legal_name": leg.get("Company Name", "") if person_type == "LEGAL" else "",
+                "legal_score_no": leg.get("Person Score", "") if person_type == "LEGAL" else "",
+                "legal_status_txt": leg.get("Person Status", "") if person_type == "LEGAL" else "",
+                "legal_job_title_txt": leg.get("Job Title", "") if person_type == "LEGAL" else "",
+                "legal_src_ref": leg.get("Source Id", "") if person_type == "LEGAL" else "",
+                "legal_src_type": leg.get("Source Type", "") if person_type == "LEGAL" else "",
+                "constitution_dt": _date(leg.get("Date of Constitution", ""), "") if person_type == "LEGAL" else "",
+                "lead_conv_dt": leg.get("Converted Date", "") if person_type == "LEGAL" else "",
+                "email_home_txt": sat_contact.get("Personal Email", ""),
+                "email_work_txt": sat_contact.get("Work Email", ""),
+                "phone_work_txt": sat_contact.get("Work Phone", ""),
+                "phone_home_txt": sat_contact.get("Home Phone", ""),
                 "person_identifier": person_identifier,
                 "person_type": person_type,
                 "person_status": "Active",
@@ -737,18 +901,98 @@ def write_claims_ldm_raw_batch(base_folder, batch_id, ctx):
         policy_end = datetime.fromisoformat(_date(sat_policy.get("Policy End Date"), "2024-12-31"))
         premium = _amount(sat_policy.get("Renewal Amount Current Period"), 900.0)
         policy_type = "Motor" if ctx["policy_to_motor"].get(policy_hk) else "Property" if ctx["policy_to_home"].get(policy_hk) else "Liability"
+        policy_issue_date = _bounded_date(policy_start - timedelta(days=7), policy_start - timedelta(days=30), policy_start)
+        policy_duration = max((policy_end - policy_start).days, 0)
+        policy_renewal_date = _bounded_date(policy_end - timedelta(days=30), policy_start, policy_end)
+        policy_renewal_notice_date = _bounded_date(policy_renewal_date - timedelta(days=14), policy_start, policy_renewal_date)
+        policy_status = sat_policy.get("Policy Status", "ACTIVE")
+        is_cancelled = str(policy_status or "").upper() in {"CANCELLED", "CANCELED", "LAPSED"}
+        replacement_value_for_policy = round(max(premium * 80, 50000), 2)
+        payment_date = _bounded_date(policy_start + timedelta(days=min(5, policy_duration)), policy_start, policy_end)
+        debit_date = _bounded_date(payment_date + timedelta(days=2), policy_start, policy_end)
+        coverage_identifier = f"COV_{policy_type.upper()}_{(policy_index % 5) + 1:03d}"
+        policy_coverage_identifier = f"PC_{batch_id}_{policy_index:06d}"
         rows["policy.csv"].append({
             "policy_identifier": policy_identifier,
             "policy_number": hub_policy.get("Policy Number", policy_identifier),
             "policy_type": policy_type,
-            "policy_status_code": sat_policy.get("Policy Status", "ACTIVE"),
+            "aspire_policy_identifier": f"ASP_{policy_identifier}",
+            "policy_status_code": policy_status,
+            "policy_status_date": _iso(policy_start),
             "policy_inception_date": _iso(policy_start),
+            "policy_inception_date_as_new_business": _iso(policy_start),
+            "policy_inception_date_of_first_allianz_policy": _iso(policy_start),
+            "policy_issue_date": _iso(policy_issue_date),
             "policy_end_date": _iso(policy_end),
+            "policy_expiry_date": _iso(policy_end),
+            "policy_cancellation_date": _iso(policy_end) if is_cancelled else "",
+            "policy_cancellation_notification_date": _iso(policy_renewal_notice_date) if is_cancelled else "",
+            "policy_cancellation_reason": "Non Payment" if is_cancelled else "",
+            "policy_renewal_date": _iso(policy_renewal_date),
+            "policy_renewal_notification_date": _iso(policy_renewal_notice_date),
+            "policy_duration": policy_duration,
             "premium": premium,
-            "product_identifier": product_identifier,
+            "gross_written_premium": premium,
+            "gross_earned_premium": round(premium * 0.92, 2),
+            "gross_original_premium": round(premium * 0.97, 2),
+            "paid_premium": round(premium * 0.88, 2),
+            "sum_of_paid_premium": round(premium * 0.88, 2),
+            "unearned_premium_amount": round(premium * 0.08, 2),
+            "adjustment_premium": round(premium * 0.02, 2),
+            "adjustment_earned_premium": round(premium * 0.01, 2),
+            "estimated_premium_income": round(premium * 1.04, 2),
+            "subject_premium_income": premium,
+            "technical_price": round(premium * 0.82, 2),
+            "technical_expected_loss": round(premium * 0.55, 2),
+            "projected_loss_ratio": 0.55,
+            "underwriting_premium_surcharge": round(premium * 0.03, 2),
+            "commission_due_amount": round(premium * 0.12, 2),
+            "gross_written_commission_amount": round(premium * 0.12, 2),
+            "gross_earned_commission": round(premium * 0.10, 2),
+            "gross_original_commission": round(premium * 0.11, 2),
+            "commission_share": 0.12,
+            "differed_acquisition_cost": round(premium * 0.04, 2),
+            "frequency_of_installments": "Monthly" if policy_index % 2 else "Annual",
+            "preferred_payment_date": _iso(payment_date),
+            "date_of_debit": _iso(debit_date),
+            "tax_code": "IPT",
+            "tariff_version": f"TV{policy_start.year}",
+            "premium_configuration_code": f"PCFG_{policy_type.upper()}",
+            "ifrs17_measurement_model": "PAA",
+            "current_bonus_malus_class": f"BM{policy_index % 10 + 1}",
+            "previous_bonus_malus_class": f"BM{policy_index % 10}",
+            "no_claims_discount": max(0, 30 - (policy_index % 6) * 5),
+            "annual_aggregate_deductible": round(max(premium * 0.20, 250), 2),
+            "limit_for_indemnification": round(replacement_value_for_policy * 1.25, 2),
+            "limit_business_interruption": round(replacement_value_for_policy * 0.15, 2) if policy_type == "Property" else 0,
+            "number_of_insured_persons": 1,
+            "number_of_substituting_policy": policy_index % 2,
+            "automatic_renewal_years": 1,
+            "reinsurance_flag": "Y" if replacement_value_for_policy > 100000 else "N",
+            "retention_flag": "Y",
+            "tacit_renewal_flag": "Y",
+            "multi_year_contracts": "N",
+            "lapse_flag": "Y" if str(policy_status or "").upper() == "LAPSED" else "N",
+            "flag_change_of_contract": "N",
+            "flag_cross_selling": "Y" if policy_index % 4 == 0 else "N",
+            "flag_quote_conversion": "Y",
+            "marketing_campaign_flag": "Y" if policy_index % 5 == 0 else "N",
+            "primary_excess_liability_flag": "Y" if policy_type == "Liability" else "N",
+            "operational_paperless_consent": sat_person.get("Operational Paperless Consent", "Y"),
+            "legal_consent": sat_person.get("Legal Consent", "Y"),
+            "declared_driver": person_identifier if policy_type == "Motor" else "",
+            "broker_wording": f"{policy_type} standard wording",
+            "manual_clauses": "Standard exclusions apply",
+            "rationale_for_cession": "Risk retention within treaty limits",
+            "statute_of_limitation_date": _iso(policy_end + timedelta(days=365 * 3)),
+            "product_group_identifier": f"PG_{policy_type.upper()}",
+            "policy_holder_identifier": person_identifier,
+            "portfolio_identifier": f"PORT_{policy_type.upper()}_{policy_index % 5 + 1:03d}",
+            "party_in_role_identifier": f"PIR_{batch_id}_{policy_index:06d}",
+            "policy_coverage_identifier": policy_coverage_identifier,
+            "coverage_identifier": coverage_identifier,
         })
 
-        coverage_identifier = f"COV_{policy_type.upper()}_{(policy_index % 5) + 1:03d}"
         if not _has_existing(rows["coverage.csv"], "coverage_identifier", coverage_identifier):
             rows["coverage.csv"].append({
                 "coverage_identifier": coverage_identifier,
@@ -763,19 +1007,61 @@ def write_claims_ldm_raw_batch(base_folder, batch_id, ctx):
         insured_entity_identifier = f"IE_{batch_id}_{policy_index:06d}"
         insured_entity_type = "Vehicle" if policy_type == "Motor" else "Property" if policy_type == "Property" else "Liability"
         replacement_value = round(max(premium * 80, 50000), 2)
+        motor_hk = ctx["policy_to_motor"].get(policy_hk)
+        home_hk = ctx["policy_to_home"].get(policy_hk)
+        sat_motor = sat_motor_by_hk.get(motor_hk, {}) if motor_hk else {}
+        sat_home = sat_home_by_hk.get(home_hk, {}) if home_hk else {}
+        if policy_type == "Motor":
+            insured_object_description = " ".join(
+                part for part in [
+                    str(sat_motor.get("Vehicle Year", "")).strip(),
+                    str(sat_motor.get("Vehicle Model", "")).strip(),
+                    str(sat_motor.get("Variant", "")).strip(),
+                ]
+                if part
+            )
+        elif policy_type == "Property":
+            insured_object_description = " ".join(
+                part for part in [
+                    str(sat_home.get("Home Type", "")).strip(),
+                    str(sat_home.get("Home Risk Address", "")).strip(),
+                ]
+                if part
+            )
+        else:
+            insured_object_description = "Third party liability exposure"
         rows["insured_entity.csv"].append({
             "insured_entity_identifier": insured_entity_identifier,
             "entity_type": insured_entity_type,
             "insured_person_identifier": person_identifier,
             "insured_object_owner_identifier": person_identifier,
+            "insured_object_address_flag": "Y" if policy_type in {"Motor", "Property"} else "N",
+            "insured_object_sum_insured": replacement_value,
+            "insured_object_description": insured_object_description,
+            "insured_object_current_status": policy_status,
+            "insured_object_start_date": _iso(policy_start),
+            "insured_object_end_date": _iso(policy_end),
+            "wall_construction_material_type": sat_home.get("Wall Construction", "") if policy_type == "Property" else "",
+            "home_risk_address": sat_home.get("Home Risk Address", "") if policy_type == "Property" else "",
+            "home_type": sat_home.get("Home Type", "") if policy_type == "Property" else "",
+            "home_state": sat_home.get("Home State", "") if policy_type == "Property" else "",
+            "vehicle_body_type": sat_motor.get("Body Type", "") if policy_type == "Motor" else "",
+            "vehicle_fuel_type": sat_motor.get("Fuel Type", "") if policy_type == "Motor" else "",
+            "vehicle_risk_address": sat_motor.get("Motor Risk Address", "") if policy_type == "Motor" else "",
+            "vehicle_risk_class_code": sat_motor.get("Risk Class Code", "") if policy_type == "Motor" else "",
+            "vehicle_variant": sat_motor.get("Variant", "") if policy_type == "Motor" else "",
+            "vehicle_reg_state": sat_motor.get("Vehicle RegState", "") if policy_type == "Motor" else "",
+            "vehicle_class": sat_motor.get("Vehicle Class", "") if policy_type == "Motor" else "",
+            "vehicle_model": sat_motor.get("Vehicle Model", "") if policy_type == "Motor" else "",
             "exposure_base": "IDV" if policy_type == "Motor" else "Reinstatement",
             "replacement_value": replacement_value,
+            "type_of_insured_entity": insured_entity_type,
             "value_of_content": round(replacement_value * 0.08, 2),
+            "value_of_goods_carried": round(replacement_value * 0.03, 2) if policy_type == "Motor" else "",
             "actual_pre_event_entity_value": round(replacement_value * 0.92, 2),
             "damaged_entity": "Car" if policy_type == "Motor" else "House" if policy_type == "Property" else "Third Party",
         })
 
-        policy_coverage_identifier = f"PC_{batch_id}_{policy_index:06d}"
         rows["policy_coverage.csv"].append({
             "policy_coverage_identifier": policy_coverage_identifier,
             "coverage_identifier": coverage_identifier,
@@ -836,6 +1122,26 @@ def write_claims_ldm_raw_batch(base_folder, batch_id, ctx):
             reimbursable_claim = round(max(incurred - paid, 0), 2)
             reimbursable_treatment = round(requested * 0.12, 2) if bodily == "Y" else 0
             settlement_offer = round(incurred * (0.95 if not is_active else 0.75), 2)
+            outstanding_reserve = round(max(incurred - paid, 0), 2)
+            claims_expense = round(requested * (0.08 if litigation == "Y" else 0.04), 2)
+            is_claim_suspicious = "Y" if fraud == "Y" or litigation == "Y" or risk_level == "High" else "N"
+            suspected_amt = round(requested * 0.35, 2) if is_claim_suspicious == "Y" else ""
+            fraud_amt = round(requested * 0.50, 2) if fraud == "Y" else ""
+            is_recovery_happened = "Y" if payment_date and recovery_actual > 0 else "N"
+            days_to_first_recovery = (payment_date - open_date).days if is_recovery_happened == "Y" else ""
+            days_to_last_recovery = (event_window_end - open_date).days if is_recovery_happened == "Y" else ""
+            litigation_duration_days = (event_window_end - open_date).days if litigation == "Y" else ""
+            claim_band = "High" if requested >= 15000 else "Medium" if requested >= 7000 else "Low"
+            claim_band_sort = {"Low": 1, "Medium": 2, "High": 3}[claim_band]
+            claim_fraud_status = "Confirmed" if fraud == "Y" else "Under Investigation" if is_claim_suspicious == "Y" else ""
+            claim_fraud_type = "Opportunistic" if fraud == "Y" else "Suspicious Pattern" if is_claim_suspicious == "Y" else ""
+            claim_fraud_detection_method = "Rules Engine" if is_claim_suspicious == "Y" else ""
+            recovery_band = "High" if recovery_expected >= 2500 else "Medium" if recovery_expected >= 1000 else "Low"
+            recovery_category = "Legal Recovery" if litigation == "Y" else "Motor Salvage" if policy_type == "Motor" else "Property Subrogation" if policy_type == "Property" else "Liability Recovery"
+            recovery_source = "Third Party" if litigation == "Y" else "Salvage Partner" if policy_type == "Motor" else "Insurer"
+            indemnity_logic = "Repair network indemnity" if policy_type == "Motor" else "Cash settlement"
+            emergency_service_cost = round(requested * 0.015, 2) if policy_type == "Property" and risk_level == "High" else ""
+            external_fte_count = 1 + (claim_index % 2) if litigation == "Y" else ""
             rows["claim.csv"].append({
                 "claim_identifier": claim_identifier,
                 "claim_number": f"CLM-{batch_id}-{claim_seq:06d}",
@@ -851,21 +1157,51 @@ def write_claims_ldm_raw_batch(base_folder, batch_id, ctx):
                 "claim_duration": (event_window_end - open_date).days,
                 "claim_type_code": policy_type.upper()[:3],
                 "claim_requested_amount": requested,
+                "claim_specific_flag": "Y" if risk_level == "High" else "N",
                 "claim_sensitivity": risk_level,
                 "hospitalized_indicator": hospitalized,
+                "cross_border_claim_indicator": "N",
+                "intercompany_agreement_flag": "N",
+                "no_claims_discount": "Y" if policy_type == "Motor" else "N",
                 "outstanding_subrogation_amount": recovery_expected,
                 "recovery_actual": recovery_actual,
                 "recovery_type": recovery_type,
+                "outstanding_reserve": outstanding_reserve,
+                "claims_expense": claims_expense,
+                "is_claim_suspicious": is_claim_suspicious,
+                "suspected_amt": suspected_amt,
+                "fraud_amt": fraud_amt,
+                "is_recovery_happened": is_recovery_happened,
+                "days_to_first_recovery": days_to_first_recovery,
+                "days_to_last_recovery": days_to_last_recovery,
+                "litigation_duration_days": litigation_duration_days,
+                "claim_reason": "Collision" if policy_type == "Motor" else "Property Damage" if policy_type == "Property" else "Third Party Liability",
+                "claim_channel": "Online" if claim_seq % 2 else "Call Center",
+                "claim_product": policy_type,
+                "claim_band": claim_band,
+                "claim_band_sort": claim_band_sort,
+                "claim_fraud_status": claim_fraud_status,
+                "claim_fraud_type": claim_fraud_type,
+                "claim_fraud_detection_method": claim_fraud_detection_method,
+                "recovery_band": recovery_band,
+                "recovery_category": recovery_category,
+                "recovery_source": recovery_source,
                 "claims_rejection_reason": rejection_reason,
                 "finalization_reason": finalization_reason,
+                "indemnity_logic": indemnity_logic,
+                "coverage_verification_result": "Verified",
+                "instruction_closure_date": _iso(close_date) if close_date else "",
                 "subrogation_paid_date": _iso(payment_date) if payment_date and recovery_actual else "",
                 "pre_accident_work_status": work_status,
                 "return_to_work_status": return_to_work,
+                "fire_brigade_fees_and_levies": emergency_service_cost,
+                "claims_external_fte_count": external_fte_count,
                 "total_incurred": incurred,
                 "total_payment_amount": paid,
                 "reimbursable_claim_amount": reimbursable_claim,
                 "reimbursable_treatment_amount": reimbursable_treatment,
                 "settlement_amount_pc": settlement_offer,
+                "claim_amounts_description": f"Estimated {requested}; incurred {incurred}; paid {paid}",
                 "policy_identifier": policy_identifier,
                 "policy_coverage_identifier": policy_coverage_identifier,
                 "insured_entity_identifier": insured_entity_identifier,
@@ -885,7 +1221,7 @@ def write_claims_ldm_raw_batch(base_folder, batch_id, ctx):
             rows["physical_place.csv"].append({
                 "physical_place_identifier": physical_place_identifier,
                 "place_identifier": physical_place_identifier,
-                "applicable_jurisdiction": "UK" if policy_index % 4 else "India",
+                "applicable_jurisdiction": applicable_jurisdiction,
                 "latitude": place[1],
                 "longitude": place[2],
                 "sub_region": place[0],
