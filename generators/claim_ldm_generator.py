@@ -142,6 +142,9 @@ CLAIMS_LDM_SCHEMAS = {'coverage.csv': ['coverage_identifier',
  'physical_place.csv': ['physical_place_identifier',
                         'place_identifier',
                         'applicable_jurisdiction',
+                        'city',
+                        'state',
+                        'country',
                         'census_zone',
                         'commune_code',
                         'geocoding_level',
@@ -399,6 +402,8 @@ CLAIMS_LDM_SCHEMAS = {'coverage.csv': ['coverage_identifier',
                     'court_matter_type',
                     'date_of_legal_representation',
                     'first_litigation_date',
+                    'litigation_start_date',
+                    'litigation_end_date',
                     'litigation_date',
                     'decision_of_court',
                     'claim_identifier'],
@@ -1222,6 +1227,9 @@ def write_claims_ldm_raw_batch(base_folder, batch_id, ctx):
                 "physical_place_identifier": physical_place_identifier,
                 "place_identifier": physical_place_identifier,
                 "applicable_jurisdiction": applicable_jurisdiction,
+                "city": place[0],
+                "state": place[10],
+                "country": applicable_jurisdiction,
                 "latitude": place[1],
                 "longitude": place[2],
                 "sub_region": place[0],
@@ -1425,14 +1433,20 @@ def write_claims_ldm_raw_batch(base_folder, batch_id, ctx):
             })
 
             if litigation == "Y":
+                legal_representation_date = _bounded_date(open_date + timedelta(days=4), open_date, event_window_end)
+                litigation_start_date = _bounded_date(legal_representation_date + timedelta(days=1), legal_representation_date, event_window_end)
+                litigation_hearing_date = _bounded_date(litigation_start_date + timedelta(days=15), litigation_start_date, event_window_end)
+                litigation_end_date = _bounded_date(litigation_hearing_date + timedelta(days=10), litigation_hearing_date, event_window_end)
                 rows["litigation.csv"].append({
                     "litigation_identifier": f"LIT_{batch_id}_{claim_seq:06d}",
                     "claim_event_identifier": last_event_identifier,
                     "claim_identifier": claim_identifier,
                     "court_matter_type": "Liability Dispute",
-                    "date_of_legal_representation": _iso(_bounded_date(open_date + timedelta(days=4), open_date, event_window_end)),
-                    "first_litigation_date": _iso(_bounded_date(open_date + timedelta(days=5), open_date, event_window_end)),
-                    "litigation_date": _iso(_bounded_date(open_date + timedelta(days=20), open_date, event_window_end)),
+                    "date_of_legal_representation": _iso(legal_representation_date),
+                    "first_litigation_date": _iso(litigation_start_date),
+                    "litigation_start_date": _iso(litigation_start_date),
+                    "litigation_end_date": _iso(litigation_end_date),
+                    "litigation_date": _iso(litigation_hearing_date),
                     "decision_of_court": "Pending" if is_active else "Settled",
                 })
 
