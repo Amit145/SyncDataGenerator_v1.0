@@ -345,6 +345,9 @@ Validate the claims two-source raw and claims vault:
 .\venv\Scripts\python.exe .\misc\verify_claims_product.py --run-id <run_id>
 ```
 
+Claims data contracts are documented under `data_contract/README.md`.
+
+
 `prd_delta` added entity registers:
 
 - `broker_book.csv`

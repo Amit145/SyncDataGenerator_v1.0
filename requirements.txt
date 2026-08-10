@@ -7,3 +7,5 @@ tqdm
 openai
 anthropic
 mysql-connector-python
+PyYAML
+jsonschema

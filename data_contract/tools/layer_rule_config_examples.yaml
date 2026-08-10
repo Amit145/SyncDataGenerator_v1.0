@@ -1,0 +1,301 @@
+# Sample config snippets for create_data_contract.py.
+# Copy the relevant table blocks into your generation config and adjust names/columns.
+
+# -----------------------------------------------------------------------------
+# RAW LAYER
+# Purpose: source arrival, schema, required fields, and source key checks.
+# -----------------------------------------------------------------------------
+raw_example:
+  tables:
+    claim_register.csv:
+      primaryKey: claim_identifier
+      businessKey: claim_identifier
+      businessName: Claim Register
+      grain: "One row per claim_identifier per batch."
+      tableRules:
+        - ruleId: dq_raw_claim_row_count
+          ruleName: Raw claim row count
+          type: library
+          metric: rowCount
+          mustBeGreaterThan: 0
+          dimension: completeness
+          severity: error
+          description: "Raw claim_register must not be empty."
+          failureAction: reject
+      columns:
+        origin_sys:
+          required: true
+          allowedValues:
+            - SAP
+            - CLAIMS_LDM
+        claim_identifier:
+          required: true
+          columnRules:
+            - ruleId: dq_raw_claim_identifier_not_null
+              ruleName: Raw claim identifier not null
+              type: library
+              metric: nullValues
+              mustBe: 0
+              dimension: completeness
+              severity: error
+              description: "claim_identifier must be populated."
+              failureAction: reject
+
+# -----------------------------------------------------------------------------
+# BRONZE LAYER
+# Purpose: standardized columns, type casting, reject/quarantine checks, and
+# source-to-bronze reconciliation.
+# -----------------------------------------------------------------------------
+bronze_example:
+  tables:
+    claim.csv:
+      primaryKey: claim_id
+      businessKey: claim_id
+      businessName: Bronze Claim
+      grain: "One row per claim_id per batch."
+      tableRules:
+        - ruleId: dq_bronze_claim_row_count
+          ruleName: Bronze claim row count
+          type: library
+          metric: rowCount
+          mustBeGreaterThan: 0
+          dimension: completeness
+          severity: error
+          description: "Bronze claim table must not be empty."
+          failureAction: reject
+        - ruleId: dq_bronze_claim_source_reconciliation
+          ruleName: Raw to bronze claim key reconciliation
+          type: sql
+          query: >
+            SELECT COUNT(*) AS missing_keys
+            FROM {source_table} s
+            LEFT JOIN {full_table_name} b
+              ON s.claim_identifier = b.claim_id
+            WHERE b.claim_id IS NULL
+          mustBe:
+            missing_keys: 0
+          dimension: completeness
+          severity: error
+          description: "All raw claim source keys must exist in bronze."
+          referencedColumns:
+            - claim_id
+          failureAction: reject
+      columns:
+        claim_id:
+          required: true
+        load_ts:
+          required: true
+        record_source:
+          required: true
+        claim_status:
+          required: true
+          allowedValues:
+            - Open
+            - Closed
+            - Reopened
+
+# -----------------------------------------------------------------------------
+# SILVER / DATA VAULT LAYER
+# Purpose: hub/link/satellite key integrity, hashdiff checks, source lineage,
+# and SCD2/effective dating where applicable.
+# -----------------------------------------------------------------------------
+silver_data_vault_example:
+  tables:
+    hub_claim.csv:
+      primaryKey: claim_hash_key
+      businessKey: claim_identifier
+      businessName: Hub Claim
+      grain: "One row per unique claim business key."
+      tableRules:
+        - ruleId: dq_dv_hub_claim_hash_key_unique
+          ruleName: Hub claim hash key unique
+          type: sql
+          query: >
+            SELECT COUNT(*) - COUNT(DISTINCT claim_hash_key) AS duplicate_hash_keys
+            FROM {full_table_name}
+            WHERE {target_watermak_exp}
+          mustBe:
+            duplicate_hash_keys: 0
+          dimension: uniqueness
+          severity: error
+          description: "claim_hash_key must be unique in hub_claim."
+          referencedColumns:
+            - claim_hash_key
+          failureAction: reject
+      columns:
+        claim_hash_key:
+          required: true
+        claim_identifier:
+          required: true
+        load_date:
+          required: true
+        record_source:
+          required: true
+
+    sat_claim.csv:
+      primaryKey: claim_hash_key
+      businessKey: claim_hash_key
+      businessName: Satellite Claim
+      grain: "One row per claim_hash_key per load_date/hashdiff version."
+      tableRules:
+        - ruleId: dq_dv_sat_claim_hashdiff_not_null
+          ruleName: Satellite claim hashdiff populated
+          type: sql
+          query: >
+            SELECT COUNT(*) AS hashdiff_nulls
+            FROM {full_table_name}
+            WHERE hashdiff IS NULL
+              AND {target_watermak_exp}
+          mustBe:
+            hashdiff_nulls: 0
+          dimension: completeness
+          severity: error
+          description: "hashdiff must be populated for satellite rows."
+          referencedColumns:
+            - hashdiff
+          failureAction: reject
+        - ruleId: dq_dv_sat_claim_effective_dates
+          ruleName: Satellite claim effective date validity
+          type: sql
+          query: >
+            SELECT COUNT(*) AS invalid_intervals
+            FROM {full_table_name}
+            WHERE effective_to_ts < '9999-12-31T00:00:00.000+00:00'
+              AND effective_from_ts >= effective_to_ts
+              AND {target_watermak_exp}
+          mustBe:
+            invalid_intervals: 0
+          dimension: consistency
+          severity: error
+          description: "effective_from_ts must be before effective_to_ts for closed satellite intervals."
+          referencedColumns:
+            - effective_from_ts
+            - effective_to_ts
+          failureAction: reject
+      columns:
+        claim_hash_key:
+          required: true
+        hashdiff:
+          required: true
+        load_date:
+          required: true
+        record_source:
+          required: true
+
+    link_claim_policy.csv:
+      primaryKey: claim_policy_hash_key
+      businessKey: claim_policy_hash_key
+      businessName: Link Claim Policy
+      grain: "One row per unique claim-policy relationship."
+      tableRules:
+        - ruleId: dq_dv_link_claim_policy_no_orphan_claim
+          ruleName: Link claim policy has valid claim hub
+          type: sql
+          query: >
+            SELECT COUNT(*) AS orphan_claim_links
+            FROM {full_table_name} l
+            LEFT JOIN hub_claim h
+              ON l.claim_hash_key = h.claim_hash_key
+            WHERE h.claim_hash_key IS NULL
+          mustBe:
+            orphan_claim_links: 0
+          dimension: consistency
+          severity: error
+          description: "Every link_claim_policy row must reference an existing hub_claim row."
+          referencedColumns:
+            - claim_hash_key
+          failureAction: reject
+
+# -----------------------------------------------------------------------------
+# GOLD / DIMENSIONAL LAYER
+# Purpose: surrogate keys, fact-to-dimension integrity, grain checks, measure
+# rules, and aggregate reconciliation.
+# -----------------------------------------------------------------------------
+gold_dimensional_example:
+  tables:
+    fact_claim.csv:
+      primaryKey: claim_fact_key
+      businessKey: claim_id
+      businessName: Fact Claim
+      grain: "One row per claim_id per snapshot date."
+      tableRules:
+        - ruleId: dq_gold_fact_claim_no_orphan_policy
+          ruleName: Fact claim has valid policy dimension
+          type: sql
+          query: >
+            SELECT COUNT(*) AS orphan_policy_count
+            FROM {full_table_name} f
+            LEFT JOIN dim_policy d
+              ON f.policy_key = d.policy_key
+            WHERE d.policy_key IS NULL
+          mustBe:
+            orphan_policy_count: 0
+          dimension: consistency
+          severity: error
+          description: "Every claim fact must join to dim_policy."
+          referencedColumns:
+            - policy_key
+          failureAction: reject
+        - ruleId: dq_gold_fact_claim_grain
+          ruleName: Fact claim grain check
+          type: sql
+          query: >
+            SELECT COUNT(*) AS duplicate_grain_count
+            FROM (
+              SELECT claim_id, snapshot_date, COUNT(*) AS row_count
+              FROM {full_table_name}
+              GROUP BY claim_id, snapshot_date
+              HAVING COUNT(*) > 1
+            ) t
+          mustBe:
+            duplicate_grain_count: 0
+          dimension: uniqueness
+          severity: error
+          description: "fact_claim grain must be one row per claim_id per snapshot_date."
+          referencedColumns:
+            - claim_id
+            - snapshot_date
+          failureAction: reject
+      columns:
+        claim_fact_key:
+          required: true
+        claim_id:
+          required: true
+        policy_key:
+          required: true
+        snapshot_date:
+          required: true
+        paid_amount:
+          required: true
+          minValue: 0
+        reserve_amount:
+          required: true
+          minValue: 0
+
+    dim_policy.csv:
+      primaryKey: policy_key
+      businessKey: policy_id
+      businessName: Dimension Policy
+      grain: "One row per policy_key."
+      tableRules:
+        - ruleId: dq_gold_dim_policy_current_flag
+          ruleName: Dimension policy one current row
+          type: sql
+          query: >
+            SELECT COUNT(*) AS duplicate_current_policy_count
+            FROM (
+              SELECT policy_id, COUNT(*) AS current_count
+              FROM {full_table_name}
+              WHERE current_flag = 'Y'
+              GROUP BY policy_id
+              HAVING COUNT(*) > 1
+            ) t
+          mustBe:
+            duplicate_current_policy_count: 0
+          dimension: consistency
+          severity: error
+          description: "Each policy_id should have at most one current dimension row."
+          referencedColumns:
+            - policy_id
+            - current_flag
+          failureAction: reject

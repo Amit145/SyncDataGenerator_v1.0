@@ -1,0 +1,193 @@
+# =============================================================================
+# Data Contract — ODCS v3.1.0 WORKED EXAMPLE (synthetic, illustrative only)
+# Data Modelling & Engineering CoE — Allianz Services
+# =============================================================================
+
+kind: DataContract
+apiVersion: v3.1.0
+id: "party-customer-summary-0001"
+name: "Customer Summary Data Product"
+version: "1.2.0"
+status: active
+domain: party
+tenant: "Allianz"
+
+description:
+  purpose: >
+    Aggregated, de-identified customer summary at account level for downstream
+    analytics. One row per active account per snapshot date.
+  limitations: "Snapshot-based; not intended for real-time decisioning."
+  usage: "Segment-level analytics and internal reporting."
+  authoritativeDefinitions:
+    - type: privacy-statement
+      url: "https://allianz.internal/policies/data-privacy"
+
+authoritativeDefinitions:
+  - type: canonical
+    url: "https://allianz.internal/contracts/party.customer_summary"
+    description: "Latest version of this contract"
+
+servers:
+  - server: adp-gold
+    type: databricks
+    host: "adp.cloud.databricks.com"
+    catalog: analytics
+    schema: gold_party
+
+schema:
+  - id: customer_summary_obj
+    name: customer_summary
+    physicalName: customer_summary
+    physicalType: table
+    businessName: Customer Summary
+    description: "Account-level customer summary snapshot for analytics."
+    tags: ["party", "analytics"]
+    dataGranularityDescription: "One row per account per snapshot date."
+    properties:
+      - id: account_id_prop
+        name: account_id
+        businessName: account identifier
+        logicalType: string
+        physicalType: varchar(64)
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 1
+        criticalDataElement: true
+        classification: internal
+        description: "Surrogate account identifier (non-reversible hash)."
+        examples: ["a1b2c3d4e5"]
+        customProperties:
+          - property: pii
+            value: false
+      - id: snapshot_date_prop
+        name: snapshot_date
+        businessName: snapshot date
+        logicalType: date
+        physicalType: date
+        required: true
+        primaryKey: true
+        primaryKeyPosition: 2
+        partitioned: true
+        partitionKeyPosition: 1
+        classification: internal
+        description: "Date the summary row was generated."
+        examples: ["2026-01-31"]
+        customProperties:
+          - property: pii
+            value: false
+      - id: segment_prop
+        name: segment
+        businessName: customer segment
+        logicalType: string
+        physicalType: varchar(20)
+        required: true
+        classification: internal
+        description: "Assigned customer segment."
+        examples: ["retail", "sme", "corporate"]
+        quality:
+          - metric: invalidValues
+            mustBe: 0
+            dimension: conformity
+            type: library
+            severity: error
+            description: "segment must be one of the allowed values"
+            arguments:
+              validValues: ["retail", "sme", "corporate"]
+        customProperties:
+          - property: pii
+            value: false
+      - id: tenure_days_prop
+        name: tenure_days
+        businessName: tenure in days
+        logicalType: integer
+        physicalType: int
+        required: true
+        classification: internal
+        description: "Days since account opening."
+        examples: [365]
+        quality:
+          - type: sql
+            query: "SELECT COUNT(*) FROM customer_summary WHERE tenure_days < 0"
+            mustBe: 0
+            dimension: accuracy
+            severity: error
+            description: "tenure_days must be >= 0"
+        customProperties:
+          - property: pii
+            value: false
+      - id: active_products_count_prop
+        name: active_products_count
+        businessName: active products count
+        logicalType: integer
+        physicalType: int
+        required: true
+        classification: internal
+        description: "Number of active products on the account."
+        examples: [3]
+        customProperties:
+          - property: pii
+            value: false
+    quality:
+      - metric: rowCount
+        mustBeGreaterThan: 100000
+        dimension: completeness
+        type: library
+        severity: error
+        description: "Ensure expected daily volume."
+
+slaProperties:
+  - property: frequency
+    value: 1
+    unit: d
+    element: customer_summary.snapshot_date
+  - property: latency
+    value: 4
+    unit: h
+    element: customer_summary.snapshot_date
+    driver: analytics
+  - property: retention
+    value: 7
+    unit: y
+    element: customer_summary.snapshot_date
+  - property: generalAvailability
+    value: "2025-06-01T04:00:00+01:00"
+
+team:
+  name: "Data Modelling & Engineering CoE"
+  description: "Producing team / owner of this contract"
+  members:
+    - username: jdoe
+      role: Owner
+      description: "Data steward"
+      dateIn: "2025-06-01"
+
+roles:
+  - role: analytics_consumer
+    access: read
+    firstLevelApprovers: "Reporting Manager"
+    secondLevelApprovers: "Data Governance"
+
+support:
+  - channel: coe-data-contracts
+    tool: email
+    url: "mailto:coe-data-contracts@example-internal"
+  - channel: "#coe-data-contracts"
+    tool: slack
+
+tags: ["party", "analytics"]
+
+customProperties:
+  - property: allianzClassification
+    value: Internal
+  - property: containsPersonalData
+    value: false
+  - property: regulatoryTags
+    value: ["DORA-relevant"]
+  - property: breakingChangePolicy
+    value: >
+      Removing/renaming a field or changing its type is breaking and requires a
+      MAJOR version bump plus a new table version. Additive fields are MINOR.
+  - property: deprecationNoticePeriod
+    value: "60 days before removal"
+
+contractCreatedTs: "2025-06-01T02:59:43+00:00"

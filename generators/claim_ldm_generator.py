@@ -461,6 +461,66 @@ CLAIMS_LDM_SCHEMAS = {
 }
 
 
+CLAIMS_DDL_ALIAS_COLUMNS = {
+    "coverage.csv": [
+        "coverage_type_id",
+        "limit_id",
+        "exclusion_id",
+        "deductible_id",
+        "benefit_id",
+        "risk_id",
+        "peril_id",
+        "product_element_id",
+    ],
+    "policy_coverage.csv": ["coverage_group_id"],
+    "policy.csv": [
+        "aspire_policy_id",
+        "product_group_id",
+        "policy_holder_id",
+        "portfolio_id",
+        "party_in_role_id",
+    ],
+    "loss_event.csv": [
+        "effective_loss_date",
+        "fatality_flag",
+        "drugs_alcohol_indicator",
+        "contributory_negligence_flag",
+    ],
+    "medical_report.csv": ["document_id"],
+    "physical_place.csv": ["place_id"],
+    "insured_entity.csv": ["insured_object_desc"],
+    "claim.csv": ["insured_entity_id", "claims_expenses"],
+    "person.csv": [
+        "digital_id",
+        "first_name",
+        "last_name",
+        "full_name",
+        "courtesy_title",
+        "occupation",
+        "birth_date",
+        "birth_year",
+        "nationality",
+        "gender",
+        "marital_status",
+        "job_title",
+        "role",
+        "converted_date",
+        "person_score",
+        "email_home",
+        "email_work",
+        "phone_work",
+        "phone_home",
+        "company_name",
+        "date_of_constitution",
+        "legal_job_title",
+        "legal_status",
+    ],
+}
+
+for _name, _columns in CLAIMS_DDL_ALIAS_COLUMNS.items():
+    CLAIMS_LDM_SCHEMAS[_name].extend(column for column in _columns if column not in CLAIMS_LDM_SCHEMAS[_name])
+
+
 CLAIMS_RAW_FILE_NAMES = {
     "coverage.csv": "coverage_catalog.csv",
     "policy_coverage.csv": "policy_coverage_register.csv",
@@ -579,6 +639,20 @@ def _load_claims_two_source_spec() -> dict[str, list[dict]]:
     for column in CLAIMS_PRD2_CLAIM_EXTRA_COLUMNS:
         if column not in existing_src2:
             claim_mapping.append({"logical": column, "src1": column, "src2": column})
+    investigation_mapping = mapping["claim_investigation.csv"]
+    existing_investigation_src2 = {entry["src2"] for entry in investigation_mapping}
+    if "claim_investigator_id" not in existing_investigation_src2:
+        investigation_mapping.append({
+            "logical": "claim_handler_identifier",
+            "src1": "claim_handler_identifier",
+            "src2": "claim_investigator_id",
+        })
+    if "claim_review_flag" not in existing_investigation_src2:
+        investigation_mapping.append({
+            "logical": "investigator_flag",
+            "src1": "investigator_flag",
+            "src2": "claim_review_flag",
+        })
     return mapping
 
 
@@ -613,11 +687,91 @@ def _write_claims_source_view(
     write_csv(str(source_dir), table_name, out_rows, fieldnames=columns)
 
 
+def _fill_claims_ddl_aliases(raw_file: str, row: dict) -> dict:
+    row = dict(row)
+
+    def copy(target: str, source: str):
+        if not str(row.get(target, "")).strip():
+            row[target] = row.get(source, "")
+
+    if raw_file == "coverage.csv":
+        coverage_id = row.get("coverage_identifier", "")
+        coverage_type = str(row.get("coverage_type", "") or "coverage").upper()
+        copy("coverage_type_id", "coverage_type_identifier")
+        row["coverage_type_id"] = row.get("coverage_type_id") or f"CT_{coverage_type}"
+        for target, source, prefix in [
+            ("limit_id", "limit_identifier", "LIM"),
+            ("exclusion_id", "exclusion_identifier", "EXC"),
+            ("deductible_id", "deductible_identifier", "DED"),
+            ("benefit_id", "benefit_identifier", "BEN"),
+            ("risk_id", "risk_identifier", "RSK"),
+            ("peril_id", "peril_identifier", "PERIL"),
+            ("product_element_id", "product_element_identifier", "PE"),
+        ]:
+            copy(target, source)
+            row[target] = row.get(target) or f"{prefix}_{coverage_id}"
+    elif raw_file == "policy_coverage.csv":
+        copy("coverage_group_id", "coverage_group_identifier")
+        row["coverage_group_id"] = row.get("coverage_group_id") or f"CG_{row.get('coverage_identifier', '')}"
+    elif raw_file == "policy.csv":
+        for target, source in [
+            ("aspire_policy_id", "aspire_policy_identifier"),
+            ("product_group_id", "product_group_identifier"),
+            ("policy_holder_id", "policy_holder_identifier"),
+            ("portfolio_id", "portfolio_identifier"),
+            ("party_in_role_id", "party_in_role_identifier"),
+        ]:
+            copy(target, source)
+    elif raw_file == "loss_event.csv":
+        copy("effective_loss_date", "date_of_effective_loss")
+        copy("fatality_flag", "fatality_indicator")
+        copy("drugs_alcohol_indicator", "claimant_drugs_or_alcohol")
+        copy("contributory_negligence_flag", "contributory_negligence")
+    elif raw_file == "medical_report.csv":
+        copy("document_id", "document_identifier")
+    elif raw_file == "physical_place.csv":
+        copy("place_id", "place_identifier")
+    elif raw_file == "insured_entity.csv":
+        copy("insured_object_desc", "insured_object_description")
+    elif raw_file == "claim.csv":
+        copy("insured_entity_id", "insured_entity_identifier")
+        copy("claims_expenses", "claims_expense")
+    elif raw_file == "person.csv":
+        for target, source in [
+            ("digital_id", "digital_identifier"),
+            ("first_name", "given_nm"),
+            ("last_name", "family_nm"),
+            ("full_name", "display_nm"),
+            ("courtesy_title", "title_txt"),
+            ("occupation", "occupation_txt"),
+            ("birth_date", "dob"),
+            ("birth_year", "birth_yr"),
+            ("nationality", "nationality_txt"),
+            ("gender", "gender_txt"),
+            ("marital_status", "marital_txt"),
+            ("job_title", "job_title_txt"),
+            ("role", "role_txt"),
+            ("converted_date", "lead_conv_dt"),
+            ("person_score", "legal_score_no"),
+            ("email_home", "email_home_txt"),
+            ("email_work", "email_work_txt"),
+            ("phone_work", "phone_work_txt"),
+            ("phone_home", "phone_home_txt"),
+            ("company_name", "legal_name"),
+            ("date_of_constitution", "constitution_dt"),
+            ("legal_job_title", "legal_job_title_txt"),
+            ("legal_status", "legal_status_txt"),
+        ]:
+            copy(target, source)
+    return row
+
+
 def _rebuild_claims_table_from_sources(
     src1_rows: list[dict],
     src2_rows: list[dict],
     mapping_rows: list[dict],
     schema: list[str],
+    raw_file: str,
 ) -> list[dict]:
     rebuilt = []
     for index, src1 in enumerate(src1_rows):
@@ -631,6 +785,7 @@ def _rebuild_claims_table_from_sources(
             if str(value).strip() == "" and entry["src2"]:
                 value = src2.get(entry["src2"], "")
             row[entry["logical"]] = value
+        row = _fill_claims_ddl_aliases(raw_file, row)
         rebuilt.append(row)
     return rebuilt
 
@@ -672,7 +827,7 @@ def write_claims_two_source_raw(claims_raw_dir: str, raw_root: str, batch_id: st
         _write_claims_source_view(prd2_dir, prd_file, rows, mapping_rows, batch_id, "SAP")
         src1_rows = _read_csv_rows(prd1_dir / raw_name)
         src2_rows = _read_csv_rows(prd2_dir / prd_file)
-        rebuilt = _rebuild_claims_table_from_sources(src1_rows, src2_rows, mapping_rows, CLAIMS_LDM_SCHEMAS[raw_file])
+        rebuilt = _rebuild_claims_table_from_sources(src1_rows, src2_rows, mapping_rows, CLAIMS_LDM_SCHEMAS[raw_file], raw_file)
         write_csv(str(raw_vault_dir), raw_name, rebuilt, fieldnames=CLAIMS_LDM_SCHEMAS[raw_file])
 
     with (root / "_source_manifest.csv").open("w", newline="", encoding="utf-8") as f:
@@ -917,6 +1072,7 @@ def write_claims_ldm_raw_batch(base_folder, batch_id, ctx):
         debit_date = _bounded_date(payment_date + timedelta(days=2), policy_start, policy_end)
         coverage_identifier = f"COV_{policy_type.upper()}_{(policy_index % 5) + 1:03d}"
         policy_coverage_identifier = f"PC_{batch_id}_{policy_index:06d}"
+        no_claims_discount = float(max(0, 30 - (policy_index % 6) * 5))
         rows["policy.csv"].append({
             "policy_identifier": policy_identifier,
             "policy_number": hub_policy.get("Policy Number", policy_identifier),
@@ -966,7 +1122,7 @@ def write_claims_ldm_raw_batch(base_folder, batch_id, ctx):
             "ifrs17_measurement_model": "PAA",
             "current_bonus_malus_class": f"BM{policy_index % 10 + 1}",
             "previous_bonus_malus_class": f"BM{policy_index % 10}",
-            "no_claims_discount": max(0, 30 - (policy_index % 6) * 5),
+            "no_claims_discount": no_claims_discount,
             "annual_aggregate_deductible": round(max(premium * 0.20, 250), 2),
             "limit_for_indemnification": round(replacement_value_for_policy * 1.25, 2),
             "limit_business_interruption": round(replacement_value_for_policy * 0.15, 2) if policy_type == "Property" else 0,
@@ -1059,6 +1215,7 @@ def write_claims_ldm_raw_batch(base_folder, batch_id, ctx):
             "vehicle_class": sat_motor.get("Vehicle Class", "") if policy_type == "Motor" else "",
             "vehicle_model": sat_motor.get("Vehicle Model", "") if policy_type == "Motor" else "",
             "exposure_base": "IDV" if policy_type == "Motor" else "Reinstatement",
+            "grouped_location_flag": "Y" if policy_type == "Property" else "N",
             "replacement_value": replacement_value,
             "type_of_insured_entity": insured_entity_type,
             "value_of_content": round(replacement_value * 0.08, 2),
@@ -1167,7 +1324,7 @@ def write_claims_ldm_raw_batch(base_folder, batch_id, ctx):
                 "hospitalized_indicator": hospitalized,
                 "cross_border_claim_indicator": "N",
                 "intercompany_agreement_flag": "N",
-                "no_claims_discount": "Y" if policy_type == "Motor" else "N",
+                "no_claims_discount": no_claims_discount,
                 "outstanding_subrogation_amount": recovery_expected,
                 "recovery_actual": recovery_actual,
                 "recovery_type": recovery_type,
@@ -1258,7 +1415,7 @@ def write_claims_ldm_raw_batch(base_folder, batch_id, ctx):
                 "loss_event_end_date": _iso(open_date),
                 "loss_event_status": "Open" if is_active else "Closed",
                 "loss_type": "Accident" if policy_type == "Motor" else "Fire" if policy_type == "Property" else "Injury",
-                "loss_time": _time(loss_date),
+                "loss_time": _iso(loss_date),
                 "loss_cause": "Collision" if policy_type == "Motor" else "Short Circuit" if policy_type == "Property" else "Negligence",
                 "property_liability_loss_cause": "Third Party" if policy_type == "Liability" else "",
                 "loss_category": policy_type,
@@ -1385,7 +1542,7 @@ def write_claims_ldm_raw_batch(base_folder, batch_id, ctx):
                     "medical_condition_identifier": condition[0],
                     "diagnosis_code": "S42.3" if condition[0] == "MC_FRAC" else "S00.0",
                     "diagnosis_description": condition[1],
-                    "diagnosis_priority": "Primary",
+                    "diagnosis_priority": 1,
                     "diagnosis_standard": "ICD-10",
                 })
                 rows["medical_report.csv"].append({
@@ -1477,7 +1634,7 @@ def write_claims_ldm_raw_batch(base_folder, batch_id, ctx):
                 )
                 for field in schema
             }
-            for row in rows[name]
+            for row in (_fill_claims_ddl_aliases(name, row) for row in rows[name])
         ]
         write_csv(out_dir, CLAIMS_RAW_FILE_NAMES[name], schema_rows, fieldnames=schema)
     return out_dir

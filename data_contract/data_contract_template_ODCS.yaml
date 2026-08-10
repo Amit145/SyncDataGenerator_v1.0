@@ -1,0 +1,157 @@
+# =============================================================================
+# Data Contract — ODCS v3.1.0 compliant TEMPLATE
+# Data Modelling & Engineering CoE — Allianz Services
+# -----------------------------------------------------------------------------
+# Conforms to the Open Data Contract Standard (Bitol / Linux Foundation) v3.1.0.
+# Fill every field marked [REQUIRED]; remove guidance comments once complete.
+# Do NOT place real personal data or values from any Confidential / Strictly
+# Confidential dataset here — describe fields and use `classification` markers.
+# Note: ODCS v3.1.0 uses STRICT validation — only defined fields are allowed.
+# Organization-specific fields go under `customProperties`.
+# =============================================================================
+
+# --- Fundamentals ------------------------------------------------------------
+kind: DataContract
+apiVersion: v3.1.0                  # ODCS standard version. Do not edit.
+id: ""                             # [REQUIRED] Unique contract ID (UUID recommended)
+name: ""                           # Human-readable contract name
+version: "1.0.0"                   # [REQUIRED] Contract version (semantic versioning)
+status: draft                      # [REQUIRED] e.g. draft | active | deprecated | retired
+domain: ""                         # Business domain, e.g. "party", "claims"
+tenant: "Allianz"                  # Owning organization / tenant
+
+description:
+  purpose: ""                      # [REQUIRED] What the data is for
+  limitations: ""                  # Known caveats, sampling, gaps
+  usage: ""                        # Intended usage
+  authoritativeDefinitions:        # Links to policies, e.g. privacy statement
+    - type: privacy-statement
+      url: ""
+
+authoritativeDefinitions:          # Canonical link(s) to this contract
+  - type: canonical
+    url: ""
+    description: "Latest version of this contract"
+
+# --- Infrastructure & servers ------------------------------------------------
+servers:
+  - server: ""                     # [REQUIRED] Logical server name
+    type: ""                       # [REQUIRED] api|athena|azure|bigquery|clickhouse|databricks|
+                                   #   denodo|dremio|duckdb|glue|cloudsql|db2|kafka|kinesis|
+                                   #   local|mysql|oracle|postgres|presto|pubsub|redshift|
+                                   #   s3|sftp|snowflake|sqlserver|synapse|trino|vertica
+    # Connection fields depend on `type`. Provide the required ones for that
+    # server type (the ODCS schema enforces them). Examples:
+    #   databricks -> host, catalog (req), schema (req)
+    #   postgres   -> host, port, database, schema
+    #   s3         -> location, format
+    host: ""
+    catalog: ""
+    schema: ""
+
+# --- Schema (datasets + fields) ----------------------------------------------
+schema:
+  - id: ""                         # Stable object ID
+    name: ""                       # [REQUIRED] Logical object name
+    physicalName: ""               # Physical table/view name
+    physicalType: table            # table | view | topic | file | object
+    businessName: ""               # Business-friendly name
+    description: ""                # [REQUIRED] What this object represents
+    tags: []
+    dataGranularityDescription: "" # Grain, e.g. "one row per account per day"
+    properties:
+      - id: ""                     # Stable field ID
+        name: ""                   # [REQUIRED] Field name
+        physicalName: ""
+        businessName: ""
+        logicalType: string        # [REQUIRED] string|integer|number|boolean|date|timestamp|array|object
+        physicalType: ""           # DB-specific type, e.g. varchar(18), INT64
+        required: true             # [REQUIRED] true if non-nullable
+        unique: false
+        primaryKey: false          # [REQUIRED for key fields]
+        primaryKeyPosition: -1     # 1-based position if part of PK, else -1
+        partitioned: false
+        partitionKeyPosition: -1
+        criticalDataElement: false # Flag CDEs for governance
+        classification: internal   # [REQUIRED] public | internal | confidential | restricted
+        description: ""            # [REQUIRED] Meaning of the field
+        examples: []
+        # Field-level data quality checks (optional, repeatable)
+        quality:                 # Library metrics: nullValues|missingValues|
+                                   #   invalidValues|duplicateValues|rowCount
+                                   # Operators: mustBe|mustNotBe|mustBeGreaterThan|
+                                   #   mustBeGreaterOrEqualTo|mustBeLessThan|mustBeLessOrEqualTo|
+                                   #   mustBeBetween. Dimensions: accuracy|completeness|
+                                   #   conformity|consistency|coverage|timeliness|uniqueness
+          - metric: nullValues
+            mustBe: 0
+            dimension: completeness
+            type: library
+            severity: error
+            description: "Field must not contain null values"
+        # Organization-specific extensions live here:
+        customProperties:
+          - property: pii
+            value: false           # true if this field is personal data
+    # Object-level data quality checks (optional, repeatable)
+    quality:
+      - metric: rowCount
+        mustBeGreaterThan: 0       # [REQUIRED value] expected minimum volume, e.g. 100000
+        dimension: completeness
+        type: library
+        severity: error
+        description: "Ensure expected volume"
+
+# --- Service-Level Agreement -------------------------------------------------
+slaProperties:
+  - property: frequency           # Update cadence
+    value:                        # e.g. 1
+    unit: d                       # d | h | y
+  - property: latency             # Freshness / max lag
+    value:
+    unit: h
+  - property: retention           # [REQUIRED for governance]
+    value:                        # e.g. 7
+    unit: y
+  - property: generalAvailability
+    value: ""                     # ISO-8601 timestamp
+
+# --- Team --------------------------------------------------------------------
+team:
+  name: "Data Modelling & Engineering CoE"
+  description: "Producing team / owner of this contract"
+  members:
+    - username: ""                # [REQUIRED] Owner / steward
+      role: Owner
+      dateIn: ""                  # ISO date
+
+# --- Roles / access ----------------------------------------------------------
+roles:
+  - role: ""                      # Access role name
+    access: read                  # read | write
+    firstLevelApprovers: ""
+    secondLevelApprovers: ""
+
+# --- Support & communication -------------------------------------------------
+support:
+  - channel: ""                   # [REQUIRED] e.g. distribution list / Slack / Teams
+    tool: email                   # email | slack | teams | other
+    url: ""
+
+# --- Tags --------------------------------------------------------------------
+tags: []
+
+# --- Custom / other properties (Allianz governance extensions) ---------------
+customProperties:
+  - property: allianzClassification    # Allianz scale marker at contract level
+    value: Internal                    # Public | Internal | Confidential | Strictly Confidential
+  - property: containsPersonalData
+    value: false
+  - property: regulatoryTags
+    value: []                          # e.g. ["DORA-relevant"]
+  - property: breakingChangePolicy
+    value: ""                          # What counts as breaking; how handled
+  - property: deprecationNoticePeriod
+    value: ""                          # e.g. "60 days before removal"
+
+contractCreatedTs: ""                  # ISO-8601 creation timestamp

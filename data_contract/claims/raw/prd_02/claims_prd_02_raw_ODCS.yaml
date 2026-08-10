@@ -1,0 +1,1176 @@
+# =============================================================================
+# Data Contract - Claims raw source feed prd_02
+# ODCS v3.1.0
+# =============================================================================
+
+kind: DataContract
+apiVersion: v3.1.0
+id: "claims-prd-02-raw-0001"
+name: "Claims PRD 02 Raw Source Feed"
+version: "1.0.0"
+status: draft
+domain: claims
+tenant: "Allianz"
+
+description:
+  purpose: >
+    Defines the raw source contract for the claims PRD 02 feed before raw-to-bronze
+    ingestion. The feed currently contains claim, claim investigation, and loss
+    event CSV files from the SAP/source-2 claims view.
+  limitations: "Synthetic source extract generated for the claims data pipeline."
+  usage: "Validate raw PRD 02 claims files before bronze ingestion."
+
+authoritativeDefinitions:
+  - type: canonical
+    url: "data_contract/claims/raw/prd_02/claims_prd_02_raw_ODCS.yaml"
+    description: "Repository copy of the claims PRD 02 raw source contract"
+
+servers:
+  - server: claims-prd-02-local-raw
+    type: local
+    path: "data/raw/claims/{batch_ref}/prd_02/*.csv"
+    format: csv
+
+schema:
+  - id: claim
+    name: claim
+    physicalName: claim.csv
+    physicalType: table
+    businessName: Claim
+    description: "Raw PRD 02 claim-level source records."
+    tags: ["claims", "raw", "prd_02", "source_feed"]
+    dataGranularityDescription: "One row per source claim reference per batch."
+    properties:
+      - id: batch_ref
+        name: batch_ref
+        logicalType: integer
+        physicalType: bigint
+        required: true
+        classification: internal
+        description: "Pipeline batch reference for the source extract."
+      - id: pull_ts
+        name: pull_ts
+        logicalType: timestamp
+        physicalType: timestamp
+        required: true
+        classification: internal
+        description: "Timestamp when the source feed was pulled."
+      - id: origin_sys
+        name: origin_sys
+        logicalType: string
+        physicalType: varchar(32)
+        required: true
+        classification: internal
+        description: "Originating source system code."
+        quality:
+          - metric: invalidValues
+            mustBe: 0
+            dimension: conformity
+            type: library
+            severity: error
+            description: "origin_sys must contain expected source system values."
+            arguments:
+              validValues: ["SAP"]
+      - id: claim_ref_id
+        name: claim_ref_id
+        logicalType: string
+        physicalType: varchar(64)
+        required: true
+        unique: true
+        primaryKey: true
+        primaryKeyPosition: 1
+        criticalDataElement: true
+        classification: internal
+        description: "Unique source claim reference."
+      - id: loss_category
+        name: loss_category
+        logicalType: string
+        physicalType: varchar(64)
+        required: true
+        classification: internal
+        description: "High-level category of the loss."
+      - id: ext_claim_number
+        name: ext_claim_number
+        logicalType: string
+        physicalType: varchar(64)
+        required: true
+        unique: true
+        classification: internal
+        description: "External claim number from the source system."
+      - id: tp_claim_ref
+        name: tp_claim_ref
+        logicalType: string
+        physicalType: varchar(64)
+        required: true
+        unique: true
+        classification: internal
+        description: "Third-party claim reference."
+      - id: claim_stage
+        name: claim_stage
+        logicalType: string
+        physicalType: varchar(64)
+        required: true
+        classification: internal
+        description: "Current claim processing stage."
+      - id: case_state
+        name: case_state
+        logicalType: string
+        physicalType: varchar(64)
+        required: true
+        classification: internal
+        description: "Current state of the claim case."
+      - id: stage_update_date
+        name: stage_update_date
+        logicalType: timestamp
+        physicalType: timestamp
+        required: true
+        classification: internal
+        description: "Timestamp when the claim stage was last updated."
+      - id: first_notice_date
+        name: first_notice_date
+        logicalType: timestamp
+        physicalType: timestamp
+        required: true
+        classification: internal
+        description: "First notice of loss timestamp."
+      - id: claim_settlement_date
+        name: claim_settlement_date
+        logicalType: timestamp
+        physicalType: timestamp
+        required: false
+        classification: internal
+        description: "Claim settlement timestamp where available."
+      - id: incident_reported_date
+        name: incident_reported_date
+        logicalType: timestamp
+        physicalType: timestamp
+        required: true
+        classification: internal
+        description: "Timestamp when the incident was reported."
+      - id: last_activity_date
+        name: last_activity_date
+        logicalType: timestamp
+        physicalType: timestamp
+        required: true
+        classification: internal
+        description: "Timestamp of the latest activity on the claim."
+      - id: case_age_days
+        name: case_age_days
+        logicalType: integer
+        physicalType: integer
+        required: true
+        classification: internal
+        description: "Age of the claim case in days."
+      - id: category_code
+        name: category_code
+        logicalType: string
+        physicalType: varchar(32)
+        required: true
+        classification: internal
+        description: "Source category code for the claim."
+      - id: handling_method
+        name: handling_method
+        logicalType: string
+        physicalType: varchar(64)
+        required: true
+        classification: internal
+        description: "Claim handling method."
+      - id: risk_level
+        name: risk_level
+        logicalType: string
+        physicalType: varchar(32)
+        required: true
+        classification: internal
+        description: "Claim risk level."
+      - id: injury_flag
+        name: injury_flag
+        logicalType: string
+        physicalType: char(1)
+        required: true
+        classification: internal
+        description: "Indicates whether the claim includes injury."
+      - id: write_off_flag
+        name: write_off_flag
+        logicalType: string
+        physicalType: char(1)
+        required: true
+        classification: internal
+        description: "Indicates whether write-off applies."
+      - id: legal_case_flag
+        name: legal_case_flag
+        logicalType: string
+        physicalType: char(1)
+        required: true
+        classification: internal
+        description: "Indicates whether the claim has legal case involvement."
+      - id: confirmed_fraud_flag
+        name: confirmed_fraud_flag
+        logicalType: string
+        physicalType: char(1)
+        required: true
+        classification: internal
+        description: "Indicates whether fraud has been confirmed."
+      - id: hospitalization_flag
+        name: hospitalization_flag
+        logicalType: string
+        physicalType: char(1)
+        required: true
+        classification: internal
+        description: "Indicates whether hospitalization applies."
+      - id: international_claim_flag
+        name: international_claim_flag
+        logicalType: string
+        physicalType: char(1)
+        required: true
+        classification: internal
+        description: "Indicates whether the claim is international."
+      - id: ncd_applied
+        name: ncd_applied
+        logicalType: number
+        physicalType: decimal(18,2)
+        required: true
+        classification: internal
+        description: "No-claim discount value applied to the claim."
+      - id: estimated_loss_amount
+        name: estimated_loss_amount
+        logicalType: number
+        physicalType: decimal(18,2)
+        required: true
+        classification: internal
+        description: "Estimated loss amount."
+      - id: expected_recovery_amount
+        name: expected_recovery_amount
+        logicalType: number
+        physicalType: decimal(18,2)
+        required: true
+        classification: internal
+        description: "Expected recovery amount."
+      - id: recovered_amount
+        name: recovered_amount
+        logicalType: number
+        physicalType: decimal(18,2)
+        required: true
+        classification: internal
+        description: "Recovered amount."
+      - id: recovery_category
+        name: recovery_category
+        logicalType: string
+        physicalType: varchar(64)
+        required: true
+        classification: internal
+        description: "Recovery category."
+      - id: denial_reason
+        name: denial_reason
+        logicalType: string
+        physicalType: varchar(255)
+        required: false
+        classification: internal
+        description: "Reason for claim denial where available."
+      - id: closure_reason
+        name: closure_reason
+        logicalType: string
+        physicalType: varchar(255)
+        required: false
+        classification: internal
+        description: "Reason for claim closure where available."
+      - id: indemnity_method
+        name: indemnity_method
+        logicalType: string
+        physicalType: varchar(64)
+        required: true
+        classification: internal
+        description: "Method used for indemnity."
+      - id: coverage_validation_status
+        name: coverage_validation_status
+        logicalType: string
+        physicalType: varchar(64)
+        required: true
+        classification: internal
+        description: "Coverage validation status."
+      - id: case_closure_date
+        name: case_closure_date
+        logicalType: timestamp
+        physicalType: timestamp
+        required: false
+        classification: internal
+        description: "Case closure timestamp where available."
+      - id: recovery_payment_date
+        name: recovery_payment_date
+        logicalType: timestamp
+        physicalType: timestamp
+        required: false
+        classification: internal
+        description: "Recovery payment timestamp where available."
+      - id: work_status_prior_incident
+        name: work_status_prior_incident
+        logicalType: string
+        physicalType: varchar(64)
+        required: true
+        classification: internal
+        description: "Work status before the incident."
+      - id: return_to_work_status
+        name: return_to_work_status
+        logicalType: string
+        physicalType: varchar(64)
+        required: true
+        classification: internal
+        description: "Return-to-work status after the incident."
+      - id: emergency_service_cost
+        name: emergency_service_cost
+        logicalType: number
+        physicalType: decimal(18,2)
+        required: false
+        classification: internal
+        description: "Emergency service cost where available."
+      - id: external_resource_count
+        name: external_resource_count
+        logicalType: number
+        physicalType: decimal(18,2)
+        required: false
+        classification: internal
+        description: "External resource count where available."
+      - id: total_estimated_cost
+        name: total_estimated_cost
+        logicalType: number
+        physicalType: decimal(18,2)
+        required: true
+        classification: internal
+        description: "Total estimated cost."
+      - id: total_paid_amount
+        name: total_paid_amount
+        logicalType: number
+        physicalType: decimal(18,2)
+        required: true
+        classification: internal
+        description: "Total paid amount."
+      - id: eligible_reimbursement_amount
+        name: eligible_reimbursement_amount
+        logicalType: number
+        physicalType: decimal(18,2)
+        required: true
+        classification: internal
+        description: "Eligible reimbursement amount."
+      - id: medical_reimbursement_amount
+        name: medical_reimbursement_amount
+        logicalType: number
+        physicalType: decimal(18,2)
+        required: true
+        classification: internal
+        description: "Medical reimbursement amount."
+      - id: proposed_settlement_amount
+        name: proposed_settlement_amount
+        logicalType: number
+        physicalType: decimal(18,2)
+        required: true
+        classification: internal
+        description: "Proposed settlement amount."
+      - id: approval_date
+        name: approval_date
+        logicalType: timestamp
+        physicalType: timestamp
+        required: false
+        classification: internal
+        description: "Approval timestamp where available."
+      - id: payment_release_date
+        name: payment_release_date
+        logicalType: timestamp
+        physicalType: timestamp
+        required: false
+        classification: internal
+        description: "Payment release timestamp where available."
+      - id: loss_estimate_notes
+        name: loss_estimate_notes
+        logicalType: string
+        physicalType: varchar(1000)
+        required: true
+        classification: internal
+        description: "Source notes for loss estimation."
+      - id: policy_reference
+        name: policy_reference
+        logicalType: string
+        physicalType: varchar(64)
+        required: true
+        classification: internal
+        description: "Source policy reference associated with the claim."
+      - id: coverage_reference
+        name: coverage_reference
+        logicalType: string
+        physicalType: varchar(64)
+        required: true
+        classification: internal
+        description: "Source coverage reference associated with the claim."
+      - id: outstanding_reserve
+        name: outstanding_reserve
+        logicalType: number
+        physicalType: decimal(18,2)
+        required: true
+        classification: internal
+        description: "Outstanding reserve amount."
+      - id: claims_expense
+        name: claims_expense
+        logicalType: number
+        physicalType: decimal(18,2)
+        required: true
+        classification: internal
+        description: "Claims expense amount."
+      - id: is_claim_suspicious
+        name: is_claim_suspicious
+        logicalType: string
+        physicalType: char(1)
+        required: true
+        classification: internal
+        description: "Indicates whether the claim is suspicious."
+      - id: suspected_amt
+        name: suspected_amt
+        logicalType: number
+        physicalType: decimal(18,2)
+        required: false
+        classification: internal
+        description: "Suspected fraud amount where available."
+      - id: fraud_amt
+        name: fraud_amt
+        logicalType: number
+        physicalType: decimal(18,2)
+        required: false
+        classification: internal
+        description: "Confirmed fraud amount where available."
+      - id: is_recovery_happened
+        name: is_recovery_happened
+        logicalType: string
+        physicalType: char(1)
+        required: true
+        classification: internal
+        description: "Indicates whether recovery happened."
+      - id: days_to_first_recovery
+        name: days_to_first_recovery
+        logicalType: number
+        physicalType: decimal(18,2)
+        required: false
+        classification: internal
+        description: "Days to first recovery where available."
+      - id: days_to_last_recovery
+        name: days_to_last_recovery
+        logicalType: number
+        physicalType: decimal(18,2)
+        required: false
+        classification: internal
+        description: "Days to last recovery where available."
+      - id: litigation_duration_days
+        name: litigation_duration_days
+        logicalType: number
+        physicalType: decimal(18,2)
+        required: false
+        classification: internal
+        description: "Litigation duration in days where available."
+      - id: claim_reason
+        name: claim_reason
+        logicalType: string
+        physicalType: varchar(255)
+        required: true
+        classification: internal
+        description: "Reason for the claim."
+      - id: claim_channel
+        name: claim_channel
+        logicalType: string
+        physicalType: varchar(64)
+        required: true
+        classification: internal
+        description: "Channel through which the claim was reported."
+      - id: claim_product
+        name: claim_product
+        logicalType: string
+        physicalType: varchar(64)
+        required: true
+        classification: internal
+        description: "Product associated with the claim."
+      - id: claim_band
+        name: claim_band
+        logicalType: string
+        physicalType: varchar(32)
+        required: true
+        classification: internal
+        description: "Claim amount band."
+      - id: claim_band_sort
+        name: claim_band_sort
+        logicalType: integer
+        physicalType: integer
+        required: true
+        classification: internal
+        description: "Sort order for the claim band."
+      - id: claim_fraud_status
+        name: claim_fraud_status
+        logicalType: string
+        physicalType: varchar(64)
+        required: false
+        classification: internal
+        description: "Fraud status for suspicious claims."
+      - id: claim_fraud_type
+        name: claim_fraud_type
+        logicalType: string
+        physicalType: varchar(64)
+        required: false
+        classification: internal
+        description: "Fraud type for suspicious claims."
+      - id: claim_fraud_detection_method
+        name: claim_fraud_detection_method
+        logicalType: string
+        physicalType: varchar(64)
+        required: false
+        classification: internal
+        description: "Fraud detection method for suspicious claims."
+      - id: recovery_band
+        name: recovery_band
+        logicalType: string
+        physicalType: varchar(32)
+        required: true
+        classification: internal
+        description: "Recovery amount band."
+      - id: recovery_source
+        name: recovery_source
+        logicalType: string
+        physicalType: varchar(64)
+        required: true
+        classification: internal
+        description: "Source of claim recovery."
+    quality:
+      - metric: rowCount
+        mustBeGreaterThan: 0
+        dimension: completeness
+        type: library
+        severity: error
+        description: "claim.csv must not be empty."
+      - type: sql
+        query: >
+          SELECT
+            SUM(CASE WHEN concat(claim_ref_id) is null THEN 1 ELSE 0 END) AS pk_nulls,
+            COUNT(1) - COUNT(DISTINCT claim_ref_id) AS pk_duplicates
+          FROM {full_table_name} a
+          WHERE {target_watermak_exp}
+        mustBe:
+          pk_nulls: 0
+          pk_duplicates: 0
+        dimension: uniqueness
+        severity: error
+        description: "rule_0003: Not Null Check - claim_ref_id primary key must be populated and unique."
+      - type: sql
+        query: >
+          SELECT count(*) AS null_count
+          FROM {full_table_name} a
+          WHERE (claim_ref_id) is null AND {target_watermak_exp}
+        mustBe:
+          null_count: 0
+        dimension: completeness
+        severity: error
+        description: "rule_0001: BK Check - claim_ref_id business key must not be null."
+      - type: sql
+        query: >
+          SELECT
+            SUM(CASE WHEN concat(claim_ref_id) is null THEN 1 ELSE 0 END) AS bk_nulls,
+            COUNT(1) - COUNT(DISTINCT claim_ref_id) AS bk_duplicates
+          FROM {full_table_name} a
+          WHERE {target_watermak_exp}
+        mustBe:
+          bk_nulls: 0
+          bk_duplicates: 0
+        dimension: uniqueness
+        severity: error
+        description: "rule_0007: BK Not Null Check - claim_ref_id business key must be populated and unique."
+
+  - id: claim_investigation
+    name: claim_investigation
+    physicalName: claim_investigation.csv
+    physicalType: table
+    businessName: Claim Investigation
+    description: "Raw PRD 02 claim investigation source records."
+    tags: ["claims", "raw", "prd_02", "source_feed"]
+    dataGranularityDescription: "One row per fraud investigation case per batch."
+    properties:
+      - id: batch_ref
+        name: batch_ref
+        logicalType: integer
+        physicalType: bigint
+        required: true
+        classification: internal
+        description: "Pipeline batch reference for the source extract."
+      - id: pull_ts
+        name: pull_ts
+        logicalType: timestamp
+        physicalType: timestamp
+        required: true
+        classification: internal
+        description: "Timestamp when the source feed was pulled."
+      - id: origin_sys
+        name: origin_sys
+        logicalType: string
+        physicalType: varchar(32)
+        required: true
+        classification: internal
+        description: "Originating source system code."
+      - id: fraud_case_id
+        name: fraud_case_id
+        logicalType: string
+        physicalType: varchar(64)
+        required: true
+        unique: true
+        primaryKey: true
+        primaryKeyPosition: 1
+        criticalDataElement: true
+        classification: internal
+        description: "Unique fraud investigation case identifier."
+      - id: case_event_id
+        name: case_event_id
+        logicalType: string
+        physicalType: varchar(64)
+        required: true
+        unique: true
+        classification: internal
+        description: "Source claim event identifier associated with the investigation."
+      - id: siu_investigator_id
+        name: siu_investigator_id
+        logicalType: string
+        physicalType: varchar(64)
+        required: true
+        classification: internal
+        description: "Special investigation unit investigator identifier."
+      - id: investigation_notes
+        name: investigation_notes
+        logicalType: string
+        physicalType: varchar(1000)
+        required: true
+        classification: internal
+        description: "Investigation notes from the source."
+      - id: case_open_date
+        name: case_open_date
+        logicalType: timestamp
+        physicalType: timestamp
+        required: true
+        classification: internal
+        description: "Timestamp when the investigation case opened."
+      - id: case_close_date
+        name: case_close_date
+        logicalType: timestamp
+        physicalType: timestamp
+        required: false
+        classification: internal
+        description: "Timestamp when the investigation case closed where available."
+      - id: fraud_confirmed_flag
+        name: fraud_confirmed_flag
+        logicalType: string
+        physicalType: char(1)
+        required: true
+        classification: internal
+        description: "Indicates whether fraud was confirmed."
+      - id: siu_review_flag
+        name: siu_review_flag
+        logicalType: string
+        physicalType: char(1)
+        required: true
+        classification: internal
+        description: "Indicates whether SIU review applies."
+      - id: fraud_risk_assessment
+        name: fraud_risk_assessment
+        logicalType: string
+        physicalType: varchar(64)
+        required: true
+        classification: internal
+        description: "Fraud risk assessment status."
+      - id: claim_investigator_id
+        name: claim_investigator_id
+        logicalType: string
+        physicalType: varchar(64)
+        required: true
+        classification: internal
+        description: "Claim investigator identifier."
+      - id: claim_review_flag
+        name: claim_review_flag
+        logicalType: string
+        physicalType: char(1)
+        required: true
+        classification: internal
+        description: "Indicates whether claim review applies."
+    quality:
+      - metric: rowCount
+        mustBeGreaterThan: 0
+        dimension: completeness
+        type: library
+        severity: error
+        description: "claim_investigation.csv must not be empty."
+      - type: sql
+        query: >
+          SELECT
+            SUM(CASE WHEN concat(fraud_case_id) is null THEN 1 ELSE 0 END) AS pk_nulls,
+            COUNT(1) - COUNT(DISTINCT fraud_case_id) AS pk_duplicates
+          FROM {full_table_name} a
+          WHERE {target_watermak_exp}
+        mustBe:
+          pk_nulls: 0
+          pk_duplicates: 0
+        dimension: uniqueness
+        severity: error
+        description: "rule_0003: Not Null Check - fraud_case_id primary key must be populated and unique."
+      - type: sql
+        query: >
+          SELECT count(*) AS null_count
+          FROM {full_table_name} a
+          WHERE (fraud_case_id) is null AND {target_watermak_exp}
+        mustBe:
+          null_count: 0
+        dimension: completeness
+        severity: error
+        description: "rule_0001: BK Check - fraud_case_id business key must not be null."
+      - type: sql
+        query: >
+          SELECT
+            SUM(CASE WHEN concat(fraud_case_id) is null THEN 1 ELSE 0 END) AS bk_nulls,
+            COUNT(1) - COUNT(DISTINCT fraud_case_id) AS bk_duplicates
+          FROM {full_table_name} a
+          WHERE {target_watermak_exp}
+        mustBe:
+          bk_nulls: 0
+          bk_duplicates: 0
+        dimension: uniqueness
+        severity: error
+        description: "rule_0007: BK Not Null Check - fraud_case_id business key must be populated and unique."
+
+  - id: loss_event
+    name: loss_event
+    physicalName: loss_event.csv
+    physicalType: table
+    businessName: Loss Event
+    description: "Raw PRD 02 loss event source records."
+    tags: ["claims", "raw", "prd_02", "source_feed"]
+    dataGranularityDescription: "One row per source loss event per batch."
+    properties:
+      - id: batch_ref
+        name: batch_ref
+        logicalType: integer
+        physicalType: bigint
+        required: true
+        classification: internal
+        description: "Pipeline batch reference for the source extract."
+      - id: pull_ts
+        name: pull_ts
+        logicalType: timestamp
+        physicalType: timestamp
+        required: true
+        classification: internal
+        description: "Timestamp when the source feed was pulled."
+      - id: origin_sys
+        name: origin_sys
+        logicalType: string
+        physicalType: varchar(32)
+        required: true
+        classification: internal
+        description: "Originating source system code."
+      - id: incident_id
+        name: incident_id
+        logicalType: string
+        physicalType: varchar(64)
+        required: true
+        unique: true
+        primaryKey: true
+        primaryKeyPosition: 1
+        criticalDataElement: true
+        classification: internal
+        description: "Unique source loss event identifier."
+      - id: incident_name
+        name: incident_name
+        logicalType: string
+        physicalType: varchar(255)
+        required: true
+        classification: internal
+        description: "Source loss event name."
+      - id: incident_description
+        name: incident_description
+        logicalType: string
+        physicalType: varchar(1000)
+        required: true
+        classification: internal
+        description: "Source loss event description."
+      - id: event_date
+        name: event_date
+        logicalType: timestamp
+        physicalType: timestamp
+        required: true
+        classification: internal
+        description: "Loss event timestamp."
+      - id: event_time
+        name: event_time
+        logicalType: timestamp
+        physicalType: timestamp
+        required: true
+        classification: internal
+        description: "Loss event time value from the source feed."
+      - id: incident_start_date
+        name: incident_start_date
+        logicalType: timestamp
+        physicalType: timestamp
+        required: true
+        classification: internal
+        description: "Incident start timestamp."
+      - id: incident_end_date
+        name: incident_end_date
+        logicalType: timestamp
+        physicalType: timestamp
+        required: true
+        classification: internal
+        description: "Incident end timestamp."
+      - id: incident_status
+        name: incident_status
+        logicalType: string
+        physicalType: varchar(64)
+        required: true
+        classification: internal
+        description: "Current incident status."
+      - id: event_type
+        name: event_type
+        logicalType: string
+        physicalType: varchar(64)
+        required: true
+        classification: internal
+        description: "Source event type."
+      - id: incident_category
+        name: incident_category
+        logicalType: string
+        physicalType: varchar(64)
+        required: true
+        classification: internal
+        description: "Incident category."
+      - id: root_cause
+        name: root_cause
+        logicalType: string
+        physicalType: varchar(255)
+        required: true
+        classification: internal
+        description: "Root cause of the incident."
+      - id: liability_cause
+        name: liability_cause
+        logicalType: string
+        physicalType: varchar(255)
+        required: false
+        classification: internal
+        description: "Liability cause where available."
+      - id: reported_date
+        name: reported_date
+        logicalType: timestamp
+        physicalType: timestamp
+        required: true
+        classification: internal
+        description: "Timestamp when the incident was reported."
+      - id: reporting_channel
+        name: reporting_channel
+        logicalType: string
+        physicalType: varchar(64)
+        required: true
+        classification: internal
+        description: "Channel through which the incident was reported."
+      - id: days_to_fnol
+        name: days_to_fnol
+        logicalType: integer
+        physicalType: integer
+        required: true
+        classification: internal
+        description: "Days from incident to first notice of loss."
+      - id: notification_duration
+        name: notification_duration
+        logicalType: integer
+        physicalType: integer
+        required: true
+        classification: internal
+        description: "Notification duration in days."
+      - id: casualty_indicator
+        name: casualty_indicator
+        logicalType: string
+        physicalType: char(1)
+        required: true
+        classification: internal
+        description: "Indicates casualty involvement."
+      - id: catastrophe_flag
+        name: catastrophe_flag
+        logicalType: string
+        physicalType: char(1)
+        required: true
+        classification: internal
+        description: "Indicates whether the incident is a catastrophe."
+      - id: natcat_flag
+        name: natcat_flag
+        logicalType: string
+        physicalType: char(1)
+        required: true
+        classification: internal
+        description: "Indicates natural catastrophe involvement."
+      - id: event_severity_low_flag
+        name: event_severity_low_flag
+        logicalType: string
+        physicalType: char(1)
+        required: true
+        classification: internal
+        description: "Indicates low event severity."
+      - id: casualty_count
+        name: casualty_count
+        logicalType: integer
+        physicalType: integer
+        required: true
+        classification: internal
+        description: "Number of casualties."
+      - id: impacted_person_count
+        name: impacted_person_count
+        logicalType: integer
+        physicalType: integer
+        required: true
+        classification: internal
+        description: "Number of impacted persons."
+      - id: impacted_vehicle_count
+        name: impacted_vehicle_count
+        logicalType: integer
+        physicalType: integer
+        required: true
+        classification: internal
+        description: "Number of impacted vehicles."
+      - id: impairment_flag
+        name: impairment_flag
+        logicalType: string
+        physicalType: char(1)
+        required: true
+        classification: internal
+        description: "Indicates impairment involvement."
+      - id: shared_liability_flag
+        name: shared_liability_flag
+        logicalType: string
+        physicalType: char(1)
+        required: true
+        classification: internal
+        description: "Indicates shared liability."
+      - id: impact_description
+        name: impact_description
+        logicalType: string
+        physicalType: varchar(1000)
+        required: true
+        classification: internal
+        description: "Description of loss event impact."
+      - id: location_reference
+        name: location_reference
+        logicalType: string
+        physicalType: varchar(64)
+        required: true
+        unique: true
+        classification: internal
+        description: "Location reference associated with the loss event."
+      - id: claim_reference
+        name: claim_reference
+        logicalType: string
+        physicalType: varchar(64)
+        required: true
+        unique: true
+        classification: internal
+        description: "Claim reference associated with the loss event."
+    quality:
+      - metric: rowCount
+        mustBeGreaterThan: 0
+        dimension: completeness
+        type: library
+        severity: error
+        description: "loss_event.csv must not be empty."
+      - type: sql
+        query: >
+          SELECT
+            SUM(CASE WHEN concat(incident_id) is null THEN 1 ELSE 0 END) AS pk_nulls,
+            COUNT(1) - COUNT(DISTINCT incident_id) AS pk_duplicates
+          FROM {full_table_name} a
+          WHERE {target_watermak_exp}
+        mustBe:
+          pk_nulls: 0
+          pk_duplicates: 0
+        dimension: uniqueness
+        severity: error
+        description: "rule_0003: Not Null Check - incident_id primary key must be populated and unique."
+      - type: sql
+        query: >
+          SELECT count(*) AS null_count
+          FROM {full_table_name} a
+          WHERE (incident_id) is null AND {target_watermak_exp}
+        mustBe:
+          null_count: 0
+        dimension: completeness
+        severity: error
+        description: "rule_0001: BK Check - incident_id business key must not be null."
+      - type: sql
+        query: >
+          SELECT
+            SUM(CASE WHEN concat(incident_id) is null THEN 1 ELSE 0 END) AS bk_nulls,
+            COUNT(1) - COUNT(DISTINCT incident_id) AS bk_duplicates
+          FROM {full_table_name} a
+          WHERE {target_watermak_exp}
+        mustBe:
+          bk_nulls: 0
+          bk_duplicates: 0
+        dimension: uniqueness
+        severity: error
+        description: "rule_0007: BK Not Null Check - incident_id business key must be populated and unique."
+
+slaProperties:
+  - property: frequency
+    value: 1
+    unit: d
+  - property: latency
+    value: 24
+    unit: h
+  - property: retention
+    value: 7
+    unit: y
+
+team:
+  name: "Data Modelling & Engineering CoE"
+  description: "Producing team / owner of this contract"
+  members:
+    - username: "data-modelling-engineering-coe@example-internal"
+      role: Owner
+      dateIn: "2026-08-07"
+
+roles:
+  - role: claims_raw_ingestion
+    access: read
+    firstLevelApprovers: "Claims Data Owner"
+    secondLevelApprovers: "Data Governance"
+
+support:
+  - channel: coe-data-contracts
+    tool: email
+    url: "mailto:coe-data-contracts@example-internal"
+
+tags: ["claims", "raw", "prd_02", "source_contract"]
+
+customProperties:
+  - property: allianzClassification
+    value: Internal
+  - property: containsPersonalData
+    value: false
+  - property: sourceSystem
+    value: SAP
+  - property: sourceFeed
+    value: prd_02
+  - property: pipelineLayer
+    value: raw
+  - property: expectedFiles
+    value: ["claim.csv", "claim_investigation.csv", "loss_event.csv"]
+  - property: notebookValidationConfig
+    value:
+      contractReader: "yaml.safe_load"
+      schemaObjectPath: "schema"
+      qualityRulesPath: "schema[].quality"
+      ruleCatalogPath: "customProperties[property=dqRuleCatalog].value"
+      sourceFileField: physicalName
+      entityField: name
+      batchParameter: batch_ref
+      defaultTargetWatermakExp: "batch_ref = '{batch_ref}'"
+      placeholderStyle: "python_format"
+      placeholders:
+        full_table_name: "Databricks temp view or fully qualified table name for the current source object"
+        target_watermak_exp: "Batch filter expression used by existing ETL DQ SQL templates"
+        table_pk: "Primary key column list for the current source object"
+        table_bk: "Business key column list for the current source object"
+        table_bk_join: "Join condition between aliases a and b for the business key"
+        source_table: "Source table/view used for reconciliation checks"
+        source_pk: "Source primary key used for reconciliation checks"
+      entities:
+        - entity: claim
+          sourceFile: claim.csv
+          primaryKeyColumns: ["claim_ref_id"]
+          businessKeyColumns: ["claim_ref_id"]
+          fullTableNamePlaceholder: claim
+          targetWatermakExp: "batch_ref = '{batch_ref}'"
+        - entity: claim_investigation
+          sourceFile: claim_investigation.csv
+          primaryKeyColumns: ["fraud_case_id"]
+          businessKeyColumns: ["fraud_case_id"]
+          fullTableNamePlaceholder: claim_investigation
+          targetWatermakExp: "batch_ref = '{batch_ref}'"
+        - entity: loss_event
+          sourceFile: loss_event.csv
+          primaryKeyColumns: ["incident_id"]
+          businessKeyColumns: ["incident_id"]
+          fullTableNamePlaceholder: loss_event
+          targetWatermakExp: "batch_ref = '{batch_ref}'"
+  - property: dqRuleCatalog
+    value:
+      sourceRuleFile: "data_contract/new 2.txt"
+      activeRules:
+        - ruleId: rule_0001
+          ruleName: "BK Check"
+          sourceRuleType: Warning
+          severity: error
+          ruleCategory: validity
+          layer: raw
+          applicableTo: ["claim", "claim_investigation", "loss_event"]
+          failureAction: reject
+          expectedOutcome:
+            null_count: 0
+          queryTemplate: "select count(*) as null_count from {full_table_name} a where ({table_bk}) is null and {target_watermak_exp}"
+          queryDesc: "Business key should not be null."
+        - ruleId: rule_0003
+          ruleName: "Not Null Check"
+          sourceRuleType: Warning
+          severity: error
+          ruleCategory: uniqueness
+          layer: raw
+          applicableTo: ["claim", "claim_investigation", "loss_event"]
+          failureAction: reject
+          expectedOutcome:
+            pk_nulls: 0
+            pk_duplicates: 0
+          queryTemplate: "SELECT SUM(CASE WHEN concat({table_pk}) is null THEN 1 ELSE 0 END) AS pk_nulls, COUNT(1) - COUNT(DISTINCT {table_pk}) AS pk_duplicates FROM {full_table_name} a WHERE {target_watermak_exp}"
+          queryDesc: "Primary key should be populated and unique."
+        - ruleId: rule_0007
+          ruleName: "BK Not Null Check"
+          sourceRuleType: Warning
+          severity: error
+          ruleCategory: uniqueness
+          layer: raw
+          applicableTo: ["claim", "claim_investigation", "loss_event"]
+          failureAction: reject
+          expectedOutcome:
+            bk_nulls: 0
+            bk_duplicates: 0
+          queryTemplate: "SELECT SUM(CASE WHEN concat({table_bk}) is null THEN 1 ELSE 0 END) AS bk_nulls, COUNT(1) - COUNT(DISTINCT {table_bk}) AS bk_duplicates FROM {full_table_name} a WHERE {target_watermak_exp}"
+          queryDesc: "Business key should be populated and unique."
+      inactiveRules:
+        - ruleId: rule_0002
+          ruleName: "Missing Keys Check"
+          sourceRuleType: Warning
+          ruleCategory: reconciliation
+          reasonNotActive: "Requires a source-to-target comparison; apply when validating raw-to-bronze output, not standalone raw source arrival."
+          expectedOutcome:
+            missing_keys: 0
+          queryTemplate: "select (select count(distinct({source_pk})) from {source_table} ) - count(distinct ({table_bk})) as missing_keys from {full_table_name} a"
+        - ruleId: rule_0004
+          ruleName: "SCD2 Effective Dates Check"
+          sourceRuleType: Warning
+          ruleCategory: "SCD2 validity"
+          reasonNotActive: "Raw PRD2 source files do not contain effective_from_ts/effective_to_ts SCD2 interval columns."
+        - ruleId: rule_0005
+          ruleName: "Overlapping Period Check"
+          sourceRuleType: Warning
+          ruleCategory: "SCD2 validity"
+          reasonNotActive: "Raw PRD2 source files do not contain SCD2 effective dating columns."
+        - ruleId: rule_0006
+          ruleName: "Duplicate Active Records Check"
+          sourceRuleType: Warning
+          ruleCategory: "SCD2 validity"
+          reasonNotActive: "Raw PRD2 source files do not contain SCD2 active-record columns."
+  - property: contractWorkstreamGuidance
+    value:
+      sourceDocument: "data_contract/Data Contract Workstreams and Required Tasks.docx"
+      implementationScope:
+        - "Generate YAML from current source schema and profiled synthetic data."
+        - "Validate YAML syntax and schema before use."
+        - "Load DQ rules from the YAML into metadata tables for dynamic execution."
+        - "Capture validation output with contract ID, version, layer, entity, rule ID, severity, status, expected value, and actual value."
+      recommendedMetadataTables:
+        - dq_contract_rule_metadata
+        - dq_rule_execution_log
+        - dq_rule_exception_log
+        - dq_contract_rule_version
+  - property: breakingChangePolicy
+    value: "Removing, renaming, or changing type/nullability of a required field is breaking."
+
+contractCreatedTs: "2026-08-07T00:00:00+00:00"
