@@ -310,6 +310,20 @@ def run_required_checks(obj: dict[str, Any], df: DataFrame) -> None:
 def run_key_checks(obj: dict[str, Any], df: DataFrame, entity_config: dict[str, Any]) -> None:
     entity = obj["name"]
     physical_name = obj.get("physicalName") or entity
+    if custom_property_map(obj.get("customProperties")).get("allowNoPrimaryKey") is True:
+        add_result(
+            entity=entity,
+            physical_name=physical_name,
+            rule_id="primary_key_not_required",
+            rule_name="Primary key not required",
+            rule_type="key",
+            severity="info",
+            expected_value={"allow_no_primary_key": True},
+            actual_value={"allow_no_primary_key": True},
+            status="pass",
+            message="Primary key check skipped because allowNoPrimaryKey is true.",
+        )
+        return
     pk_cols = key_columns(obj, entity_config, "primaryKeyColumns")
     if not pk_cols:
         add_result(

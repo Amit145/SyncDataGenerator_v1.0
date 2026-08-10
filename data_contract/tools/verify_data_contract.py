@@ -109,6 +109,8 @@ def validate_keys(contract: dict[str, Any], input_path: Path, issues: list[dict[
     for obj in contract.get("schema", []):
         physical = obj.get("physicalName")
         entity = obj.get("name")
+        if item_custom_property_map(obj).get("allowNoPrimaryKey") is True:
+            continue
         path = input_path / physical if physical else None
         if not path or not path.exists():
             continue

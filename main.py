@@ -93,6 +93,7 @@ from helper.satellite_builder import (
 from misc.ref_check import latest_run
 from validators.file_cols_validator import check_file_and_cols
 from validators.integrity_checker import validate_integrity
+from data_contract.tools.run_data_contracts import run_data_contracts
 from generators.supporting_generator import hub_account
 from generators.lifecycle_generator import hub_customer
 from enums.product_catalog import (
@@ -153,6 +154,16 @@ parser.add_argument(
     "--remove-working-output",
     action="store_true",
     help="Remove intermediate data/output/<run_id> files after they are normalized into data/synthetic/base. Kept by default.",
+)
+parser.add_argument(
+    "--skip-data-contracts",
+    action="store_true",
+    help="Skip configured data contract generation and verification.",
+)
+parser.add_argument(
+    "--data-contract-config",
+    default="data_contract/contract_run_config.yaml",
+    help="Path to data contract run config. Used unless --skip-data-contracts is supplied.",
 )
 args = parser.parse_args()
 if args.enhanced_only and args.mlops_only:
@@ -783,6 +794,7 @@ silver_mlops_prd1_base_out = None
 silver_enhanced_out = None
 silver_mlops_out = None
 claims_product_outputs = None
+data_contract_results = []
 if include_claims_product:
     claims_ldm_raw_out = write_claims_ldm_raw_batch(RAW_ROOT, folder_run_id, base_context)
     claims_two_source_raw = write_claims_two_source_raw(claims_ldm_raw_out, RAW_ROOT, folder_run_id)
@@ -908,6 +920,22 @@ if generate_prd_raw:
         product_folder="prd_delta",
     )
     raw_mlops_prd1_delta_files = mirror_source1_delta_into_prd1(raw_mlops_prd_delta_out, raw_mlops_prd1_out)
+
+if not args.skip_data_contracts:
+    data_contract_results = run_data_contracts(
+        {
+            "folder_run_id": folder_run_id,
+            "run_id": run_id,
+            "claims_product_outputs": claims_product_outputs,
+            "raw_enhanced_prd1_out": raw_enhanced_prd1_out,
+            "raw_enhanced_prd2_out": raw_enhanced_prd2_out,
+            "raw_enhanced_vault_ready_out": raw_enhanced_vault_ready_out,
+            "raw_enhanced_raw_vault_out": raw_enhanced_raw_vault_out,
+        },
+        args.data_contract_config,
+    )
+else:
+    print("DATA CONTRACTS: skipped (--skip-data-contracts)")
 
 if generate_prd_silver and raw_base_prd1_out:
     silver_base_out = os.path.join(SILVER_BASE_ROOT, folder_run_id)
@@ -1037,6 +1065,21 @@ if raw_mlops_prd_delta_out:
     print("RAW MLOPS PRD_DELTA:", raw_mlops_prd_delta_out)
 if raw_mlops_prd1_delta_files:
     print("RAW MLOPS PRD1 SOURCE1 DELTA FILES:", len(raw_mlops_prd1_delta_files))
+if data_contract_results:
+    for result in data_contract_results:
+        if result.get("status") == "skipped":
+            print(f"DATA CONTRACT {result['name']}: skipped ({result.get('reason', 'no reason provided')})")
+        else:
+            print(f"DATA CONTRACT {result['name']} SUMMARY:")
+            print("  INPUT:", result.get("inputPath"))
+            print("  CONTRACT:", result.get("contract"))
+            print("  REPORT:", result.get("report"))
+            print(
+                "  VERIFICATION:",
+                result.get("status"),
+                f"critical={result.get('criticalCount')}",
+                f"warnings={result.get('warningCount')}",
+            )
 if not generate_prd_raw and not skip_base_outputs:
     print("PRD RAW: skipped (set output_settings.generate_prd_raw=true in config/scenario_v1.json)")
 if silver_base_out:

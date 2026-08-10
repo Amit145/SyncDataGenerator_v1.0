@@ -1,0 +1,22 @@
+record_type,table,column,key,value,primaryKey,businessKey,businessName,grain,allowNoPrimaryKey,exclude,required,logicalType,physicalType,classification,allowedValues,minValue,maxValue,pii,ruleId,ruleName,type,query,metric,mustBe,dimension,severity,description,referencedColumns,failureAction
+contract,,,purpose,Validate raw claims source files before bronze ingestion.,,,,,,,,,,,,,,,,,,,,,,,,
+contract,,,limitations,Generated from synthetic source data; review business descriptions before approval.,,,,,,,,,,,,,,,,,,,,,,,,
+contract,,,usage,Used as an ingestion gate and DQ metadata source.,,,,,,,,,,,,,,,,,,,,,,,,
+contract,,,frequency,1,,,,,,,,,,,,,,,,,,,,,,,,
+contract,,,frequencyUnit,d,,,,,,,,,,,,,,,,,,,,,,,,
+contract,,,latency,24,,,,,,,,,,,,,,,,,,,,,,,,
+contract,,,latencyUnit,h,,,,,,,,,,,,,,,,,,,,,,,,
+contract,,,retention,7,,,,,,,,,,,,,,,,,,,,,,,,
+contract,,,retentionUnit,y,,,,,,,,,,,,,,,,,,,,,,,,
+contract,,,teamName,Data Modelling & Engineering CoE,,,,,,,,,,,,,,,,,,,,,,,,
+contract,,,firstLevelApprovers,Claims Data Owner,,,,,,,,,,,,,,,,,,,,,,,,
+contract,,,secondLevelApprovers,Data Governance,,,,,,,,,,,,,,,,,,,,,,,,
+contract,,,supportChannel,coe-data-contracts,,,,,,,,,,,,,,,,,,,,,,,,
+contract,,,supportUrl,mailto:coe-data-contracts@example-internal,,,,,,,,,,,,,,,,,,,,,,,,
+table,claim_register.csv,,,,claim_identifier,claim_identifier,Claim Register,One row per claim_identifier per batch.,,,,,,,,,,,,,,,,,,
+table_rule,claim_register.csv,,,,,,,,,,,,,,,,,,dq_claim_register_amounts_non_negative,Claim amounts non-negative,sql,"SELECT COUNT(*) AS invalid_amounts FROM {full_table_name} WHERE (claim_requested_amount < 0 OR total_incurred < 0 OR total_payment_amount < 0) AND {target_watermak_exp}",,"{""invalid_amounts"": 0}",accuracy,error,Claim financial amount fields must not be negative.,claim_requested_amount|total_incurred|total_payment_amount,reject
+column,claim_register.csv,claim_status,,,,,,,,,true,,,,Open|Closed|Reopened,,,,,,,,,,,,,
+column,claim_register.csv,claim_requested_amount,,,,,,,,,true,,,,,0,,,,,,,,,,,,
+column_rule,claim_register.csv,claim_requested_amount,,,,,,,,,,,,,,,,,dq_claim_requested_amount_not_null,Claim requested amount not null,library,,nullValues,0,completeness,error,claim_requested_amount must be populated.,,reject
+table,policy_register.csv,,,,policy_identifier,policy_identifier,Policy Register,One row per policy_identifier per batch.,,,,,,,,,,,,,,,,,,
+table,claim.csv,,,,claim_ref_id,claim_ref_id,Claim,One row per claim_ref_id per batch.,,,,,,,,,,,,,,,,,,

@@ -1,0 +1,58 @@
+enabled: true
+failMainOnContractError: true
+checkKeys: true
+generatedBase: data_contract/generated
+reportsBase: data_contract/reports
+
+contracts:
+  - name: claims_raw_prd01
+    enabled: true
+    inputFrom: claims_product_outputs.prd_01
+    domain: claims
+    layer: raw
+    sourceFeed: prd_01
+    sourceSystem: Claims LDM source-1
+    contractId: claims-prd-01-raw-0001
+    contractName: Claims PRD 01 Raw Source Feed
+    config: data_contract/tools/contract_config_example.yaml
+    output: data_contract/generated/claims/raw/prd_01/claims_prd_01_raw_ODCS.yaml
+    report: data_contract/reports/claims_prd_01_contract_validation.json
+
+  - name: claims_raw_prd02
+    enabled: true
+    inputFrom: claims_product_outputs.prd_02
+    domain: claims
+    layer: raw
+    sourceFeed: prd_02
+    sourceSystem: SAP claims source-2
+    contractId: claims-prd-02-raw-0001
+    contractName: Claims PRD 02 Raw Source Feed
+    config: data_contract/tools/contract_config_example.yaml
+    output: data_contract/generated/claims/raw/prd_02/claims_prd_02_raw_ODCS.yaml
+    report: data_contract/reports/claims_prd_02_contract_validation.json
+
+  - name: enhanced_raw_prd01
+    enabled: true
+    inputFrom: raw_enhanced_vault_ready_out
+    domain: enhanced
+    layer: raw
+    sourceFeed: prd_01
+    sourceSystem: Enhanced source-1 vault_ready_28
+    contractId: enhanced-prd-01-raw-0001
+    contractName: Enhanced PRD 01 Raw Source Feed
+    config: data_contract/tools/enhanced_prd01_contract_config.yaml
+    output: data_contract/generated/enhanced/raw/prd_01/enhanced_prd_01_raw_ODCS.yaml
+    report: data_contract/reports/enhanced_prd_01_contract_validation.json
+
+  - name: enhanced_raw_prd02
+    enabled: true
+    inputFrom: raw_enhanced_prd2_out
+    domain: enhanced
+    layer: raw
+    sourceFeed: prd_02
+    sourceSystem: Enhanced SAP/source-2
+    contractId: enhanced-prd-02-raw-0001
+    contractName: Enhanced PRD 02 Raw Source Feed
+    config: data_contract/tools/enhanced_prd02_contract_config.yaml
+    output: data_contract/generated/enhanced/raw/prd_02/enhanced_prd_02_raw_ODCS.yaml
+    report: data_contract/reports/enhanced_prd_02_contract_validation.json

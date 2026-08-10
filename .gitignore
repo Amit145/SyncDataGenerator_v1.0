@@ -85,8 +85,11 @@ Thumbs.db
 data/
 output/
 *.csv
+!data_contract/tools/*_config*.csv
 *.parquet
 *.json
+data_contract/generated/
+data_contract/reports/
 
 # Databricks or temp files
 .dbfs

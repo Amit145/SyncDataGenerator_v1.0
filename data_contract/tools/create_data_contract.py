@@ -64,7 +64,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--owner-email", default="data-modelling-engineering-coe@example-internal")
     parser.add_argument("--rules-file", default=DEFAULT_RULES, type=Path)
     parser.add_argument("--schema-path", default=DEFAULT_SCHEMA, type=Path)
-    parser.add_argument("--config", type=Path, help="Optional YAML override config.")
+    parser.add_argument("--config", type=Path, help="Optional YAML or CSV override config.")
     parser.add_argument(
         "--path-template",
         help="Runtime source path written to the contract server block. Defaults to '<input-path>/*.csv'.",
@@ -82,9 +82,212 @@ def title_from_stem(stem: str) -> str:
     return " ".join(part.capitalize() for part in stem.split("_"))
 
 
+def parse_config_scalar(value: Any) -> Any:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        return value
+
+    text = value.strip()
+    if text == "":
+        return None
+
+    lowered = text.lower()
+    if lowered in {"true", "false"}:
+        return lowered == "true"
+    if lowered in {"none", "null"}:
+        return None
+
+    if (text.startswith("[") and text.endswith("]")) or (text.startswith("{") and text.endswith("}")):
+        return yaml.safe_load(text)
+
+    if "|" in text:
+        return [parse_config_scalar(part) for part in text.split("|") if part.strip()]
+
+    try:
+        return int(text)
+    except ValueError:
+        pass
+    try:
+        return float(text)
+    except ValueError:
+        return text
+
+
+def parse_config_mapping(value: Any) -> Any:
+    parsed = parse_config_scalar(value)
+    if not isinstance(parsed, str):
+        return parsed
+
+    mapping: dict[str, Any] = {}
+    for part in parsed.split(";"):
+        if "=" not in part:
+            return parsed
+        key, raw_value = part.split("=", 1)
+        key = key.strip()
+        if not key:
+            return parsed
+        mapping[key] = parse_config_scalar(raw_value)
+    return mapping
+
+
+def set_if_present(target: dict[str, Any], key: str, value: Any) -> None:
+    parsed = parse_config_scalar(value)
+    if parsed is not None:
+        target[key] = parsed
+
+
+def row_value(row: dict[str, str], key: str) -> str | None:
+    value = row.get(key)
+    if value is None or value.strip() == "":
+        return None
+    return value
+
+
+def table_config(config: dict[str, Any], table_name: str) -> dict[str, Any]:
+    return config.setdefault("tables", {}).setdefault(table_name, {})
+
+
+def csv_rule(row: dict[str, str]) -> dict[str, Any]:
+    rule: dict[str, Any] = {}
+    aliases = {
+        "ruleId": "ruleId",
+        "ruleName": "ruleName",
+        "type": "type",
+        "query": "query",
+        "metric": "metric",
+        "dimension": "dimension",
+        "severity": "severity",
+        "description": "description",
+        "failureAction": "failureAction",
+        "businessImpact": "businessImpact",
+        "schedule": "schedule",
+        "scheduler": "scheduler",
+        "unit": "unit",
+        "method": "method",
+        "arguments": "arguments",
+        "referencedColumns": "referencedColumns",
+    }
+    for column_name, rule_key in aliases.items():
+        value = row_value(row, column_name)
+        if value is None:
+            continue
+        if rule_key in {"arguments", "referencedColumns"}:
+            rule[rule_key] = parse_config_scalar(value)
+        else:
+            rule[rule_key] = value
+
+    for key in (
+        "mustBe",
+        "mustNotBe",
+        "mustBeGreaterThan",
+        "mustBeGreaterOrEqualTo",
+        "mustBeLessThan",
+        "mustBeLessOrEqualTo",
+        "mustBeBetween",
+        "mustNotBeBetween",
+    ):
+        value = row_value(row, key)
+        if value is not None:
+            rule[key] = parse_config_mapping(value)
+
+    return rule
+
+
+def load_csv_config(path: Path) -> dict[str, Any]:
+    config: dict[str, Any] = {"tables": {}}
+    contract_fields = {
+        "purpose",
+        "limitations",
+        "usage",
+        "frequency",
+        "frequencyUnit",
+        "latency",
+        "latencyUnit",
+        "retention",
+        "retentionUnit",
+        "teamName",
+        "firstLevelApprovers",
+        "secondLevelApprovers",
+        "supportChannel",
+        "supportUrl",
+        "allianzClassification",
+        "containsPersonalData",
+        "ownerDateIn",
+        "accessRole",
+        "contractCreatedTs",
+    }
+    table_fields = {"primaryKey", "businessKey", "businessName", "grain", "allowNoPrimaryKey", "exclude"}
+    column_fields = {
+        "required",
+        "logicalType",
+        "physicalType",
+        "classification",
+        "description",
+        "allowedValues",
+        "minValue",
+        "maxValue",
+        "pii",
+    }
+
+    with path.open(newline="", encoding="utf-8-sig") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            record_type = (row_value(row, "record_type") or row_value(row, "section") or "").lower()
+            table_name = row_value(row, "table")
+            column_name = row_value(row, "column")
+
+            if record_type in {"contract", "metadata"}:
+                key = row_value(row, "key")
+                if key:
+                    set_if_present(config, key, row_value(row, "value"))
+                for field in contract_fields:
+                    set_if_present(config, field, row_value(row, field))
+                continue
+
+            if record_type == "table" and table_name:
+                cfg = table_config(config, table_name)
+                for field in table_fields:
+                    set_if_present(cfg, field, row_value(row, field))
+                continue
+
+            if record_type == "column" and table_name and column_name:
+                cfg = table_config(config, table_name).setdefault("columns", {}).setdefault(column_name, {})
+                for field in column_fields:
+                    set_if_present(cfg, field, row_value(row, field))
+                continue
+
+            if record_type == "table_rule" and table_name:
+                rule = csv_rule(row)
+                if rule:
+                    table_config(config, table_name).setdefault("tableRules", []).append(rule)
+                continue
+
+            if record_type == "column_rule" and table_name and column_name:
+                rule = csv_rule(row)
+                if rule:
+                    column_cfg = table_config(config, table_name).setdefault("columns", {}).setdefault(column_name, {})
+                    column_cfg.setdefault("columnRules", []).append(rule)
+
+    if not config["tables"]:
+        config.pop("tables")
+    return config
+
+
+def resolve_config_path(path: Path) -> Path:
+    if path.suffix.lower() in {".yaml", ".yml"}:
+        csv_path = path.with_suffix(".csv")
+        if csv_path.exists():
+            return csv_path
+    return path
+
+
 def load_config(path: Path | None) -> dict[str, Any]:
     if not path:
         return {}
+    path = resolve_config_path(path)
+    if path.suffix.lower() == ".csv":
+        return load_csv_config(path)
     with path.open(encoding="utf-8") as handle:
         return yaml.safe_load(handle) or {}
 
@@ -142,10 +345,18 @@ def read_csv(path: Path, sample_rows: int) -> pd.DataFrame:
     return pd.read_csv(path, nrows=nrows, low_memory=False)
 
 
-def infer_key(df: pd.DataFrame, file_name: str, table_cfg: dict[str, Any]) -> str | None:
+def normalize_key(value: Any) -> list[str]:
+    if not value:
+        return []
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    return [str(value)]
+
+
+def infer_key(df: pd.DataFrame, file_name: str, table_cfg: dict[str, Any]) -> list[str]:
     override = table_cfg.get("primaryKey") or table_cfg.get("businessKey")
     if override:
-        return override[0] if isinstance(override, list) else override
+        return normalize_key(override)
 
     preferred_patterns = ("_identifier", "_id", "_ref", "_number")
     unique = [
@@ -156,17 +367,18 @@ def infer_key(df: pd.DataFrame, file_name: str, table_cfg: dict[str, Any]) -> st
     for pattern in preferred_patterns:
         for col in unique:
             if col.lower().endswith(pattern):
-                return col
-    return unique[0] if unique else None
+                return [col]
+    return [unique[0]] if unique else []
 
 
 def quality_rule(rule_id: str, key: str) -> dict[str, Any]:
+    concat_expr = f"concat({key})"
     if rule_id == "rule_0001":
         return {
             "type": "sql",
             "query": (
                 "select count(*) as null_count from {full_table_name} a "
-                f"where ({key}) is null and {{target_watermak_exp}}"
+                f"where {concat_expr} is null and {{target_watermak_exp}}"
             ),
             "mustBe": {"null_count": 0},
             "dimension": "completeness",
@@ -177,8 +389,8 @@ def quality_rule(rule_id: str, key: str) -> dict[str, Any]:
         return {
             "type": "sql",
             "query": (
-                f"SELECT SUM(CASE WHEN concat({key}) is null THEN 1 ELSE 0 END) AS pk_nulls, "
-                f"COUNT(1) - COUNT(DISTINCT {key}) AS pk_duplicates "
+                f"SELECT SUM(CASE WHEN {concat_expr} is null THEN 1 ELSE 0 END) AS pk_nulls, "
+                f"COUNT(1) - COUNT(DISTINCT {concat_expr}) AS pk_duplicates "
                 "FROM {full_table_name} a WHERE {target_watermak_exp}"
             ),
             "mustBe": {"pk_nulls": 0, "pk_duplicates": 0},
@@ -189,8 +401,8 @@ def quality_rule(rule_id: str, key: str) -> dict[str, Any]:
     return {
         "type": "sql",
         "query": (
-            f"SELECT SUM(CASE WHEN concat({key}) is null THEN 1 ELSE 0 END) AS bk_nulls, "
-            f"COUNT(1) - COUNT(DISTINCT {key}) AS bk_duplicates "
+            f"SELECT SUM(CASE WHEN {concat_expr} is null THEN 1 ELSE 0 END) AS bk_nulls, "
+            f"COUNT(1) - COUNT(DISTINCT {concat_expr}) AS bk_duplicates "
             "FROM {full_table_name} a WHERE {target_watermak_exp}"
         ),
         "mustBe": {"bk_nulls": 0, "bk_duplicates": 0},
@@ -304,7 +516,7 @@ def max_value_quality_rule(column: str, value: int | float) -> dict[str, Any]:
     }
 
 
-def build_property(col: str, series: pd.Series, key: str | None, table_cfg: dict[str, Any]) -> dict[str, Any]:
+def build_property(col: str, series: pd.Series, key_cols: list[str], table_cfg: dict[str, Any]) -> dict[str, Any]:
     column_cfg = (table_cfg.get("columns") or {}).get(col, {})
     logical = column_cfg.get("logicalType") or logical_type(series, col)
     required = bool(column_cfg.get("required", series.isna().sum() == 0))
@@ -319,12 +531,12 @@ def build_property(col: str, series: pd.Series, key: str | None, table_cfg: dict
         "classification": classification,
         "description": column_cfg.get("description") or f"Source field {col}.",
     }
-    if col == key:
+    if col in key_cols:
         prop.update(
             {
                 "unique": True,
                 "primaryKey": True,
-                "primaryKeyPosition": 1,
+                "primaryKeyPosition": key_cols.index(col) + 1,
                 "criticalDataElement": True,
                 "description": column_cfg.get("description") or "Primary business key for this source object.",
             }
@@ -429,9 +641,9 @@ def build_contract(args: argparse.Namespace, config: dict[str, Any]) -> dict[str
         if table_cfg.get("exclude", False):
             continue
         df = read_csv(path, args.sample_rows)
-        key = infer_key(df, path.name, table_cfg)
+        key_cols = infer_key(df, path.name, table_cfg)
         table_name = table_cfg.get("name") or path.stem
-        properties = [build_property(col, df[col], key, table_cfg) for col in df.columns]
+        properties = [build_property(col, df[col], key_cols, table_cfg) for col in df.columns]
         contains_personal_data = contains_personal_data or any(
             prop.get("classification") == "confidential" for prop in properties
         )
@@ -445,14 +657,16 @@ def build_contract(args: argparse.Namespace, config: dict[str, Any]) -> dict[str
                 "description": f"{path.name} must not be empty.",
             }
         ]
-        if key:
-            quality.extend([quality_rule("rule_0003", key), quality_rule("rule_0001", key), quality_rule("rule_0007", key)])
+        if key_cols:
+            key_expr = ", ".join(key_cols)
+            concat_key_expr = ", ".join(key_cols)
+            quality.extend([quality_rule("rule_0003", concat_key_expr), quality_rule("rule_0001", key_expr), quality_rule("rule_0007", concat_key_expr)])
             entities.append(
                 {
                     "entity": table_name,
                     "sourceFile": path.name,
-                    "primaryKeyColumns": [key],
-                    "businessKeyColumns": [key],
+                    "primaryKeyColumns": key_cols,
+                    "businessKeyColumns": normalize_key(table_cfg.get("businessKey")) or key_cols,
                     "fullTableNamePlaceholder": table_name,
                     "targetWatermakExp": args.batch_filter,
                 }
@@ -469,9 +683,22 @@ def build_contract(args: argparse.Namespace, config: dict[str, Any]) -> dict[str
                 "businessName": table_cfg.get("businessName") or title_from_stem(table_name),
                 "description": table_cfg.get("description") or f"Raw {args.source_feed} source records for {title_from_stem(table_name)}.",
                 "tags": [args.domain, args.layer, args.source_feed, "source_feed"],
-                "dataGranularityDescription": table_cfg.get("grain") or (f"One row per {key} per batch." if key else "One row per source record per batch."),
+                "dataGranularityDescription": table_cfg.get("grain") or (f"One row per {', '.join(key_cols)} per batch." if key_cols else "One row per source record per batch."),
                 "properties": properties,
                 "quality": quality,
+                **(
+                    {
+                        "customProperties": [
+                            {
+                                "property": "allowNoPrimaryKey",
+                                "value": True,
+                                "description": "This source object is a grouped/sparse extract without one universal physical primary key column.",
+                            }
+                        ]
+                    }
+                    if table_cfg.get("allowNoPrimaryKey")
+                    else {}
+                ),
             }
         )
         expected_files.append(path.name)
