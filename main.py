@@ -45,6 +45,7 @@ from generators.raw_prd_generator import (
 from generators.raw_api_generator import write_raw_api_batch
 from generators.raw_claims_generator import write_raw_claims_batch
 from generators.claim_ldm_generator import write_claims_ldm_raw_batch, write_claims_two_source_raw
+from generators.raw_policy_generator import write_policy_two_source_raw
 from generators.raw_data_source_generator import generate_data_source_raw
 
 from helper.config_loader import load_config
@@ -151,6 +152,11 @@ parser.add_argument(
     help="Generate claims product outputs under data/raw, data/bronze, data/silver, and data/gold.",
 )
 parser.add_argument(
+    "--include-policy-product",
+    action="store_true",
+    help="Generate policy PRD1/PRD2 raw source feeds under data/raw/policy.",
+)
+parser.add_argument(
     "--remove-working-output",
     action="store_true",
     help="Remove intermediate data/output/<run_id> files after they are normalized into data/synthetic/base. Kept by default.",
@@ -182,6 +188,9 @@ include_new_outputs_src = include_raw_silver and (
 )
 include_claims_product = (not skip_base_outputs) and (
     args.include_claims_product or bool(output_settings.get("generate_claims_product", False))
+)
+include_policy_product = (not skip_base_outputs) and (
+    args.include_policy_product or bool(output_settings.get("generate_policy_product", False))
 )
 
 # ---------------- Inputs ----------------
@@ -217,7 +226,7 @@ LINK_DATE = link_dt.isoformat()
 SAT_DATE = sat_dt.isoformat()
 
 ensure_data_roots(
-    include_optional_raw_silver=include_raw_silver or generate_prd_raw or generate_prd_silver or include_claims_product,
+    include_optional_raw_silver=include_raw_silver or generate_prd_raw or generate_prd_silver or include_claims_product or include_policy_product,
     include_new_outputs_src=include_new_outputs_src,
     include_product_combined=False,
     include_legacy_global_prd=False,
@@ -794,6 +803,7 @@ silver_mlops_prd1_base_out = None
 silver_enhanced_out = None
 silver_mlops_out = None
 claims_product_outputs = None
+policy_raw_outputs = None
 data_contract_results = []
 if include_claims_product:
     claims_ldm_raw_out = write_claims_ldm_raw_batch(RAW_ROOT, folder_run_id, base_context)
@@ -803,6 +813,9 @@ if include_claims_product:
     claims_product_outputs["prd_01"] = claims_two_source_raw["prd_01"]
     claims_product_outputs["prd_02"] = claims_two_source_raw["prd_02"]
     claims_product_outputs["raw_vault"] = claims_two_source_raw["raw_vault"]
+
+if include_policy_product:
+    policy_raw_outputs = write_policy_two_source_raw(RAW_ROOT, folder_run_id, base_context)
 
 if include_raw_silver and not skip_base_outputs:
     raw_out = write_raw_crm_batch(RAW_BASE, folder_run_id, base_context)
@@ -927,6 +940,7 @@ if not args.skip_data_contracts:
             "folder_run_id": folder_run_id,
             "run_id": run_id,
             "claims_product_outputs": claims_product_outputs,
+            "policy_raw_outputs": policy_raw_outputs,
             "raw_enhanced_prd1_out": raw_enhanced_prd1_out,
             "raw_enhanced_prd2_out": raw_enhanced_prd2_out,
             "raw_enhanced_vault_ready_out": raw_enhanced_vault_ready_out,
@@ -1020,6 +1034,10 @@ if not skip_base_outputs:
         print("CLAIMS BRONZE:", claims_product_outputs["bronze"])
         print("CLAIMS SILVER:", claims_product_outputs["silver"])
         print("CLAIMS GOLD:", claims_product_outputs["gold"])
+    if policy_raw_outputs:
+        print("POLICY RAW ROOT:", policy_raw_outputs["root"])
+        print("POLICY PRD1 CRM:", policy_raw_outputs["prd_01"])
+        print("POLICY PRD2 SAP:", policy_raw_outputs["prd_02"])
     if include_raw_silver:
         print("RAW CRM:", raw_out)
         print("RAW CRM CANONICAL:", generated_crm_canonical)
@@ -1073,6 +1091,10 @@ if data_contract_results:
             print(f"DATA CONTRACT {result['name']} SUMMARY:")
             print("  INPUT:", result.get("inputPath"))
             print("  CONTRACT:", result.get("contract"))
+            if result.get("excel"):
+                print("  EXCEL:", result.get("excel"))
+            if result.get("importedYaml"):
+                print("  IMPORTED YAML:", result.get("importedYaml"))
             print("  REPORT:", result.get("report"))
             print(
                 "  VERIFICATION:",
@@ -1080,6 +1102,8 @@ if data_contract_results:
                 f"critical={result.get('criticalCount')}",
                 f"warnings={result.get('warningCount')}",
             )
+            if result.get("excelRoundTripStatus"):
+                print("  EXCEL IMPORT/LINT:", result.get("excelRoundTripStatus"))
 if not generate_prd_raw and not skip_base_outputs:
     print("PRD RAW: skipped (set output_settings.generate_prd_raw=true in config/scenario_v1.json)")
 if silver_base_out:

@@ -1,0 +1,22 @@
+rule_id,rule_name,rule_type,query_text,query_desc,expected_outcome,rule_category
+rule_0005,Overlapping Period Check,Warning,"
+ select count(*) as bk_with_overlapping_interval from ( select count(*), {table_bk} from {full_table_name} a join {full_table_name} b on {table_bk_join} and a.{target_watermak_exp}  and b.{target_watermak_exp} and not (a.effective_to_ts <= b.effective_from_ts or b.effective_to_ts <= a.effective_from_ts) and (a.effective_from_ts, a.effective_to_ts) <> (b.effective_from_ts, b.effective_to_ts) group by {table_bk} ) t 
+ ",There should not be any overlapping period for each bussiness key,{"bk_with_overlapping_interval":0},SCD2 validity
+rule_0006,Duplicate Active Records Check,Warning," 
+select count(*) as bk_with_dup_active_record from ( select count(*) as active_record,{table_bk} from {full_table_name} a where effective_to_ts = '9999-12-31T00:00:00.000+00:00' and {target_watermak_exp} group by {table_bk} having count(*) > 1 )t   ",This query tests for duplicate active records ,{"bk_with_dup_active_record":0},SCD2 validity
+rule_0004,SCD2 Effective Dates Check,Warning," 
+select count(*) as invalid_intervals from {full_table_name} a where {target_watermak_exp} and (effective_to_ts < '9999-12-31T00:00:00.000+00:00' and effective_from_ts >= effective_to_ts)   ",effective start date should be less than effective end date,{"invalid_intervals": 0},SCD2 validity
+rule_0007,BK Not Null Check,Warning,"SELECT   
+    SUM(CASE WHEN concat({table_bk}) is null THEN 1 ELSE 0 END) AS bk_nulls,
+    COUNT(1) - COUNT(DISTINCT {table_bk}) AS bk_duplicates 
+FROM {full_table_name} a
+WHERE {target_watermak_exp}",BK should be unique,"{""bk_nulls"": 0, ""bk_duplicates"": 0}",uniqueness
+rule_0003,Not Null Check,Warning,"
+SELECT   
+    SUM(CASE WHEN concat({table_pk}) is null THEN 1 ELSE 0 END) AS pk_nulls,
+    COUNT(1) - COUNT(DISTINCT {table_pk}) AS pk_duplicates 
+FROM {full_table_name} a
+WHERE {target_watermak_exp}
+",PK should be unique,"{""pk_nulls"": 0, ""pk_duplicates"": 0}",uniqueness
+rule_0002,Missing Keys Check,Warning,select (select count(distinct({source_pk})) from {source_table} ) - count(distinct ({table_bk})) as missing_keys from {full_table_name} a,Checks missing value between source and target,{"missing_keys":0},reconciliation
+rule_0001,BK Check,Warning,select count(*) as null_count from {full_table_name} a where ({table_bk}) is null and {target_watermak_exp},PK should not be null,{"null_count": 0},validity

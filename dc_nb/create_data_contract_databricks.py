@@ -1,25 +1,80 @@
-"""Generate an ODCS v3.1.0 data contract from a folder of CSV files.
+# Databricks notebook source
+# MAGIC %md
+# MAGIC # Create ODCS Data Contract
+# MAGIC
+# MAGIC Self-contained Databricks notebook source. It creates an ODCS v3.1.0 data contract from:
+# MAGIC
+# MAGIC - a template YAML
+# MAGIC - a folder of input CSV files
+# MAGIC - a YAML or CSV table config
+# MAGIC - the ODCS JSON schema
+# MAGIC
+# MAGIC It does not import any project Python modules.
 
-The generated contract is a draft. Review business descriptions, keys,
-classifications, SLA, and rule applicability before promoting it.
-"""
+# COMMAND ----------
 
-from __future__ import annotations
+try:
+    dbutils.widgets.text("template_path", "dc_nb/outputs/templates/raw_source_ODCS_template.yaml")
+    dbutils.widgets.text("input_data_path", "F:/SyncDataGenerator_v1.0/data/raw/enhanced/prd_01/20260811151951/vault_ready_28")
+    dbutils.widgets.text("table_config_path", "dc_nb/inputs/enhanced_prd01_contract_config.yaml")
+    dbutils.widgets.text("rules_file_path", "")
+    dbutils.widgets.text("contract_output_path", "dc_nb/outputs/contracts/enhanced_prd01_raw_ODCS.yaml")
+    dbutils.widgets.text("odcs_schema_path", "dc_nb/inputs/odcs-v3.1.0.schema_ODCS.json")
+    dbutils.widgets.text("contract_id", "enhanced-prd-01-raw-0001")
+    dbutils.widgets.text("contract_name", "Enhanced PRD 01 Raw Source Feed")
+    dbutils.widgets.text("domain", "enhanced")
+    dbutils.widgets.text("layer", "raw")
+    dbutils.widgets.text("source_feed", "prd_01")
+    dbutils.widgets.text("source_system", "Enhanced source-1 vault_ready_28")
+    dbutils.widgets.text("version", "1.0.0")
+    dbutils.widgets.dropdown("status", "draft", ["draft", "active", "deprecated", "retired"])
+    dbutils.widgets.text("tenant", "Allianz")
+    dbutils.widgets.text("owner_email", "data-modelling-engineering-coe@example-internal")
+    dbutils.widgets.text("batch_filter", "batch_ref = '{batch_ref}'")
+    dbutils.widgets.text("sample_rows", "0")
+except NameError:
+    pass
 
-import argparse
+
+def widget_value(name: str, default: str = "") -> str:
+    try:
+        value = dbutils.widgets.get(name)
+        return value if value is not None else default
+    except Exception:
+        return default
+
+
+TEMPLATE_PATH = widget_value("template_path", "dc_nb/outputs/templates/raw_source_ODCS_template.yaml")
+INPUT_DATA_PATH = widget_value("input_data_path", "F:/SyncDataGenerator_v1.0/data/raw/enhanced/prd_01/20260811151951/vault_ready_28")
+TABLE_CONFIG_PATH = widget_value("table_config_path", "dc_nb/inputs/enhanced_prd01_contract_config.yaml")
+RULES_FILE_PATH = widget_value("rules_file_path", "")
+CONTRACT_OUTPUT_PATH = widget_value("contract_output_path", "dc_nb/outputs/contracts/enhanced_prd01_raw_ODCS.yaml")
+ODCS_SCHEMA_PATH = widget_value("odcs_schema_path", "dc_nb/inputs/odcs-v3.1.0.schema_ODCS.json")
+CONTRACT_ID = widget_value("contract_id", "enhanced-prd-01-raw-0001")
+CONTRACT_NAME = widget_value("contract_name", "Enhanced PRD 01 Raw Source Feed")
+DOMAIN = widget_value("domain", "enhanced")
+LAYER = widget_value("layer", "raw")
+SOURCE_FEED = widget_value("source_feed", "prd_01")
+SOURCE_SYSTEM = widget_value("source_system", "Enhanced source-1 vault_ready_28")
+VERSION = widget_value("version", "1.0.0")
+STATUS = widget_value("status", "draft")
+TENANT = widget_value("tenant", "Allianz")
+OWNER_EMAIL = widget_value("owner_email", "data-modelling-engineering-coe@example-internal")
+BATCH_FILTER = widget_value("batch_filter", "batch_ref = '{batch_ref}'")
+SAMPLE_ROWS = int(widget_value("sample_rows", "0") or "0")
+
+# COMMAND ----------
+
 import csv
 import json
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 import yaml
 from jsonschema import Draft201909Validator, FormatChecker
-
-
-DEFAULT_SCHEMA = Path("data_contract/odcs-v3.1.0.schema_ODCS.json")
-DEFAULT_RULES = Path("data_contract/new 2.txt")
 
 PII_NAME_PARTS = (
     "email",
@@ -48,30 +103,21 @@ PII_NAME_PARTS = (
 )
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--input-path", required=True, type=Path, help="Folder containing source CSV files.")
-    parser.add_argument("--output", required=True, type=Path, help="Output ODCS YAML contract path.")
-    parser.add_argument("--contract-id", required=True)
-    parser.add_argument("--contract-name", required=True)
-    parser.add_argument("--domain", required=True)
-    parser.add_argument("--layer", required=True, help="Pipeline layer, for example raw, bronze, silver, gold.")
-    parser.add_argument("--source-feed", required=True, help="Source feed identifier, for example prd_01.")
-    parser.add_argument("--source-system", required=True)
-    parser.add_argument("--version", default="1.0.0")
-    parser.add_argument("--status", default="draft")
-    parser.add_argument("--tenant", default="Allianz")
-    parser.add_argument("--owner-email", default="data-modelling-engineering-coe@example-internal")
-    parser.add_argument("--rules-file", default=DEFAULT_RULES, type=Path)
-    parser.add_argument("--schema-path", default=DEFAULT_SCHEMA, type=Path)
-    parser.add_argument("--config", type=Path, help="Optional YAML or CSV override config.")
-    parser.add_argument(
-        "--path-template",
-        help="Runtime source path written to the contract server block. Defaults to '<input-path>/*.csv'.",
-    )
-    parser.add_argument("--batch-filter", default="batch_ref = '{batch_ref}'")
-    parser.add_argument("--sample-rows", type=int, default=0, help="Rows to profile. 0 means all rows.")
-    return parser.parse_args()
+def normalize_databricks_path(path: str) -> Path:
+    if path.startswith("dbfs:/"):
+        return Path("/dbfs") / path[len("dbfs:/") :]
+    return Path(path)
+
+
+def read_text(path: Path) -> str:
+    with path.open("r", encoding="utf-8") as handle:
+        return handle.read()
+
+
+def write_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        handle.write(text)
 
 
 def stable_id(value: str) -> str:
@@ -83,27 +129,20 @@ def title_from_stem(stem: str) -> str:
 
 
 def parse_config_scalar(value: Any) -> Any:
-    if value is None:
-        return None
-    if not isinstance(value, str):
+    if value is None or not isinstance(value, str):
         return value
-
     text = value.strip()
     if text == "":
         return None
-
     lowered = text.lower()
     if lowered in {"true", "false"}:
         return lowered == "true"
     if lowered in {"none", "null"}:
         return None
-
     if (text.startswith("[") and text.endswith("]")) or (text.startswith("{") and text.endswith("}")):
         return yaml.safe_load(text)
-
     if "|" in text:
         return [parse_config_scalar(part) for part in text.split("|") if part.strip()]
-
     try:
         return int(text)
     except ValueError:
@@ -118,7 +157,6 @@ def parse_config_mapping(value: Any) -> Any:
     parsed = parse_config_scalar(value)
     if not isinstance(parsed, str):
         return parsed
-
     mapping: dict[str, Any] = {}
     for part in parsed.split(";"):
         if "=" not in part:
@@ -172,10 +210,7 @@ def csv_rule(row: dict[str, str]) -> dict[str, Any]:
         value = row_value(row, column_name)
         if value is None:
             continue
-        if rule_key in {"arguments", "referencedColumns"}:
-            rule[rule_key] = parse_config_scalar(value)
-        else:
-            rule[rule_key] = value
+        rule[rule_key] = parse_config_scalar(value) if rule_key in {"arguments", "referencedColumns"} else value
 
     for key in (
         "mustBe",
@@ -190,7 +225,6 @@ def csv_rule(row: dict[str, str]) -> dict[str, Any]:
         value = row_value(row, key)
         if value is not None:
             rule[key] = parse_config_mapping(value)
-
     return rule
 
 
@@ -243,27 +277,19 @@ def load_csv_config(path: Path) -> dict[str, Any]:
                     set_if_present(config, key, row_value(row, "value"))
                 for field in contract_fields:
                     set_if_present(config, field, row_value(row, field))
-                continue
-
-            if record_type == "table" and table_name:
+            elif record_type == "table" and table_name:
                 cfg = table_config(config, table_name)
                 for field in table_fields:
                     set_if_present(cfg, field, row_value(row, field))
-                continue
-
-            if record_type == "column" and table_name and column_name:
+            elif record_type == "column" and table_name and column_name:
                 cfg = table_config(config, table_name).setdefault("columns", {}).setdefault(column_name, {})
                 for field in column_fields:
                     set_if_present(cfg, field, row_value(row, field))
-                continue
-
-            if record_type == "table_rule" and table_name:
+            elif record_type == "table_rule" and table_name:
                 rule = csv_rule(row)
                 if rule:
                     table_config(config, table_name).setdefault("tableRules", []).append(rule)
-                continue
-
-            if record_type == "column_rule" and table_name and column_name:
+            elif record_type == "column_rule" and table_name and column_name:
                 rule = csv_rule(row)
                 if rule:
                     column_cfg = table_config(config, table_name).setdefault("columns", {}).setdefault(column_name, {})
@@ -272,14 +298,6 @@ def load_csv_config(path: Path) -> dict[str, Any]:
     if not config["tables"]:
         config.pop("tables")
     return config
-
-
-def resolve_config_path(path: Path) -> Path:
-    if path.suffix.lower() in {".yaml", ".yml"}:
-        csv_path = path.with_suffix(".csv")
-        if csv_path.exists():
-            return csv_path
-    return path
 
 
 def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -298,14 +316,20 @@ def load_config(path: Path | None) -> dict[str, Any]:
     if path.suffix.lower() == ".csv":
         return load_csv_config(path)
     if path.suffix.lower() in {".yaml", ".yml"}:
-        with path.open(encoding="utf-8") as handle:
-            yaml_config = yaml.safe_load(handle) or {}
+        yaml_config = yaml.safe_load(read_text(path)) or {}
         csv_path = path.with_suffix(".csv")
         if csv_path.exists():
             return deep_merge(yaml_config, load_csv_config(csv_path))
         return yaml_config
-    with path.open(encoding="utf-8") as handle:
-        return yaml.safe_load(handle) or {}
+    return yaml.safe_load(read_text(path)) or {}
+
+
+def normalize_key(value: Any) -> list[str]:
+    if not value:
+        return []
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    return [str(value)]
 
 
 def logical_type(series: pd.Series, column: str) -> str:
@@ -313,6 +337,7 @@ def logical_type(series: pd.Series, column: str) -> str:
     date_like = (
         col.endswith("_date")
         or "_date" in col
+        or col.endswith("_dt")
         or col.endswith("_ts")
         or col.endswith("_time")
         or col in {"pull_ts", "dob", "birth_date", "constitution_dt", "converted_date"}
@@ -337,7 +362,6 @@ def physical_type(logical: str, series: pd.Series) -> str:
         return "boolean"
     if logical == "timestamp":
         return "timestamp"
-
     non_null = series.dropna().astype(str)
     max_len = int(non_null.map(len).max()) if not non_null.empty else 1
     if max_len <= 1:
@@ -356,35 +380,64 @@ def is_pii(column: str) -> bool:
     return any(part in col for part in PII_NAME_PARTS)
 
 
-def read_csv(path: Path, sample_rows: int) -> pd.DataFrame:
-    nrows = sample_rows if sample_rows > 0 else None
-    return pd.read_csv(path, nrows=nrows, low_memory=False)
-
-
-def normalize_key(value: Any) -> list[str]:
-    if not value:
-        return []
-    if isinstance(value, list):
-        return [str(item) for item in value]
-    return [str(value)]
-
-
-def infer_key(df: pd.DataFrame, file_name: str, table_cfg: dict[str, Any]) -> list[str]:
+def infer_key(df: pd.DataFrame, table_cfg: dict[str, Any]) -> list[str]:
     override = table_cfg.get("primaryKey") or table_cfg.get("businessKey")
     if override:
         return normalize_key(override)
-
     preferred_patterns = ("_identifier", "_id", "_ref", "_number")
-    unique = [
-        col
-        for col in df.columns
-        if df[col].isna().sum() == 0 and df[col].nunique(dropna=True) == len(df)
-    ]
+    unique = [col for col in df.columns if df[col].isna().sum() == 0 and df[col].nunique(dropna=True) == len(df)]
     for pattern in preferred_patterns:
         for col in unique:
             if col.lower().endswith(pattern):
                 return [col]
     return [unique[0]] if unique else []
+
+# COMMAND ----------
+
+QUALITY_DIRECT_FIELDS = {
+    "id",
+    "name",
+    "type",
+    "metric",
+    "rule",
+    "query",
+    "mustBe",
+    "mustNotBe",
+    "mustBeGreaterThan",
+    "mustBeGreaterOrEqualTo",
+    "mustBeLessThan",
+    "mustBeLessOrEqualTo",
+    "mustBeBetween",
+    "mustNotBeBetween",
+    "dimension",
+    "severity",
+    "description",
+    "arguments",
+    "businessImpact",
+    "schedule",
+    "scheduler",
+    "unit",
+    "method",
+}
+
+
+def normalize_quality_rule(rule: dict[str, Any], default_column: str | None = None) -> dict[str, Any]:
+    normalized: dict[str, Any] = {}
+    custom_properties: list[dict[str, Any]] = []
+    for key, value in rule.items():
+        if key == "ruleId":
+            normalized["id"] = stable_id(str(value))
+        elif key == "ruleName":
+            normalized["name"] = str(value)
+        elif key in QUALITY_DIRECT_FIELDS:
+            normalized[key] = value
+        else:
+            custom_properties.append({"property": key, "value": value})
+    if default_column and not any(item["property"] == "referencedColumns" for item in custom_properties):
+        custom_properties.append({"property": "referencedColumns", "value": [default_column]})
+    if custom_properties:
+        normalized["customProperties"] = custom_properties
+    return normalized
 
 
 def quality_rule(rule_id: str, key: str) -> dict[str, Any]:
@@ -392,10 +445,7 @@ def quality_rule(rule_id: str, key: str) -> dict[str, Any]:
     if rule_id == "rule_0001":
         return {
             "type": "sql",
-            "query": (
-                "select count(*) as null_count from {full_table_name} a "
-                f"where {concat_expr} is null and {{target_watermak_exp}}"
-            ),
+            "query": f"select count(*) as null_count from {{full_table_name}} a where {concat_expr} is null and {{target_watermak_exp}}",
             "mustBe": {"null_count": 0},
             "dimension": "completeness",
             "severity": "error",
@@ -428,61 +478,6 @@ def quality_rule(rule_id: str, key: str) -> dict[str, Any]:
     }
 
 
-QUALITY_DIRECT_FIELDS = {
-    "id",
-    "name",
-    "type",
-    "metric",
-    "rule",
-    "query",
-    "mustBe",
-    "mustNotBe",
-    "mustBeGreaterThan",
-    "mustBeGreaterOrEqualTo",
-    "mustBeLessThan",
-    "mustBeLessOrEqualTo",
-    "mustBeBetween",
-    "mustNotBeBetween",
-    "dimension",
-    "severity",
-    "description",
-    "arguments",
-    "businessImpact",
-    "schedule",
-    "scheduler",
-    "unit",
-    "method",
-}
-
-
-def normalize_quality_rule(rule: dict[str, Any], default_column: str | None = None) -> dict[str, Any]:
-    """Convert config rule syntax into an ODCS-compatible quality rule."""
-    normalized: dict[str, Any] = {}
-    custom_properties: list[dict[str, Any]] = []
-
-    for key, value in rule.items():
-        if key == "ruleId":
-            normalized["id"] = stable_id(str(value))
-        elif key == "ruleName":
-            normalized["name"] = str(value)
-        elif key in QUALITY_DIRECT_FIELDS:
-            normalized[key] = value
-        else:
-            custom_properties.append({"property": key, "value": value})
-
-    if default_column:
-        existing_refs = next(
-            (item for item in custom_properties if item["property"] == "referencedColumns"),
-            None,
-        )
-        if existing_refs is None:
-            custom_properties.append({"property": "referencedColumns", "value": [default_column]})
-
-    if custom_properties:
-        normalized["customProperties"] = custom_properties
-    return normalized
-
-
 def allowed_values_quality_rule(column: str, allowed_values: list[Any]) -> dict[str, Any]:
     return {
         "id": stable_id(f"{column}_allowed_values"),
@@ -503,10 +498,7 @@ def min_value_quality_rule(column: str, value: int | float) -> dict[str, Any]:
         "id": stable_id(f"{column}_min_value"),
         "name": f"{column} minimum value",
         "type": "sql",
-        "query": (
-            f"SELECT COUNT(*) AS invalid_values FROM {{full_table_name}} "
-            f"WHERE {column} < {value} AND {{target_watermak_exp}}"
-        ),
+        "query": f"SELECT COUNT(*) AS invalid_values FROM {{full_table_name}} WHERE {column} < {value} AND {{target_watermak_exp}}",
         "mustBe": {"invalid_values": 0},
         "dimension": "accuracy",
         "severity": "error",
@@ -520,10 +512,7 @@ def max_value_quality_rule(column: str, value: int | float) -> dict[str, Any]:
         "id": stable_id(f"{column}_max_value"),
         "name": f"{column} maximum value",
         "type": "sql",
-        "query": (
-            f"SELECT COUNT(*) AS invalid_values FROM {{full_table_name}} "
-            f"WHERE {column} > {value} AND {{target_watermak_exp}}"
-        ),
+        "query": f"SELECT COUNT(*) AS invalid_values FROM {{full_table_name}} WHERE {column} > {value} AND {{target_watermak_exp}}",
         "mustBe": {"invalid_values": 0},
         "dimension": "accuracy",
         "severity": "error",
@@ -537,7 +526,6 @@ def build_property(col: str, series: pd.Series, key_cols: list[str], table_cfg: 
     logical = column_cfg.get("logicalType") or logical_type(series, col)
     required = bool(column_cfg.get("required", series.isna().sum() == 0))
     classification = column_cfg.get("classification") or ("confidential" if is_pii(col) else "internal")
-
     prop: dict[str, Any] = {
         "id": stable_id(col),
         "name": col,
@@ -580,12 +568,8 @@ def parse_rule_file(path: Path | None) -> list[dict[str, str]]:
         return list(csv.DictReader(handle))
 
 
-def rule_catalog(rule_rows: list[dict[str, str]], entities: list[dict[str, Any]], layer: str, source_rule_file: Path | None = DEFAULT_RULES) -> dict[str, Any]:
+def rule_catalog(rule_rows: list[dict[str, str]], entities: list[dict[str, Any]], layer: str, source_rule_file: Path | None) -> dict[str, Any]:
     entity_names = [entity["entity"] for entity in entities]
-    active_ids = {"rule_0001", "rule_0003", "rule_0007"}
-    active: list[dict[str, Any]] = []
-    inactive: list[dict[str, Any]] = []
-
     defaults = {
         "rule_0001": {
             "severity": "error",
@@ -609,50 +593,61 @@ def rule_catalog(rule_rows: list[dict[str, str]], entities: list[dict[str, Any]]
             "queryDesc": "Business key should be populated and unique.",
         },
     }
-
+    active_ids = {"rule_0001", "rule_0003", "rule_0007"}
     if not rule_rows:
-        rule_rows = [
-            {"rule_id": rule_id, "rule_name": defaults[rule_id]["queryDesc"], "rule_type": "error", "rule_category": defaults[rule_id]["queryDesc"]}
-            for rule_id in sorted(active_ids)
-        ]
-
+        rule_rows = [{"rule_id": rule_id, "rule_name": defaults[rule_id]["queryDesc"], "rule_type": "error", "rule_category": defaults[rule_id]["queryDesc"]} for rule_id in sorted(active_ids)]
+    active: list[dict[str, Any]] = []
+    inactive: list[dict[str, Any]] = []
     for row in rule_rows:
         rule_id = row.get("rule_id", "")
-        common = {
-            "ruleId": rule_id,
-            "ruleName": row.get("rule_name", ""),
-            "sourceRuleType": row.get("rule_type", ""),
-            "ruleCategory": row.get("rule_category", ""),
-        }
+        common = {"ruleId": rule_id, "ruleName": row.get("rule_name", ""), "sourceRuleType": row.get("rule_type", ""), "ruleCategory": row.get("rule_category", "")}
         if rule_id in active_ids:
             active.append({**common, **defaults[rule_id], "layer": layer, "applicableTo": entity_names})
-        elif rule_id == "rule_0002":
-            inactive.append(
-                {
-                    **common,
-                    "reasonNotActive": "Requires a source-to-target comparison; apply during reconciliation, not standalone raw source arrival.",
-                    "expectedOutcome": {"missing_keys": 0},
-                    "queryTemplate": row.get("query_text", "").strip(),
-                }
-            )
         else:
-            inactive.append(
-                {
-                    **common,
-                    "reasonNotActive": "Requires SCD2 effective dating columns that are not expected in raw source files.",
-                    "queryTemplate": row.get("query_text", "").strip(),
-                }
-            )
-
+            inactive.append({**common, "reasonNotActive": "Not applied by default for this generated contract.", "queryTemplate": row.get("query_text", "").strip()})
     source = str(source_rule_file).replace("\\", "/") if source_rule_file else "table_config_defaults"
     return {"sourceRuleFile": source, "activeRules": active, "inactiveRules": inactive}
 
+# COMMAND ----------
 
-def build_contract(args: argparse.Namespace, config: dict[str, Any]) -> dict[str, Any]:
+def load_template(path: Path) -> dict[str, Any]:
+    template = yaml.safe_load(read_text(path))
+    if not isinstance(template, dict):
+        raise ValueError(f"Template must parse to a mapping/object: {path}")
+    if template.get("kind") != "DataContract":
+        raise ValueError(f"Template kind must be DataContract. Got: {template.get('kind')}")
+    if template.get("apiVersion") != "v3.1.0":
+        raise ValueError(f"Template apiVersion must be v3.1.0. Got: {template.get('apiVersion')}")
+    return template
+
+
+def apply_template_defaults(contract: dict[str, Any], template: dict[str, Any]) -> dict[str, Any]:
+    for key in ("servers", "slaProperties", "team", "support", "customProperties"):
+        if key not in contract and key in template:
+            contract[key] = template[key]
+    contract["kind"] = template.get("kind", contract.get("kind", "DataContract"))
+    contract["apiVersion"] = template.get("apiVersion", contract.get("apiVersion", "v3.1.0"))
+    return contract
+
+
+def validate_contract(contract: dict[str, Any], schema_path: Path) -> None:
+    schema = json.loads(read_text(schema_path))
+    errors = sorted(
+        Draft201909Validator(schema, format_checker=FormatChecker()).iter_errors(contract),
+        key=lambda err: list(err.absolute_path),
+    )
+    if errors:
+        for err in errors[:50]:
+            loc = "/".join(str(part) for part in err.absolute_path) or "<root>"
+            print(f"{loc}: {err.message}")
+        raise RuntimeError(f"Generated contract failed ODCS validation with {len(errors)} error(s).")
+
+
+def build_contract(input_path: Path, output_path: Path, config: dict[str, Any], rules_file: Path | None) -> dict[str, Any]:
     table_configs = config.get("tables") or {}
-    files = sorted(args.input_path.glob("*.csv"))
+    files = sorted(input_path.glob("*.csv"))
     if not files:
-        raise SystemExit(f"No CSV files found under {args.input_path}")
+        raise ValueError(f"No CSV files found under input_data_path: {input_path}")
 
     schema_objects: list[dict[str, Any]] = []
     entities: list[dict[str, Any]] = []
@@ -663,14 +658,12 @@ def build_contract(args: argparse.Namespace, config: dict[str, Any]) -> dict[str
         table_cfg = table_configs.get(path.name) or table_configs.get(path.stem) or {}
         if table_cfg.get("exclude", False):
             continue
-        df = read_csv(path, args.sample_rows)
-        key_cols = infer_key(df, path.name, table_cfg)
+        df = pd.read_csv(path, nrows=SAMPLE_ROWS if SAMPLE_ROWS > 0 else None, low_memory=False)
+        key_cols = infer_key(df, table_cfg)
         table_name = table_cfg.get("name") or path.stem
         properties = [build_property(col, df[col], key_cols, table_cfg) for col in df.columns]
-        contains_personal_data = contains_personal_data or any(
-            prop.get("classification") == "confidential" for prop in properties
-        )
-        quality = [
+        contains_personal_data = contains_personal_data or any(prop.get("classification") == "confidential" for prop in properties)
+        quality: list[dict[str, Any]] = [
             {
                 "metric": "rowCount",
                 "mustBeGreaterThan": 0,
@@ -690,7 +683,7 @@ def build_contract(args: argparse.Namespace, config: dict[str, Any]) -> dict[str
                 "primaryKeyColumns": key_cols,
                 "businessKeyColumns": normalize_key(table_cfg.get("businessKey")) or key_cols,
                 "fullTableNamePlaceholder": table_name,
-                "targetWatermakExp": args.batch_filter,
+                "targetWatermakExp": BATCH_FILTER,
             }
             if table_cfg.get("sourceTable"):
                 entity_config["sourceTable"] = table_cfg["sourceTable"]
@@ -707,8 +700,8 @@ def build_contract(args: argparse.Namespace, config: dict[str, Any]) -> dict[str
                 "physicalName": path.name,
                 "physicalType": "table",
                 "businessName": table_cfg.get("businessName") or title_from_stem(table_name),
-                "description": table_cfg.get("description") or f"Raw {args.source_feed} source records for {title_from_stem(table_name)}.",
-                "tags": [args.domain, args.layer, args.source_feed, "source_feed"],
+                "description": table_cfg.get("description") or f"Raw {SOURCE_FEED} source records for {title_from_stem(table_name)}.",
+                "tags": [DOMAIN, LAYER, SOURCE_FEED, "source_feed"],
                 "dataGranularityDescription": table_cfg.get("grain") or (f"One row per {', '.join(key_cols)} per batch." if key_cols else "One row per source record per batch."),
                 "properties": properties,
                 "quality": quality,
@@ -729,13 +722,12 @@ def build_contract(args: argparse.Namespace, config: dict[str, Any]) -> dict[str
         )
         expected_files.append(path.name)
 
-    path_template = args.path_template or f"{args.input_path.as_posix()}/*.csv"
     custom_properties = [
         {"property": "allianzClassification", "value": config.get("allianzClassification", "Internal")},
         {"property": "containsPersonalData", "value": bool(config.get("containsPersonalData", contains_personal_data))},
-        {"property": "sourceSystem", "value": args.source_system},
-        {"property": "sourceFeed", "value": args.source_feed},
-        {"property": "pipelineLayer", "value": args.layer},
+        {"property": "sourceSystem", "value": SOURCE_SYSTEM},
+        {"property": "sourceFeed", "value": SOURCE_FEED},
+        {"property": "pipelineLayer", "value": LAYER},
         {"property": "expectedFiles", "value": expected_files},
         {
             "property": "notebookValidationConfig",
@@ -747,7 +739,7 @@ def build_contract(args: argparse.Namespace, config: dict[str, Any]) -> dict[str
                 "sourceFileField": "physicalName",
                 "entityField": "name",
                 "batchParameter": "batch_ref",
-                "defaultTargetWatermakExp": args.batch_filter,
+                "defaultTargetWatermakExp": BATCH_FILTER,
                 "placeholderStyle": "python_format",
                 "placeholders": {
                     "full_table_name": "Databricks temp view or fully qualified table name for the current source object",
@@ -761,31 +753,26 @@ def build_contract(args: argparse.Namespace, config: dict[str, Any]) -> dict[str
                 "entities": entities,
             },
         },
-        {"property": "dqRuleCatalog", "value": rule_catalog(parse_rule_file(args.rules_file), entities, args.layer, args.rules_file)},
-        {
-            "property": "breakingChangePolicy",
-            "value": "Removing, renaming, or changing type/nullability of a required field is breaking.",
-        },
+        {"property": "dqRuleCatalog", "value": rule_catalog(parse_rule_file(rules_file), entities, LAYER, rules_file)},
+        {"property": "breakingChangePolicy", "value": "Removing, renaming, or changing type/nullability of a required field is breaking."},
     ]
 
     return {
         "kind": "DataContract",
         "apiVersion": "v3.1.0",
-        "id": args.contract_id,
-        "name": args.contract_name,
-        "version": args.version,
-        "status": args.status,
-        "domain": args.domain,
-        "tenant": args.tenant,
+        "id": CONTRACT_ID,
+        "name": CONTRACT_NAME,
+        "version": VERSION,
+        "status": STATUS,
+        "domain": DOMAIN,
+        "tenant": TENANT,
         "description": {
-            "purpose": config.get("purpose") or f"Defines the {args.layer} source contract for {args.domain} {args.source_feed}.",
+            "purpose": config.get("purpose") or f"Defines the {LAYER} source contract for {DOMAIN} {SOURCE_FEED}.",
             "limitations": config.get("limitations") or "Generated draft contract; review business metadata before approval.",
-            "usage": config.get("usage") or f"Validate {args.source_feed} files before downstream ingestion.",
+            "usage": config.get("usage") or f"Validate {SOURCE_FEED} files before downstream ingestion.",
         },
-        "authoritativeDefinitions": [
-            {"type": "canonical", "url": args.output.as_posix(), "description": "Repository copy of this data contract"}
-        ],
-        "servers": [{"server": f"{args.domain}-{args.source_feed}-{args.layer}", "type": "local", "path": path_template, "format": "csv"}],
+        "authoritativeDefinitions": [{"type": "canonical", "url": str(output_path).replace("\\", "/"), "description": "Repository copy of this data contract"}],
+        "servers": [{"server": f"{DOMAIN}-{SOURCE_FEED}-{LAYER}", "type": "local", "path": f"{str(input_path).replace(chr(92), '/')}/*.csv", "format": "csv"}],
         "schema": schema_objects,
         "slaProperties": [
             {"property": "frequency", "value": int(config.get("frequency", 1)), "unit": config.get("frequencyUnit", "d")},
@@ -795,53 +782,77 @@ def build_contract(args: argparse.Namespace, config: dict[str, Any]) -> dict[str
         "team": {
             "name": config.get("teamName", "Data Modelling & Engineering CoE"),
             "description": "Producing team / owner of this contract",
-            "members": [{"username": args.owner_email, "role": "Owner", "dateIn": config.get("ownerDateIn", "2026-08-09")}],
+            "members": [{"username": OWNER_EMAIL, "role": "Owner", "dateIn": config.get("ownerDateIn", datetime.now(timezone.utc).date().isoformat())}],
         },
         "roles": [
             {
-                "role": config.get("accessRole", f"{args.domain}_{args.layer}_ingestion"),
+                "role": config.get("accessRole", f"{DOMAIN}_{LAYER}_ingestion"),
                 "access": "read",
                 "firstLevelApprovers": config.get("firstLevelApprovers", "Data Owner"),
                 "secondLevelApprovers": config.get("secondLevelApprovers", "Data Governance"),
             }
         ],
         "support": [{"channel": config.get("supportChannel", "coe-data-contracts"), "tool": "email", "url": config.get("supportUrl", "mailto:coe-data-contracts@example-internal")}],
-        "tags": [args.domain, args.layer, args.source_feed, "source_contract"],
+        "tags": [DOMAIN, LAYER, SOURCE_FEED, "source_contract"],
         "customProperties": custom_properties,
-        "contractCreatedTs": config.get("contractCreatedTs", "2026-08-09T00:00:00+00:00"),
+        "contractCreatedTs": config.get("contractCreatedTs", datetime.now(timezone.utc).isoformat()),
     }
 
+# COMMAND ----------
 
-def validate_contract(contract: dict[str, Any], schema_path: Path) -> None:
-    schema = json.loads(schema_path.read_text(encoding="utf-8"))
-    errors = sorted(
-        Draft201909Validator(schema, format_checker=FormatChecker()).iter_errors(contract),
-        key=lambda err: list(err.absolute_path),
-    )
-    if errors:
-        for err in errors[:50]:
-            loc = "/".join(str(part) for part in err.absolute_path) or "<root>"
-            print(f"{loc}: {err.message}")
-        raise SystemExit(f"Generated contract failed ODCS validation with {len(errors)} error(s).")
+template_path = normalize_databricks_path(TEMPLATE_PATH)
+input_data_path = normalize_databricks_path(INPUT_DATA_PATH)
+table_config_path = normalize_databricks_path(TABLE_CONFIG_PATH)
+rules_file_path = normalize_databricks_path(RULES_FILE_PATH) if RULES_FILE_PATH else None
+contract_output_path = normalize_databricks_path(CONTRACT_OUTPUT_PATH)
+odcs_schema_path = normalize_databricks_path(ODCS_SCHEMA_PATH)
 
+for label, path in {
+    "template_path": template_path,
+    "input_data_path": input_data_path,
+    "table_config_path": table_config_path,
+    "odcs_schema_path": odcs_schema_path,
+}.items():
+    if not path.exists():
+        raise FileNotFoundError(f"{label} not found: {path}")
 
-def main() -> None:
-    args = parse_args()
-    config = load_config(args.config)
-    contract = build_contract(args, config)
-    validate_contract(contract, args.schema_path)
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    header = (
-        f"# =============================================================================\n"
-        f"# Data Contract - {args.contract_name}\n"
-        f"# ODCS v3.1.0\n"
-        f"# =============================================================================\n\n"
-    )
-    args.output.write_text(header + yaml.safe_dump(contract, sort_keys=False, allow_unicode=False, width=120), encoding="utf-8")
-    print(f"Wrote {args.output}")
-    print(f"Objects: {len(contract['schema'])}")
-    print(f"Columns: {sum(len(obj['properties']) for obj in contract['schema'])}")
+csv_files = sorted(input_data_path.glob("*.csv"))
+if not csv_files:
+    raise ValueError(f"No CSV files found under input_data_path: {input_data_path}")
 
+print(f"Template: {template_path}")
+print(f"Input data: {input_data_path}")
+print(f"CSV files: {len(csv_files)}")
+print(f"Table config: {table_config_path}")
+print(f"Rules file: {rules_file_path if rules_file_path else 'not supplied; using table config rules and default PK/BK catalog'}")
+print(f"ODCS schema: {odcs_schema_path}")
+print(f"Output contract: {contract_output_path}")
 
-if __name__ == "__main__":
-    main()
+template = load_template(template_path)
+print("Template validation before generation: pass")
+print(f"Template apiVersion: {template['apiVersion']}")
+
+config = load_config(table_config_path)
+contract = build_contract(input_data_path, contract_output_path, config, rules_file_path)
+contract = apply_template_defaults(contract, template)
+validate_contract(contract, odcs_schema_path)
+
+header = (
+    "# =============================================================================\n"
+    "# Generated ODCS v3.1.0 data contract. Review before production approval.\n"
+    "# Generated from template + input data + table config + rule catalog.\n"
+    "# =============================================================================\n"
+)
+write_text(contract_output_path, header + yaml.safe_dump(contract, sort_keys=False, allow_unicode=False, width=120))
+
+object_count = len(contract.get("schema", []) or [])
+column_count = sum(len(obj.get("properties", []) or []) for obj in contract.get("schema", []) or [])
+rule_count = sum(len(obj.get("quality", []) or []) for obj in contract.get("schema", []) or [])
+rule_count += sum(len(prop.get("quality", []) or []) for obj in contract.get("schema", []) or [] for prop in obj.get("properties", []) or [])
+
+print(f"Contract written: {contract_output_path}")
+print(f"Objects: {object_count}")
+print(f"Columns: {column_count}")
+print(f"Quality rules: {rule_count}")
+print("ODCS schema validation: pass")
+

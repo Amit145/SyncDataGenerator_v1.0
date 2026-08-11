@@ -90,6 +90,21 @@ output/
 *.json
 data_contract/generated/
 data_contract/reports/
+data_contract/gen_excels/**
+!data_contract/gen_excels/
+!data_contract/gen_excels/**/
+!data_contract/gen_excels/**/.gitkeep
+
+# Data contract notebook portable inputs
+!dc_nb/inputs/
+!dc_nb/inputs/*.csv
+!dc_nb/inputs/*.json
+!dc_nb/inputs/*.yaml
+!dc_nb/inputs/*.txt
+dc_nb/outputs/**
+!dc_nb/outputs/
+!dc_nb/outputs/**/
+!dc_nb/outputs/**/.gitkeep
 
 # Databricks or temp files
 .dbfs

@@ -1,0 +1,43 @@
+# Example widget values for running the dc_nb sequence.
+
+create_template_data_contract:
+  template_output_path: dc_nb/outputs/templates/raw_source_ODCS_template.yaml
+  layer: raw
+  contract_id: urn:datacontract:claims:enhanced:prd01:raw:template
+  contract_name: Enhanced PRD01 Raw Template
+  domain: claims
+  tenant: prd01
+  version: 1.0.0
+  status: draft
+
+validate_data_contract_template_with_ODCS_standards:
+  template_path: dc_nb/outputs/templates/raw_source_ODCS_template.yaml
+  validation_output_path: dc_nb/outputs/validation/template_validation_checks.csv
+  odcs_schema_path: dc_nb/inputs/odcs-v3.1.0.schema_ODCS.json
+  fail_on_error: "true"
+
+create_data_contract_databricks:
+  template_path: dc_nb/outputs/templates/raw_source_ODCS_template.yaml
+  input_data_path: F:/SyncDataGenerator_v1.0/data/raw/enhanced/prd_01/20260811151951/vault_ready_28
+  table_config_path: dc_nb/inputs/enhanced_prd01_contract_config.yaml
+  rules_file_path: ""
+  contract_output_path: dc_nb/outputs/contracts/enhanced_prd01_raw_ODCS.yaml
+  odcs_schema_path: dc_nb/inputs/odcs-v3.1.0.schema_ODCS.json
+  contract_id: urn:datacontract:claims:enhanced:prd01:raw
+  contract_name: Enhanced PRD01 Raw Contract
+  domain: claims
+  layer: raw
+  source_feed: enhanced_prd01
+  source_system: prd01
+  version: 1.0.0
+  status: draft
+  tenant: prd01
+
+execute_data_contract:
+  contract_path: dc_nb/outputs/contracts/enhanced_prd01_raw_ODCS.yaml
+  input_base_path: F:/SyncDataGenerator_v1.0/data/raw/enhanced/prd_01/20260811151951/vault_ready_28
+  batch_ref: "20260811151951"
+  mode: file
+  run_mode: report_only
+  result_table: ""
+  table_prefix: ""

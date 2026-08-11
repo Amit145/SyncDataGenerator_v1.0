@@ -1,0 +1,1207 @@
+purpose: Validate C360 gold layer tables before downstream processing.
+limitations: Generated from layer metadata workbooks; review business descriptions
+  and column-level rules when physical schema is available.
+usage: Used as a gold layer contract config for ODCS contract generation and validation.
+frequency: 1
+frequencyUnit: d
+latency: 24
+latencyUnit: h
+retention: 7
+retentionUnit: y
+teamName: Data Modelling & Engineering CoE
+firstLevelApprovers: C360 Gold Data Owner
+secondLevelApprovers: Data Governance
+supportChannel: coe-data-contracts
+supportUrl: mailto:coe-data-contracts@example-internal
+tables:
+  dim_geography:
+    name: dim_geography
+    primaryKey: geography_sk
+    businessKey:
+    - city
+    - state
+    - country
+    - region
+    businessName: Dim Geography
+    grain: One row per city, state, country, region.
+    columns:
+      geography_sk:
+        required: true
+      city:
+        required: true
+      state:
+        required: true
+      country:
+        required: true
+      region:
+        required: true
+    metadata:
+      tableId: tab_0069
+      catalogName: dev_allianz_raw
+      schemaName: bvault_gold
+      stage: gold
+      scd2: false
+    sourceTable: dev_allianz_raw.bvault_silver.bv_address_master
+    sourcePrimaryKey:
+    - city
+    - state
+    - country
+    - region
+    tableRules:
+    - ruleId: rule_0002
+      ruleName: Missing Keys Check
+      type: sql
+      query: select (select count(distinct({source_pk})) from {source_table} ) - count(distinct
+        ({table_bk})) as missing_keys from {full_table_name} a
+      mustBe:
+        missing_keys: 0
+      dimension: reconciliation
+      severity: warning
+      description: Checks missing value between source and target
+      failureAction: warn
+      referencedColumns:
+      - city
+      - state
+      - country
+      - region
+  dim_identity:
+    name: dim_identity
+    primaryKey: identity_sk
+    businessKey: identity_id
+    businessName: Dim Identity
+    grain: One row per identity_id.
+    columns:
+      identity_sk:
+        required: true
+      identity_id:
+        required: true
+      effective_from_ts:
+        required: true
+      effective_to_ts:
+        required: true
+    metadata:
+      tableId: tab_0071
+      catalogName: dev_allianz_raw
+      schemaName: bvault_gold
+      stage: gold
+      scd2: true
+    sourceTable: dev_allianz_raw.bvault_silver.hub_identities
+    sourcePrimaryKey: identities_id
+    tableRules:
+    - ruleId: rule_0004
+      ruleName: SCD2 Effective Dates Check
+      type: sql
+      query: select count(*) as invalid_intervals from {full_table_name} a where {target_watermak_exp}
+        and (effective_to_ts < '9999-12-31T00:00:00.000+00:00' and effective_from_ts
+        >= effective_to_ts)
+      mustBe:
+        invalid_intervals: 0
+      dimension: SCD2 validity
+      severity: warning
+      description: effective start date should be less than effective end date
+      failureAction: warn
+      referencedColumns:
+      - effective_from_ts
+      - effective_to_ts
+    - ruleId: rule_0005
+      ruleName: Overlapping Period Check
+      type: sql
+      query: select count(*) as bk_with_overlapping_interval from ( select count(*),
+        {table_bk} from {full_table_name} a join {full_table_name} b on {table_bk_join}
+        and a.{target_watermak_exp}  and b.{target_watermak_exp} and not (a.effective_to_ts
+        <= b.effective_from_ts or b.effective_to_ts <= a.effective_from_ts) and (a.effective_from_ts,
+        a.effective_to_ts) <> (b.effective_from_ts, b.effective_to_ts) group by {table_bk}
+        ) t
+      mustBe:
+        bk_with_overlapping_interval: 0
+      dimension: SCD2 validity
+      severity: warning
+      description: There should not be any overlapping period for each bussiness key
+      failureAction: warn
+      referencedColumns:
+      - identity_id
+    - ruleId: rule_0006
+      ruleName: Duplicate Active Records Check
+      type: sql
+      query: select count(*) as bk_with_dup_active_record from ( select count(*) as
+        active_record,{table_bk} from {full_table_name} a where effective_to_ts =
+        '9999-12-31T00:00:00.000+00:00' and {target_watermak_exp} group by {table_bk}
+        having count(*) > 1 )t
+      mustBe:
+        bk_with_dup_active_record: 0
+      dimension: SCD2 validity
+      severity: warning
+      description: This query tests for duplicate active records
+      failureAction: warn
+      referencedColumns:
+      - identity_id
+    - ruleId: rule_0002
+      ruleName: Missing Keys Check
+      type: sql
+      query: select (select count(distinct({source_pk})) from {source_table} ) - count(distinct
+        ({table_bk})) as missing_keys from {full_table_name} a
+      mustBe:
+        missing_keys: 0
+      dimension: reconciliation
+      severity: warning
+      description: Checks missing value between source and target
+      failureAction: warn
+      referencedColumns:
+      - identity_id
+  dim_account:
+    name: dim_account
+    primaryKey: account_sk
+    businessKey: account_id
+    businessName: Dim Account
+    grain: One row per account_id.
+    columns:
+      account_sk:
+        required: true
+      account_id:
+        required: true
+      effective_from_ts:
+        required: true
+      effective_to_ts:
+        required: true
+    metadata:
+      tableId: tab_0063
+      catalogName: dev_allianz_raw
+      schemaName: bvault_gold
+      stage: gold
+      scd2: true
+    sourceTable: dev_allianz_raw.bvault_silver.hub_account
+    sourcePrimaryKey: account_id
+    tableRules:
+    - ruleId: rule_0004
+      ruleName: SCD2 Effective Dates Check
+      type: sql
+      query: select count(*) as invalid_intervals from {full_table_name} a where {target_watermak_exp}
+        and (effective_to_ts < '9999-12-31T00:00:00.000+00:00' and effective_from_ts
+        >= effective_to_ts)
+      mustBe:
+        invalid_intervals: 0
+      dimension: SCD2 validity
+      severity: warning
+      description: effective start date should be less than effective end date
+      failureAction: warn
+      referencedColumns:
+      - effective_from_ts
+      - effective_to_ts
+    - ruleId: rule_0005
+      ruleName: Overlapping Period Check
+      type: sql
+      query: select count(*) as bk_with_overlapping_interval from ( select count(*),
+        {table_bk} from {full_table_name} a join {full_table_name} b on {table_bk_join}
+        and a.{target_watermak_exp}  and b.{target_watermak_exp} and not (a.effective_to_ts
+        <= b.effective_from_ts or b.effective_to_ts <= a.effective_from_ts) and (a.effective_from_ts,
+        a.effective_to_ts) <> (b.effective_from_ts, b.effective_to_ts) group by {table_bk}
+        ) t
+      mustBe:
+        bk_with_overlapping_interval: 0
+      dimension: SCD2 validity
+      severity: warning
+      description: There should not be any overlapping period for each bussiness key
+      failureAction: warn
+      referencedColumns:
+      - account_id
+    - ruleId: rule_0006
+      ruleName: Duplicate Active Records Check
+      type: sql
+      query: select count(*) as bk_with_dup_active_record from ( select count(*) as
+        active_record,{table_bk} from {full_table_name} a where effective_to_ts =
+        '9999-12-31T00:00:00.000+00:00' and {target_watermak_exp} group by {table_bk}
+        having count(*) > 1 )t
+      mustBe:
+        bk_with_dup_active_record: 0
+      dimension: SCD2 validity
+      severity: warning
+      description: This query tests for duplicate active records
+      failureAction: warn
+      referencedColumns:
+      - account_id
+    - ruleId: rule_0002
+      ruleName: Missing Keys Check
+      type: sql
+      query: select (select count(distinct({source_pk})) from {source_table} ) - count(distinct
+        ({table_bk})) as missing_keys from {full_table_name} a
+      mustBe:
+        missing_keys: 0
+      dimension: reconciliation
+      severity: warning
+      description: Checks missing value between source and target
+      failureAction: warn
+      referencedColumns:
+      - account_id
+  dim_broker:
+    name: dim_broker
+    primaryKey: broker_sk
+    businessKey: agent_id
+    businessName: Dim Broker
+    grain: One row per agent_id.
+    columns:
+      broker_sk:
+        required: true
+      agent_id:
+        required: true
+      effective_from_ts:
+        required: true
+      effective_to_ts:
+        required: true
+    metadata:
+      tableId: tab_0064
+      catalogName: dev_allianz_raw
+      schemaName: bvault_gold
+      stage: gold
+      scd2: true
+    sourceTable: dev_allianz_raw.bvault_silver.hub_broker
+    sourcePrimaryKey: agent_id
+    tableRules:
+    - ruleId: rule_0004
+      ruleName: SCD2 Effective Dates Check
+      type: sql
+      query: select count(*) as invalid_intervals from {full_table_name} a where {target_watermak_exp}
+        and (effective_to_ts < '9999-12-31T00:00:00.000+00:00' and effective_from_ts
+        >= effective_to_ts)
+      mustBe:
+        invalid_intervals: 0
+      dimension: SCD2 validity
+      severity: warning
+      description: effective start date should be less than effective end date
+      failureAction: warn
+      referencedColumns:
+      - effective_from_ts
+      - effective_to_ts
+    - ruleId: rule_0005
+      ruleName: Overlapping Period Check
+      type: sql
+      query: select count(*) as bk_with_overlapping_interval from ( select count(*),
+        {table_bk} from {full_table_name} a join {full_table_name} b on {table_bk_join}
+        and a.{target_watermak_exp}  and b.{target_watermak_exp} and not (a.effective_to_ts
+        <= b.effective_from_ts or b.effective_to_ts <= a.effective_from_ts) and (a.effective_from_ts,
+        a.effective_to_ts) <> (b.effective_from_ts, b.effective_to_ts) group by {table_bk}
+        ) t
+      mustBe:
+        bk_with_overlapping_interval: 0
+      dimension: SCD2 validity
+      severity: warning
+      description: There should not be any overlapping period for each bussiness key
+      failureAction: warn
+      referencedColumns:
+      - agent_id
+    - ruleId: rule_0006
+      ruleName: Duplicate Active Records Check
+      type: sql
+      query: select count(*) as bk_with_dup_active_record from ( select count(*) as
+        active_record,{table_bk} from {full_table_name} a where effective_to_ts =
+        '9999-12-31T00:00:00.000+00:00' and {target_watermak_exp} group by {table_bk}
+        having count(*) > 1 )t
+      mustBe:
+        bk_with_dup_active_record: 0
+      dimension: SCD2 validity
+      severity: warning
+      description: This query tests for duplicate active records
+      failureAction: warn
+      referencedColumns:
+      - agent_id
+    - ruleId: rule_0002
+      ruleName: Missing Keys Check
+      type: sql
+      query: select (select count(distinct({source_pk})) from {source_table} ) - count(distinct
+        ({table_bk})) as missing_keys from {full_table_name} a
+      mustBe:
+        missing_keys: 0
+      dimension: reconciliation
+      severity: warning
+      description: Checks missing value between source and target
+      failureAction: warn
+      referencedColumns:
+      - agent_id
+  dim_campaign:
+    name: dim_campaign
+    primaryKey: campaign_sk
+    businessKey: campaign_id
+    businessName: Dim Campaign
+    grain: One row per campaign_id.
+    columns:
+      campaign_sk:
+        required: true
+      campaign_id:
+        required: true
+    metadata:
+      tableId: tab_0065
+      catalogName: dev_allianz_raw
+      schemaName: bvault_gold
+      stage: gold
+      scd2: false
+    sourceTable: dev_allianz_raw.bvault_silver.hub_campaign
+    sourcePrimaryKey: campaign_id
+    tableRules:
+    - ruleId: rule_0002
+      ruleName: Missing Keys Check
+      type: sql
+      query: select (select count(distinct({source_pk})) from {source_table} ) - count(distinct
+        ({table_bk})) as missing_keys from {full_table_name} a
+      mustBe:
+        missing_keys: 0
+      dimension: reconciliation
+      severity: warning
+      description: Checks missing value between source and target
+      failureAction: warn
+      referencedColumns:
+      - campaign_id
+  dim_channel:
+    name: dim_channel
+    primaryKey: channel_sk
+    businessKey: channel_id
+    businessName: Dim Channel
+    grain: One row per channel_id.
+    columns:
+      channel_sk:
+        required: true
+      channel_id:
+        required: true
+    metadata:
+      tableId: tab_0066
+      catalogName: dev_allianz_raw
+      schemaName: bvault_gold
+      stage: gold
+      scd2: false
+    sourceTable: dev_allianz_raw.bvault_silver.hub_channel
+    sourcePrimaryKey: channel_id
+    tableRules:
+    - ruleId: rule_0002
+      ruleName: Missing Keys Check
+      type: sql
+      query: select (select count(distinct({source_pk})) from {source_table} ) - count(distinct
+        ({table_bk})) as missing_keys from {full_table_name} a
+      mustBe:
+        missing_keys: 0
+      dimension: reconciliation
+      severity: warning
+      description: Checks missing value between source and target
+      failureAction: warn
+      referencedColumns:
+      - channel_id
+  dim_claim:
+    name: dim_claim
+    primaryKey: claim_sk
+    businessKey: claim_id
+    businessName: Dim Claim
+    grain: One row per claim_id.
+    columns:
+      claim_sk:
+        required: true
+      claim_id:
+        required: true
+      effective_from_ts:
+        required: true
+      effective_to_ts:
+        required: true
+    metadata:
+      tableId: tab_0067
+      catalogName: dev_allianz_raw
+      schemaName: bvault_gold
+      stage: gold
+      scd2: true
+    sourceTable: dev_allianz_raw.bvault_silver.hub_claim
+    sourcePrimaryKey: claim_id
+    tableRules:
+    - ruleId: rule_0004
+      ruleName: SCD2 Effective Dates Check
+      type: sql
+      query: select count(*) as invalid_intervals from {full_table_name} a where {target_watermak_exp}
+        and (effective_to_ts < '9999-12-31T00:00:00.000+00:00' and effective_from_ts
+        >= effective_to_ts)
+      mustBe:
+        invalid_intervals: 0
+      dimension: SCD2 validity
+      severity: warning
+      description: effective start date should be less than effective end date
+      failureAction: warn
+      referencedColumns:
+      - effective_from_ts
+      - effective_to_ts
+    - ruleId: rule_0005
+      ruleName: Overlapping Period Check
+      type: sql
+      query: select count(*) as bk_with_overlapping_interval from ( select count(*),
+        {table_bk} from {full_table_name} a join {full_table_name} b on {table_bk_join}
+        and a.{target_watermak_exp}  and b.{target_watermak_exp} and not (a.effective_to_ts
+        <= b.effective_from_ts or b.effective_to_ts <= a.effective_from_ts) and (a.effective_from_ts,
+        a.effective_to_ts) <> (b.effective_from_ts, b.effective_to_ts) group by {table_bk}
+        ) t
+      mustBe:
+        bk_with_overlapping_interval: 0
+      dimension: SCD2 validity
+      severity: warning
+      description: There should not be any overlapping period for each bussiness key
+      failureAction: warn
+      referencedColumns:
+      - claim_id
+    - ruleId: rule_0006
+      ruleName: Duplicate Active Records Check
+      type: sql
+      query: select count(*) as bk_with_dup_active_record from ( select count(*) as
+        active_record,{table_bk} from {full_table_name} a where effective_to_ts =
+        '9999-12-31T00:00:00.000+00:00' and {target_watermak_exp} group by {table_bk}
+        having count(*) > 1 )t
+      mustBe:
+        bk_with_dup_active_record: 0
+      dimension: SCD2 validity
+      severity: warning
+      description: This query tests for duplicate active records
+      failureAction: warn
+      referencedColumns:
+      - claim_id
+    - ruleId: rule_0002
+      ruleName: Missing Keys Check
+      type: sql
+      query: select (select count(distinct({source_pk})) from {source_table} ) - count(distinct
+        ({table_bk})) as missing_keys from {full_table_name} a
+      mustBe:
+        missing_keys: 0
+      dimension: reconciliation
+      severity: warning
+      description: Checks missing value between source and target
+      failureAction: warn
+      referencedColumns:
+      - claim_id
+  dim_customer:
+    name: dim_customer
+    primaryKey: customer_sk
+    businessKey: customer_id
+    businessName: Dim Customer
+    grain: One row per customer_id.
+    columns:
+      customer_sk:
+        required: true
+      customer_id:
+        required: true
+      effective_from_ts:
+        required: true
+      effective_to_ts:
+        required: true
+    metadata:
+      tableId: tab_0068
+      catalogName: dev_allianz_raw
+      schemaName: bvault_gold
+      stage: gold
+      scd2: true
+    sourceTable: dev_allianz_raw.bvault_silver.hub_customer
+    sourcePrimaryKey: customer_id
+    tableRules:
+    - ruleId: rule_0004
+      ruleName: SCD2 Effective Dates Check
+      type: sql
+      query: select count(*) as invalid_intervals from {full_table_name} a where {target_watermak_exp}
+        and (effective_to_ts < '9999-12-31T00:00:00.000+00:00' and effective_from_ts
+        >= effective_to_ts)
+      mustBe:
+        invalid_intervals: 0
+      dimension: SCD2 validity
+      severity: warning
+      description: effective start date should be less than effective end date
+      failureAction: warn
+      referencedColumns:
+      - effective_from_ts
+      - effective_to_ts
+    - ruleId: rule_0005
+      ruleName: Overlapping Period Check
+      type: sql
+      query: select count(*) as bk_with_overlapping_interval from ( select count(*),
+        {table_bk} from {full_table_name} a join {full_table_name} b on {table_bk_join}
+        and a.{target_watermak_exp}  and b.{target_watermak_exp} and not (a.effective_to_ts
+        <= b.effective_from_ts or b.effective_to_ts <= a.effective_from_ts) and (a.effective_from_ts,
+        a.effective_to_ts) <> (b.effective_from_ts, b.effective_to_ts) group by {table_bk}
+        ) t
+      mustBe:
+        bk_with_overlapping_interval: 0
+      dimension: SCD2 validity
+      severity: warning
+      description: There should not be any overlapping period for each bussiness key
+      failureAction: warn
+      referencedColumns:
+      - customer_id
+    - ruleId: rule_0006
+      ruleName: Duplicate Active Records Check
+      type: sql
+      query: select count(*) as bk_with_dup_active_record from ( select count(*) as
+        active_record,{table_bk} from {full_table_name} a where effective_to_ts =
+        '9999-12-31T00:00:00.000+00:00' and {target_watermak_exp} group by {table_bk}
+        having count(*) > 1 )t
+      mustBe:
+        bk_with_dup_active_record: 0
+      dimension: SCD2 validity
+      severity: warning
+      description: This query tests for duplicate active records
+      failureAction: warn
+      referencedColumns:
+      - customer_id
+    - ruleId: rule_0002
+      ruleName: Missing Keys Check
+      type: sql
+      query: select (select count(distinct({source_pk})) from {source_table} ) - count(distinct
+        ({table_bk})) as missing_keys from {full_table_name} a
+      mustBe:
+        missing_keys: 0
+      dimension: reconciliation
+      severity: warning
+      description: Checks missing value between source and target
+      failureAction: warn
+      referencedColumns:
+      - customer_id
+  dim_insured_object:
+    name: dim_insured_object
+    primaryKey: insured_object_sk
+    businessKey: insured_object_id
+    businessName: Dim Insured Object
+    grain: One row per insured_object_id.
+    columns:
+      insured_object_sk:
+        required: true
+      insured_object_id:
+        required: true
+    metadata:
+      tableId: tab_0072
+      catalogName: dev_allianz_raw
+      schemaName: bvault_gold
+      stage: gold
+      scd2: false
+    sourceTable: dev_allianz_raw.bvault_silver.hub_insured_object
+    sourcePrimaryKey: insured_object_id
+    tableRules:
+    - ruleId: rule_0002
+      ruleName: Missing Keys Check
+      type: sql
+      query: select (select count(distinct({source_pk})) from {source_table} ) - count(distinct
+        ({table_bk})) as missing_keys from {full_table_name} a
+      mustBe:
+        missing_keys: 0
+      dimension: reconciliation
+      severity: warning
+      description: Checks missing value between source and target
+      failureAction: warn
+      referencedColumns:
+      - insured_object_id
+  dim_override:
+    name: dim_override
+    primaryKey: override_sk
+    businessKey: override_id
+    businessName: Dim Override
+    grain: One row per override_id.
+    columns:
+      override_sk:
+        required: true
+      override_id:
+        required: true
+    metadata:
+      tableId: tab_0075
+      catalogName: dev_allianz_raw
+      schemaName: bvault_gold
+      stage: gold
+      scd2: false
+    sourceTable: dev_allianz_raw.bvault_silver.hub_override
+    sourcePrimaryKey: override_id
+    tableRules:
+    - ruleId: rule_0002
+      ruleName: Missing Keys Check
+      type: sql
+      query: select (select count(distinct({source_pk})) from {source_table} ) - count(distinct
+        ({table_bk})) as missing_keys from {full_table_name} a
+      mustBe:
+        missing_keys: 0
+      dimension: reconciliation
+      severity: warning
+      description: Checks missing value between source and target
+      failureAction: warn
+      referencedColumns:
+      - override_id
+  dim_regulation:
+    name: dim_regulation
+    primaryKey: regulation_sk
+    businessKey: regulation_id
+    businessName: Dim Regulation
+    grain: One row per regulation_id.
+    columns:
+      regulation_sk:
+        required: true
+      regulation_id:
+        required: true
+    metadata:
+      tableId: tab_0079
+      catalogName: dev_allianz_raw
+      schemaName: bvault_gold
+      stage: gold
+      scd2: false
+    sourceTable: dev_allianz_raw.bvault_silver.hub_regulation
+    sourcePrimaryKey: regulation_id
+    tableRules:
+    - ruleId: rule_0002
+      ruleName: Missing Keys Check
+      type: sql
+      query: select (select count(distinct({source_pk})) from {source_table} ) - count(distinct
+        ({table_bk})) as missing_keys from {full_table_name} a
+      mustBe:
+        missing_keys: 0
+      dimension: reconciliation
+      severity: warning
+      description: Checks missing value between source and target
+      failureAction: warn
+      referencedColumns:
+      - regulation_id
+  dim_marketing:
+    name: dim_marketing
+    primaryKey: marketing_sk
+    businessKey:
+    - marketing_preference_id
+    - marketing_engagement_id
+    businessName: Dim Marketing
+    grain: One row per marketing_preference_id, marketing_engagement_id.
+    columns:
+      marketing_sk:
+        required: true
+      marketing_preference_id:
+        required: true
+      marketing_engagement_id:
+        required: true
+      effective_from_ts:
+        required: true
+      effective_to_ts:
+        required: true
+    metadata:
+      tableId: tab_0073
+      catalogName: dev_allianz_raw
+      schemaName: bvault_gold
+      stage: gold
+      scd2: true
+    sourceTable: dev_allianz_raw.bvault_silver.hub_marketing_preference
+    sourcePrimaryKey: marketing_preference_id
+    tableRules:
+    - ruleId: rule_0004
+      ruleName: SCD2 Effective Dates Check
+      type: sql
+      query: select count(*) as invalid_intervals from {full_table_name} a where {target_watermak_exp}
+        and (effective_to_ts < '9999-12-31T00:00:00.000+00:00' and effective_from_ts
+        >= effective_to_ts)
+      mustBe:
+        invalid_intervals: 0
+      dimension: SCD2 validity
+      severity: warning
+      description: effective start date should be less than effective end date
+      failureAction: warn
+      referencedColumns:
+      - effective_from_ts
+      - effective_to_ts
+    - ruleId: rule_0005
+      ruleName: Overlapping Period Check
+      type: sql
+      query: select count(*) as bk_with_overlapping_interval from ( select count(*),
+        {table_bk} from {full_table_name} a join {full_table_name} b on {table_bk_join}
+        and a.{target_watermak_exp}  and b.{target_watermak_exp} and not (a.effective_to_ts
+        <= b.effective_from_ts or b.effective_to_ts <= a.effective_from_ts) and (a.effective_from_ts,
+        a.effective_to_ts) <> (b.effective_from_ts, b.effective_to_ts) group by {table_bk}
+        ) t
+      mustBe:
+        bk_with_overlapping_interval: 0
+      dimension: SCD2 validity
+      severity: warning
+      description: There should not be any overlapping period for each bussiness key
+      failureAction: warn
+      referencedColumns:
+      - marketing_preference_id
+      - marketing_engagement_id
+    - ruleId: rule_0006
+      ruleName: Duplicate Active Records Check
+      type: sql
+      query: select count(*) as bk_with_dup_active_record from ( select count(*) as
+        active_record,{table_bk} from {full_table_name} a where effective_to_ts =
+        '9999-12-31T00:00:00.000+00:00' and {target_watermak_exp} group by {table_bk}
+        having count(*) > 1 )t
+      mustBe:
+        bk_with_dup_active_record: 0
+      dimension: SCD2 validity
+      severity: warning
+      description: This query tests for duplicate active records
+      failureAction: warn
+      referencedColumns:
+      - marketing_preference_id
+      - marketing_engagement_id
+    - ruleId: rule_0002
+      ruleName: Missing Keys Check
+      type: sql
+      query: select (select count(distinct({source_pk})) from {source_table} ) - count(distinct
+        ({table_bk})) as missing_keys from {full_table_name} a
+      mustBe:
+        missing_keys: 0
+      dimension: reconciliation
+      severity: warning
+      description: Checks missing value between source and target
+      failureAction: warn
+      referencedColumns:
+      - marketing_preference_id
+      - marketing_engagement_id
+  dim_motor:
+    name: dim_motor
+    primaryKey: insured_object_sk
+    businessKey: insured_object_motor_id
+    businessName: Dim Motor
+    grain: One row per insured_object_motor_id.
+    columns:
+      insured_object_sk:
+        required: true
+      insured_object_motor_id:
+        required: true
+      effective_from_ts:
+        required: true
+      effective_to_ts:
+        required: true
+    metadata:
+      tableId: tab_0074
+      catalogName: dev_allianz_raw
+      schemaName: bvault_gold
+      stage: gold
+      scd2: true
+    sourceTable: dev_allianz_raw.bvault_silver.bv_motor_master
+    sourcePrimaryKey: global_motor_identifier
+    tableRules:
+    - ruleId: rule_0004
+      ruleName: SCD2 Effective Dates Check
+      type: sql
+      query: select count(*) as invalid_intervals from {full_table_name} a where {target_watermak_exp}
+        and (effective_to_ts < '9999-12-31T00:00:00.000+00:00' and effective_from_ts
+        >= effective_to_ts)
+      mustBe:
+        invalid_intervals: 0
+      dimension: SCD2 validity
+      severity: warning
+      description: effective start date should be less than effective end date
+      failureAction: warn
+      referencedColumns:
+      - effective_from_ts
+      - effective_to_ts
+    - ruleId: rule_0005
+      ruleName: Overlapping Period Check
+      type: sql
+      query: select count(*) as bk_with_overlapping_interval from ( select count(*),
+        {table_bk} from {full_table_name} a join {full_table_name} b on {table_bk_join}
+        and a.{target_watermak_exp}  and b.{target_watermak_exp} and not (a.effective_to_ts
+        <= b.effective_from_ts or b.effective_to_ts <= a.effective_from_ts) and (a.effective_from_ts,
+        a.effective_to_ts) <> (b.effective_from_ts, b.effective_to_ts) group by {table_bk}
+        ) t
+      mustBe:
+        bk_with_overlapping_interval: 0
+      dimension: SCD2 validity
+      severity: warning
+      description: There should not be any overlapping period for each bussiness key
+      failureAction: warn
+      referencedColumns:
+      - insured_object_motor_id
+    - ruleId: rule_0006
+      ruleName: Duplicate Active Records Check
+      type: sql
+      query: select count(*) as bk_with_dup_active_record from ( select count(*) as
+        active_record,{table_bk} from {full_table_name} a where effective_to_ts =
+        '9999-12-31T00:00:00.000+00:00' and {target_watermak_exp} group by {table_bk}
+        having count(*) > 1 )t
+      mustBe:
+        bk_with_dup_active_record: 0
+      dimension: SCD2 validity
+      severity: warning
+      description: This query tests for duplicate active records
+      failureAction: warn
+      referencedColumns:
+      - insured_object_motor_id
+    - ruleId: rule_0002
+      ruleName: Missing Keys Check
+      type: sql
+      query: select (select count(distinct({source_pk})) from {source_table} ) - count(distinct
+        ({table_bk})) as missing_keys from {full_table_name} a
+      mustBe:
+        missing_keys: 0
+      dimension: reconciliation
+      severity: warning
+      description: Checks missing value between source and target
+      failureAction: warn
+      referencedColumns:
+      - insured_object_motor_id
+  dim_home:
+    name: dim_home
+    primaryKey: insured_object_sk
+    businessKey: insured_object_home_id
+    businessName: Dim Home
+    grain: One row per insured_object_home_id.
+    columns:
+      insured_object_sk:
+        required: true
+      insured_object_home_id:
+        required: true
+      effective_from_ts:
+        required: true
+      effective_to_ts:
+        required: true
+    metadata:
+      tableId: tab_0070
+      catalogName: dev_allianz_raw
+      schemaName: bvault_gold
+      stage: gold
+      scd2: true
+    sourceTable: dev_allianz_raw.bvault_silver.bv_home_master
+    sourcePrimaryKey: global_home_identifier
+    tableRules:
+    - ruleId: rule_0004
+      ruleName: SCD2 Effective Dates Check
+      type: sql
+      query: select count(*) as invalid_intervals from {full_table_name} a where {target_watermak_exp}
+        and (effective_to_ts < '9999-12-31T00:00:00.000+00:00' and effective_from_ts
+        >= effective_to_ts)
+      mustBe:
+        invalid_intervals: 0
+      dimension: SCD2 validity
+      severity: warning
+      description: effective start date should be less than effective end date
+      failureAction: warn
+      referencedColumns:
+      - effective_from_ts
+      - effective_to_ts
+    - ruleId: rule_0005
+      ruleName: Overlapping Period Check
+      type: sql
+      query: select count(*) as bk_with_overlapping_interval from ( select count(*),
+        {table_bk} from {full_table_name} a join {full_table_name} b on {table_bk_join}
+        and a.{target_watermak_exp}  and b.{target_watermak_exp} and not (a.effective_to_ts
+        <= b.effective_from_ts or b.effective_to_ts <= a.effective_from_ts) and (a.effective_from_ts,
+        a.effective_to_ts) <> (b.effective_from_ts, b.effective_to_ts) group by {table_bk}
+        ) t
+      mustBe:
+        bk_with_overlapping_interval: 0
+      dimension: SCD2 validity
+      severity: warning
+      description: There should not be any overlapping period for each bussiness key
+      failureAction: warn
+      referencedColumns:
+      - insured_object_home_id
+    - ruleId: rule_0006
+      ruleName: Duplicate Active Records Check
+      type: sql
+      query: select count(*) as bk_with_dup_active_record from ( select count(*) as
+        active_record,{table_bk} from {full_table_name} a where effective_to_ts =
+        '9999-12-31T00:00:00.000+00:00' and {target_watermak_exp} group by {table_bk}
+        having count(*) > 1 )t
+      mustBe:
+        bk_with_dup_active_record: 0
+      dimension: SCD2 validity
+      severity: warning
+      description: This query tests for duplicate active records
+      failureAction: warn
+      referencedColumns:
+      - insured_object_home_id
+    - ruleId: rule_0002
+      ruleName: Missing Keys Check
+      type: sql
+      query: select (select count(distinct({source_pk})) from {source_table} ) - count(distinct
+        ({table_bk})) as missing_keys from {full_table_name} a
+      mustBe:
+        missing_keys: 0
+      dimension: reconciliation
+      severity: warning
+      description: Checks missing value between source and target
+      failureAction: warn
+      referencedColumns:
+      - insured_object_home_id
+  dim_product:
+    name: dim_product
+    primaryKey: product_sk
+    businessKey: product_id
+    businessName: Dim Product
+    grain: One row per product_id.
+    columns:
+      product_sk:
+        required: true
+      product_id:
+        required: true
+      effective_from_ts:
+        required: true
+      effective_to_ts:
+        required: true
+    metadata:
+      tableId: tab_0078
+      catalogName: dev_allianz_raw
+      schemaName: bvault_gold
+      stage: gold
+      scd2: true
+    sourceTable: dev_allianz_raw.bvault_silver.bv_product_master
+    sourcePrimaryKey: global_product_identifier
+    tableRules:
+    - ruleId: rule_0004
+      ruleName: SCD2 Effective Dates Check
+      type: sql
+      query: select count(*) as invalid_intervals from {full_table_name} a where {target_watermak_exp}
+        and (effective_to_ts < '9999-12-31T00:00:00.000+00:00' and effective_from_ts
+        >= effective_to_ts)
+      mustBe:
+        invalid_intervals: 0
+      dimension: SCD2 validity
+      severity: warning
+      description: effective start date should be less than effective end date
+      failureAction: warn
+      referencedColumns:
+      - effective_from_ts
+      - effective_to_ts
+    - ruleId: rule_0005
+      ruleName: Overlapping Period Check
+      type: sql
+      query: select count(*) as bk_with_overlapping_interval from ( select count(*),
+        {table_bk} from {full_table_name} a join {full_table_name} b on {table_bk_join}
+        and a.{target_watermak_exp}  and b.{target_watermak_exp} and not (a.effective_to_ts
+        <= b.effective_from_ts or b.effective_to_ts <= a.effective_from_ts) and (a.effective_from_ts,
+        a.effective_to_ts) <> (b.effective_from_ts, b.effective_to_ts) group by {table_bk}
+        ) t
+      mustBe:
+        bk_with_overlapping_interval: 0
+      dimension: SCD2 validity
+      severity: warning
+      description: There should not be any overlapping period for each bussiness key
+      failureAction: warn
+      referencedColumns:
+      - product_id
+    - ruleId: rule_0006
+      ruleName: Duplicate Active Records Check
+      type: sql
+      query: select count(*) as bk_with_dup_active_record from ( select count(*) as
+        active_record,{table_bk} from {full_table_name} a where effective_to_ts =
+        '9999-12-31T00:00:00.000+00:00' and {target_watermak_exp} group by {table_bk}
+        having count(*) > 1 )t
+      mustBe:
+        bk_with_dup_active_record: 0
+      dimension: SCD2 validity
+      severity: warning
+      description: This query tests for duplicate active records
+      failureAction: warn
+      referencedColumns:
+      - product_id
+    - ruleId: rule_0002
+      ruleName: Missing Keys Check
+      type: sql
+      query: select (select count(distinct({source_pk})) from {source_table} ) - count(distinct
+        ({table_bk})) as missing_keys from {full_table_name} a
+      mustBe:
+        missing_keys: 0
+      dimension: reconciliation
+      severity: warning
+      description: Checks missing value between source and target
+      failureAction: warn
+      referencedColumns:
+      - product_id
+  dim_policy:
+    name: dim_policy
+    primaryKey: policy_sk
+    businessKey: policy_id
+    businessName: Dim Policy
+    grain: One row per policy_id.
+    columns:
+      policy_sk:
+        required: true
+      policy_id:
+        required: true
+      effective_from_ts:
+        required: true
+      effective_to_ts:
+        required: true
+    metadata:
+      tableId: tab_0077
+      catalogName: dev_allianz_raw
+      schemaName: bvault_gold
+      stage: gold
+      scd2: true
+    sourceTable: dev_allianz_raw.bvault_silver.sat_policy_crm
+    sourcePrimaryKey: policy_hash_key
+    tableRules:
+    - ruleId: rule_0004
+      ruleName: SCD2 Effective Dates Check
+      type: sql
+      query: select count(*) as invalid_intervals from {full_table_name} a where {target_watermak_exp}
+        and (effective_to_ts < '9999-12-31T00:00:00.000+00:00' and effective_from_ts
+        >= effective_to_ts)
+      mustBe:
+        invalid_intervals: 0
+      dimension: SCD2 validity
+      severity: warning
+      description: effective start date should be less than effective end date
+      failureAction: warn
+      referencedColumns:
+      - effective_from_ts
+      - effective_to_ts
+    - ruleId: rule_0005
+      ruleName: Overlapping Period Check
+      type: sql
+      query: select count(*) as bk_with_overlapping_interval from ( select count(*),
+        {table_bk} from {full_table_name} a join {full_table_name} b on {table_bk_join}
+        and a.{target_watermak_exp}  and b.{target_watermak_exp} and not (a.effective_to_ts
+        <= b.effective_from_ts or b.effective_to_ts <= a.effective_from_ts) and (a.effective_from_ts,
+        a.effective_to_ts) <> (b.effective_from_ts, b.effective_to_ts) group by {table_bk}
+        ) t
+      mustBe:
+        bk_with_overlapping_interval: 0
+      dimension: SCD2 validity
+      severity: warning
+      description: There should not be any overlapping period for each bussiness key
+      failureAction: warn
+      referencedColumns:
+      - policy_id
+    - ruleId: rule_0006
+      ruleName: Duplicate Active Records Check
+      type: sql
+      query: select count(*) as bk_with_dup_active_record from ( select count(*) as
+        active_record,{table_bk} from {full_table_name} a where effective_to_ts =
+        '9999-12-31T00:00:00.000+00:00' and {target_watermak_exp} group by {table_bk}
+        having count(*) > 1 )t
+      mustBe:
+        bk_with_dup_active_record: 0
+      dimension: SCD2 validity
+      severity: warning
+      description: This query tests for duplicate active records
+      failureAction: warn
+      referencedColumns:
+      - policy_id
+    - ruleId: rule_0002
+      ruleName: Missing Keys Check
+      type: sql
+      query: select (select count(distinct({source_pk})) from {source_table} ) - count(distinct
+        ({table_bk})) as missing_keys from {full_table_name} a
+      mustBe:
+        missing_keys: 0
+      dimension: reconciliation
+      severity: warning
+      description: Checks missing value between source and target
+      failureAction: warn
+      referencedColumns:
+      - policy_id
+  dim_person:
+    name: dim_person
+    primaryKey: person_sk
+    businessKey: person_id
+    businessName: Dim Person
+    grain: One row per person_id.
+    columns:
+      person_sk:
+        required: true
+      person_id:
+        required: true
+      effective_from_ts:
+        required: true
+      effective_to_ts:
+        required: true
+    metadata:
+      tableId: tab_0076
+      catalogName: dev_allianz_raw
+      schemaName: bvault_gold
+      stage: gold
+      scd2: true
+    tableRules:
+    - ruleId: rule_0004
+      ruleName: SCD2 Effective Dates Check
+      type: sql
+      query: select count(*) as invalid_intervals from {full_table_name} a where {target_watermak_exp}
+        and (effective_to_ts < '9999-12-31T00:00:00.000+00:00' and effective_from_ts
+        >= effective_to_ts)
+      mustBe:
+        invalid_intervals: 0
+      dimension: SCD2 validity
+      severity: warning
+      description: effective start date should be less than effective end date
+      failureAction: warn
+      referencedColumns:
+      - effective_from_ts
+      - effective_to_ts
+    - ruleId: rule_0005
+      ruleName: Overlapping Period Check
+      type: sql
+      query: select count(*) as bk_with_overlapping_interval from ( select count(*),
+        {table_bk} from {full_table_name} a join {full_table_name} b on {table_bk_join}
+        and a.{target_watermak_exp}  and b.{target_watermak_exp} and not (a.effective_to_ts
+        <= b.effective_from_ts or b.effective_to_ts <= a.effective_from_ts) and (a.effective_from_ts,
+        a.effective_to_ts) <> (b.effective_from_ts, b.effective_to_ts) group by {table_bk}
+        ) t
+      mustBe:
+        bk_with_overlapping_interval: 0
+      dimension: SCD2 validity
+      severity: warning
+      description: There should not be any overlapping period for each bussiness key
+      failureAction: warn
+      referencedColumns:
+      - person_id
+    - ruleId: rule_0006
+      ruleName: Duplicate Active Records Check
+      type: sql
+      query: select count(*) as bk_with_dup_active_record from ( select count(*) as
+        active_record,{table_bk} from {full_table_name} a where effective_to_ts =
+        '9999-12-31T00:00:00.000+00:00' and {target_watermak_exp} group by {table_bk}
+        having count(*) > 1 )t
+      mustBe:
+        bk_with_dup_active_record: 0
+      dimension: SCD2 validity
+      severity: warning
+      description: This query tests for duplicate active records
+      failureAction: warn
+      referencedColumns:
+      - person_id
+  fact_complaint:
+    name: fact_complaint
+    primaryKey: complaint_id
+    businessKey: complaint_id
+    businessName: Fact Complaint
+    grain: One row per complaint_id.
+    columns:
+      complaint_id:
+        required: true
+    metadata:
+      tableId: tab_0321
+      catalogName: dev_allianz_raw
+      schemaName: bvault_gold
+      stage: gold
+      scd2: false
+  fact_policy:
+    name: fact_policy
+    primaryKey: policy_sk
+    businessKey: policy_sk
+    businessName: Fact Policy
+    grain: One row per policy_sk.
+    columns:
+      policy_sk:
+        required: true
+    metadata:
+      tableId: tab_0322
+      catalogName: dev_allianz_raw
+      schemaName: bvault_gold
+      stage: gold
+      scd2: false
+  fact_quote:
+    name: fact_quote
+    primaryKey: quote_id
+    businessKey: quote_id
+    businessName: Fact Quote
+    grain: One row per quote_id.
+    columns:
+      quote_id:
+        required: true
+    metadata:
+      tableId: tab_0323
+      catalogName: dev_allianz_raw
+      schemaName: bvault_gold
+      stage: gold
+      scd2: false
+  fact_lead:
+    name: fact_lead
+    primaryKey: lead_id
+    businessKey: lead_id
+    businessName: Fact Lead
+    grain: One row per lead_id.
+    columns:
+      lead_id:
+        required: true
+    metadata:
+      tableId: tab_0324
+      catalogName: dev_allianz_raw
+      schemaName: bvault_gold
+      stage: gold
+      scd2: false

@@ -1,0 +1,4 @@
+PS F:\SyncDataGenerator_v1.0> datacontract import excel --source dc_nb/outputs/contracts/enhanced_prd01_odcs_template_filled.xlsx --output dc_nb/outputs/contracts/enhanced_prd01_imported.yaml
+
+valid:
+datacontract lint dc_nb/outputs/contracts/enhanced_prd01_imported.yaml

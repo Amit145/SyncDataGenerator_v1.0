@@ -1,0 +1,49 @@
+purpose: "Validate enhanced PRD2 SAP/source-2 raw files before silver/vault ingestion."
+limitations: "Generated from synthetic enhanced SAP/source-2 data; review business descriptions before approval."
+usage: "Used as an ingestion gate and DQ metadata source for enhanced PRD2 raw."
+
+frequency: 1
+frequencyUnit: d
+latency: 24
+latencyUnit: h
+retention: 7
+retentionUnit: y
+
+teamName: "Data Modelling & Engineering CoE"
+firstLevelApprovers: "Enhanced Data Owner"
+secondLevelApprovers: "Data Governance"
+supportChannel: "coe-data-contracts"
+supportUrl: "mailto:coe-data-contracts@example-internal"
+
+tables:
+  address.csv:
+    primaryKey: address_id
+    businessKey: address_id
+    businessName: Enhanced SAP Address
+    grain: "One row per address_id per batch."
+  home.csv:
+    primaryKey: home_id
+    businessKey: home_id
+    businessName: Enhanced SAP Home
+    grain: "One row per home_id per batch."
+  motor.csv:
+    primaryKey: motor_id
+    businessKey: motor_id
+    businessName: Enhanced SAP Motor
+    grain: "One row per motor_id per batch."
+  person.csv:
+    primaryKey: person_id
+    businessKey: person_id
+    businessName: Enhanced SAP Person
+    grain: "One row per person_id per batch."
+    columns:
+      person_type:
+        required: true
+        allowedValues:
+          - Natural
+          - Legal
+  product.csv:
+    primaryKey: product_id
+    businessKey: product_id
+    businessName: Enhanced SAP Product
+    grain: "One row per product_id per batch."

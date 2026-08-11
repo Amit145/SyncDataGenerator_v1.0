@@ -13,6 +13,7 @@
 
 # COMMAND ----------
 
+# DBTITLE 1,Initialize Databricks Widgets for Parameter Configurati ...
 try:
     dbutils.widgets.text("contract_path", "")
     dbutils.widgets.text("input_base_path", "")
@@ -31,6 +32,7 @@ except NameError:
 
 # COMMAND ----------
 
+# DBTITLE 1,Import Libraries and Handle PyYAML Dependency Check
 import json
 import re
 import uuid
@@ -51,6 +53,7 @@ except ImportError as exc:
 
 # COMMAND ----------
 
+# DBTITLE 1,Validate and Initialize Runtime Widgets with Defaults
 def widget_value(name: str, default: str = "") -> str:
     try:
         value = dbutils.widgets.get(name)
@@ -85,6 +88,7 @@ if MODE not in {"file", "table", "postgres"}:
 
 # COMMAND ----------
 
+# DBTITLE 1,Define Utility Functions for Data Loading and Validatio ...
 def load_yaml(path: str) -> dict[str, Any]:
     with open(path, "r", encoding="utf-8") as handle:
         data = yaml.safe_load(handle)
@@ -271,6 +275,7 @@ def add_result(
 
 # COMMAND ----------
 
+# DBTITLE 1,Perform Schema and Key Validations for DataFrames
 def run_structure_checks(obj: dict[str, Any], df: DataFrame) -> None:
     entity = obj["name"]
     physical_name = obj.get("physicalName") or entity
@@ -542,6 +547,7 @@ def run_quality_rules(obj: dict[str, Any], df: DataFrame, view_name: str, entity
 
 # COMMAND ----------
 
+# DBTITLE 1,Contract Validation and Schema Integrity Checks
 CONTRACT = load_yaml(CONTRACT_PATH)
 
 required_sections = ["id", "name", "version", "status", "domain", "schema"]
@@ -595,6 +601,7 @@ for obj in CONTRACT.get("schema", []) or []:
 
 # COMMAND ----------
 
+# DBTITLE 1,Summarize Validation Results and Handle Failures
 result_schema = StructType(
     [
         StructField("validation_run_id", StringType(), True),

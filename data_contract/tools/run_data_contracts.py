@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 from argparse import Namespace
 from pathlib import Path
 from typing import Any
@@ -10,11 +12,13 @@ from typing import Any
 import yaml
 
 from data_contract.tools import create_data_contract
+from data_contract.tools import export_odcs_excel
 from data_contract.tools import verify_data_contract
 
 
 DEFAULT_RUN_CONFIG = Path("data_contract/contract_run_config.yaml")
 DEFAULT_SCHEMA = Path("data_contract/odcs-v3.1.0.schema_ODCS.json")
+DEFAULT_EXCEL_BASE = Path("data_contract/gen_excels")
 
 
 def load_run_config(path: str | Path = DEFAULT_RUN_CONFIG) -> dict[str, Any]:
@@ -81,6 +85,105 @@ def verify_contract(contract_path: Path, input_path: Path, schema_path: Path, ch
     }
 
 
+def derive_excel_path(contract_path: Path, excel_base: Path) -> Path:
+    parts = list(contract_path.parts)
+    if "generated" in parts:
+        generated_index = parts.index("generated")
+        relative = Path(*parts[generated_index + 1 :])
+    else:
+        relative = Path(contract_path.name)
+    return excel_base / relative.with_suffix(".xlsx")
+
+
+def derive_imported_yaml_path(excel_path: Path) -> Path:
+    stem = excel_path.stem
+    if stem.endswith("_ODCS"):
+        stem = stem[: -len("_ODCS")]
+    return excel_path.with_name(f"{stem}_imported.yaml")
+
+
+def run_datacontract_command(command: list[str]) -> dict[str, Any]:
+    env = os.environ.copy()
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+    env.setdefault("PYTHONUTF8", "1")
+    try:
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            env=env,
+        )
+    except FileNotFoundError:
+        return {
+            "command": command,
+            "status": "fail",
+            "returnCode": None,
+            "stdout": "",
+            "stderr": "datacontract CLI not found. Install it with: pip install datacontract-cli",
+        }
+
+    return {
+        "command": command,
+        "status": "pass" if completed.returncode == 0 else "fail",
+        "returnCode": completed.returncode,
+        "stdout": (completed.stdout or "").strip(),
+        "stderr": (completed.stderr or "").strip(),
+    }
+
+
+def excel_round_trip(
+    entry: dict[str, Any],
+    contract_path: Path,
+    execution_context: dict[str, Any],
+    settings: dict[str, Any],
+) -> dict[str, Any]:
+    excel_base = Path(settings.get("outputBase", DEFAULT_EXCEL_BASE))
+    template_path = Path(settings.get("template", export_odcs_excel.DEFAULT_EXCEL_TEMPLATE))
+
+    excel_value = render_template(entry.get("excelOutput"), execution_context)
+    excel_path = Path(excel_value) if excel_value else derive_excel_path(contract_path, excel_base)
+
+    imported_value = render_template(entry.get("importedYamlOutput"), execution_context)
+    imported_yaml_path = Path(imported_value) if imported_value else derive_imported_yaml_path(excel_path)
+
+    export_summary = export_odcs_excel.export_contract_to_excel(
+        contract_path=contract_path,
+        output_path=excel_path,
+        template_path=template_path,
+    )
+
+    import_command = [
+        "datacontract",
+        "import",
+        "excel",
+        "--source",
+        str(excel_path),
+        "--output",
+        str(imported_yaml_path),
+    ]
+    import_result = run_datacontract_command(import_command)
+
+    lint_result: dict[str, Any] | None = None
+    if import_result["status"] == "pass" and settings.get("lintImportedYaml", True):
+        lint_result = run_datacontract_command(["datacontract", "lint", str(imported_yaml_path)])
+
+    status = "pass"
+    if import_result["status"] != "pass" or (lint_result and lint_result["status"] != "pass"):
+        status = "fail"
+
+    return {
+        "status": status,
+        "excel": str(excel_path),
+        "importedYaml": str(imported_yaml_path),
+        "export": export_summary,
+        "import": import_result,
+        "lint": lint_result,
+    }
+
+
 def generate_contract(entry: dict[str, Any], input_path: Path, output_path: Path, schema_path: Path) -> None:
     args = Namespace(
         input_path=input_path,
@@ -95,7 +198,7 @@ def generate_contract(entry: dict[str, Any], input_path: Path, output_path: Path
         status=str(entry.get("status", "draft")),
         tenant=str(entry.get("tenant", "Allianz")),
         owner_email=str(entry.get("ownerEmail", "data-modelling-engineering-coe@example-internal")),
-        rules_file=Path(entry.get("rulesFile", create_data_contract.DEFAULT_RULES)),
+        rules_file=Path(entry["rulesFile"]) if entry.get("rulesFile") else create_data_contract.DEFAULT_RULES,
         schema_path=schema_path,
         config=Path(entry["config"]) if entry.get("config") else None,
         path_template=entry.get("pathTemplate"),
@@ -120,6 +223,9 @@ def run_data_contracts(
     schema_path = Path(run_config.get("schemaPath", DEFAULT_SCHEMA))
     check_keys = bool(run_config.get("checkKeys", True))
     fail_main = bool(run_config.get("failMainOnContractError", True))
+    excel_settings = run_config.get("excelRoundTrip") or {}
+    excel_enabled = bool(excel_settings.get("enabled", False))
+    fail_main_on_excel_error = bool(excel_settings.get("failMainOnError", fail_main))
     summaries: list[dict[str, Any]] = []
 
     for entry in run_config.get("contracts", []) or []:
@@ -152,18 +258,35 @@ def run_data_contracts(
 
         generate_contract(entry, input_path, output_path, schema_path)
         report = verify_contract(output_path, input_path, schema_path, check_keys)
+
+        excel_report: dict[str, Any] | None = None
+        if excel_enabled and report["status"] == "pass":
+            excel_report = excel_round_trip(entry, output_path, execution_context, excel_settings)
+        elif excel_enabled:
+            excel_report = {"status": "skipped", "reason": "YAML contract verification failed"}
+
         report_path.parent.mkdir(parents=True, exist_ok=True)
+        if excel_report:
+            report["excelRoundTrip"] = excel_report
         report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+
+        overall_status = report["status"]
+        if excel_report and excel_report.get("status") == "fail":
+            overall_status = "fail"
 
         summary = {
             "name": name,
-            "status": report["status"],
+            "status": overall_status,
             "criticalCount": report["criticalCount"],
             "warningCount": report["warningCount"],
             "contract": str(output_path),
             "report": str(report_path),
             "inputPath": str(input_path),
         }
+        if excel_report:
+            summary["excel"] = excel_report.get("excel")
+            summary["importedYaml"] = excel_report.get("importedYaml")
+            summary["excelRoundTripStatus"] = excel_report.get("status")
         summaries.append(summary)
         print(f"DATA CONTRACT {name}:")
         print(f"  input: {input_path}")
@@ -173,10 +296,19 @@ def run_data_contracts(
             f"  verification: {report['status']} "
             f"(critical={report['criticalCount']}, warnings={report['warningCount']})"
         )
+        if excel_report:
+            print(f"  excel: {excel_report.get('excel')}")
+            print(f"  imported yaml: {excel_report.get('importedYaml')}")
+            print(f"  excel import/lint: {excel_report.get('status')}")
 
     failed = [item for item in summaries if item.get("status") == "fail"]
-    if failed and fail_main:
-        details = ", ".join(f"{item['name']} critical={item['criticalCount']}" for item in failed)
+    yaml_failed = [item for item in failed if item.get("criticalCount", 0) > 0]
+    excel_failed = [item for item in failed if item.get("excelRoundTripStatus") == "fail"]
+    if (yaml_failed and fail_main) or (excel_failed and fail_main_on_excel_error):
+        details = ", ".join(
+            f"{item['name']} critical={item['criticalCount']} excel={item.get('excelRoundTripStatus', 'n/a')}"
+            for item in yaml_failed + excel_failed
+        )
         raise RuntimeError(f"Data contract verification failed: {details}")
 
     return summaries

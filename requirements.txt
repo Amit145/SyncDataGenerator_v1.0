@@ -9,3 +9,5 @@ anthropic
 mysql-connector-python
 PyYAML
 jsonschema
+openpyxl
+datacontract-cli

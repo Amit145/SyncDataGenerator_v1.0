@@ -1,0 +1,560 @@
+purpose: Validate C360 bronze layer tables before downstream processing.
+limitations: Generated from layer metadata workbooks; review business descriptions
+  and column-level rules when physical schema is available.
+usage: Used as a bronze layer contract config for ODCS contract generation and validation.
+frequency: 1
+frequencyUnit: d
+latency: 24
+latencyUnit: h
+retention: 7
+retentionUnit: y
+teamName: Data Modelling & Engineering CoE
+firstLevelApprovers: C360 Bronze Data Owner
+secondLevelApprovers: Data Governance
+supportChannel: coe-data-contracts
+supportUrl: mailto:coe-data-contracts@example-internal
+tables:
+  crm_customer_lead_bridge_csv:
+    name: crm_customer_lead_bridge_csv
+    primaryKey: customer_ref
+    businessKey: customer_ref
+    businessName: Crm Customer Lead Bridge Csv
+    grain: One row per customer_ref per batch.
+    columns:
+      customer_ref:
+        required: true
+    metadata:
+      bronzeObjectId: brz_10012
+      sourceId: src_0010
+      sourceObjectName: customer_lead_bridge
+      landingPath: /Volumes/allianz_coe/landing/data_files/{product_id}/src_0010/csv/
+      fileFormat: csv
+      writeMode: append
+      schemaEvolution: true
+  crm_enhanced_enrichments_csv:
+    name: crm_enhanced_enrichments_csv
+    primaryKey: src_marketing_engagement_ref
+    businessKey: src_marketing_engagement_ref
+    businessName: Crm Enhanced Enrichments Csv
+    grain: One row per src_marketing_engagement_ref per batch.
+    columns:
+      src_marketing_engagement_ref:
+        required: true
+    metadata:
+      bronzeObjectId: brz_10015
+      sourceId: src_0010
+      sourceObjectName: enhanced_enrichments
+      landingPath: /Volumes/allianz_coe/landing/data_files/{product_id}/src_0010/csv/
+      fileFormat: csv
+      writeMode: append
+      schemaEvolution: true
+  crm_customer_portfolio_csv:
+    name: crm_customer_portfolio_csv
+    primaryKey: customer_ref
+    businessKey: customer_ref
+    businessName: Crm Customer Portfolio Csv
+    grain: One row per customer_ref per batch.
+    columns:
+      customer_ref:
+        required: true
+    metadata:
+      bronzeObjectId: brz_10013
+      sourceId: src_0010
+      sourceObjectName: customer_portfolio
+      landingPath: /Volumes/allianz_coe/landing/data_files/{product_id}/src_0010/csv/
+      fileFormat: csv
+      writeMode: append
+      schemaEvolution: true
+  crm_comm_preference_csv:
+    name: crm_comm_preference_csv
+    primaryKey: preference_ref
+    businessKey: preference_ref
+    businessName: Crm Comm Preference Csv
+    grain: One row per preference_ref per batch.
+    columns:
+      preference_ref:
+        required: true
+    metadata:
+      bronzeObjectId: brz_10008
+      sourceId: src_0010
+      sourceObjectName: comm_preference
+      landingPath: /Volumes/allianz_coe/landing/data_files/{product_id}/src_0010/csv/
+      fileFormat: csv
+      writeMode: append
+      schemaEvolution: true
+  crm_identity_registry_csv:
+    name: crm_identity_registry_csv
+    primaryKey: identity_ref
+    businessKey: identity_ref
+    businessName: Crm Identity Registry Csv
+    grain: One row per identity_ref per batch.
+    columns:
+      identity_ref:
+        required: true
+    metadata:
+      bronzeObjectId: brz_10018
+      sourceId: src_0010
+      sourceObjectName: identity_registry
+      landingPath: /Volumes/allianz_coe/landing/data_files/{product_id}/src_0010/csv/
+      fileFormat: csv
+      writeMode: append
+      schemaEvolution: true
+  crm_campaign_touch_csv:
+    name: crm_campaign_touch_csv
+    primaryKey: engagement_ref
+    businessKey: engagement_ref
+    businessName: Crm Campaign Touch Csv
+    grain: One row per engagement_ref per batch.
+    columns:
+      engagement_ref:
+        required: true
+    metadata:
+      bronzeObjectId: brz_10005
+      sourceId: src_0010
+      sourceObjectName: campaign_touch
+      landingPath: /Volumes/allianz_coe/landing/data_files/{product_id}/src_0010/csv/
+      fileFormat: csv
+      writeMode: append
+      schemaEvolution: true
+  crm_consent_snapshot_csv:
+    name: crm_consent_snapshot_csv
+    primaryKey: consent_ref
+    businessKey: consent_ref
+    businessName: Crm Consent Snapshot Csv
+    grain: One row per consent_ref per batch.
+    columns:
+      consent_ref:
+        required: true
+    metadata:
+      bronzeObjectId: brz_10010
+      sourceId: src_0010
+      sourceObjectName: consent_snapshot
+      landingPath: /Volumes/allianz_coe/landing/data_files/{product_id}/src_0010/csv/
+      fileFormat: csv
+      writeMode: append
+      schemaEvolution: true
+  crm_policy_register_csv:
+    name: crm_policy_register_csv
+    primaryKey: policy_ref
+    businessKey: policy_ref
+    businessName: Crm Policy Register Csv
+    grain: One row per policy_ref per batch.
+    columns:
+      policy_ref:
+        required: true
+    metadata:
+      bronzeObjectId: brz_10023
+      sourceId: src_0010
+      sourceObjectName: policy_register
+      landingPath: /Volumes/allianz_coe/landing/data_files/{product_id}/src_0010/csv/
+      fileFormat: csv
+      writeMode: append
+      schemaEvolution: true
+  crm_property_asset_csv:
+    name: crm_property_asset_csv
+    primaryKey: property_ref
+    businessKey: property_ref
+    businessName: Crm Property Asset Csv
+    grain: One row per property_ref per batch.
+    columns:
+      property_ref:
+        required: true
+    metadata:
+      bronzeObjectId: brz_10025
+      sourceId: src_0010
+      sourceObjectName: property_asset
+      landingPath: /Volumes/allianz_coe/landing/data_files/{product_id}/src_0010/csv/
+      fileFormat: csv
+      writeMode: append
+      schemaEvolution: true
+  crm_product_catalog_csv:
+    name: crm_product_catalog_csv
+    primaryKey: product_ref
+    businessKey: product_ref
+    businessName: Crm Product Catalog Csv
+    grain: One row per product_ref per batch.
+    columns:
+      product_ref:
+        required: true
+    metadata:
+      bronzeObjectId: brz_10024
+      sourceId: src_0010
+      sourceObjectName: product_catalog
+      landingPath: /Volumes/allianz_coe/landing/data_files/{product_id}/src_0010/csv/
+      fileFormat: csv
+      writeMode: append
+      schemaEvolution: true
+  crm_enhanced_person_relationships_csv:
+    name: crm_enhanced_person_relationships_csv
+    primaryKey: src_person_ref
+    businessKey: src_person_ref
+    businessName: Crm Enhanced Person Relationships Csv
+    grain: One row per src_person_ref per batch.
+    columns:
+      src_person_ref:
+        required: true
+    metadata:
+      bronzeObjectId: brz_10016
+      sourceId: src_0010
+      sourceObjectName: enhanced_person_relationships
+      landingPath: /Volumes/allianz_coe/landing/data_files/{product_id}/src_0010/csv/
+      fileFormat: csv
+      writeMode: append
+      schemaEvolution: true
+  crm_enhanced_policy_relationships_csv:
+    name: crm_enhanced_policy_relationships_csv
+    primaryKey: src_policy_ref
+    businessKey: src_policy_ref
+    businessName: Crm Enhanced Policy Relationships Csv
+    grain: One row per src_policy_ref per batch.
+    columns:
+      src_policy_ref:
+        required: true
+    metadata:
+      bronzeObjectId: brz_10017
+      sourceId: src_0010
+      sourceObjectName: enhanced_policy_relationships
+      landingPath: /Volumes/allianz_coe/landing/data_files/{product_id}/src_0010/csv/
+      fileFormat: csv
+      writeMode: append
+      schemaEvolution: true
+  crm_vehicle_asset_csv:
+    name: crm_vehicle_asset_csv
+    primaryKey: vehicle_ref
+    businessKey: vehicle_ref
+    businessName: Crm Vehicle Asset Csv
+    grain: One row per vehicle_ref per batch.
+    columns:
+      vehicle_ref:
+        required: true
+    metadata:
+      bronzeObjectId: brz_10028
+      sourceId: src_0010
+      sourceObjectName: vehicle_asset
+      landingPath: /Volumes/allianz_coe/landing/data_files/{product_id}/src_0010/csv/
+      fileFormat: csv
+      writeMode: append
+      schemaEvolution: true
+  crm_contact_point_csv:
+    name: crm_contact_point_csv
+    primaryKey: contact_ref
+    businessKey: contact_ref
+    businessName: Crm Contact Point Csv
+    grain: One row per contact_ref per batch.
+    columns:
+      contact_ref:
+        required: true
+    metadata:
+      bronzeObjectId: brz_10011
+      sourceId: src_0010
+      sourceObjectName: contact_point
+      landingPath: /Volumes/allianz_coe/landing/data_files/{product_id}/src_0010/csv/
+      fileFormat: csv
+      writeMode: append
+      schemaEvolution: true
+  crm_quote_register_csv:
+    name: crm_quote_register_csv
+    primaryKey: quote_ref
+    businessKey: quote_ref
+    businessName: Crm Quote Register Csv
+    grain: One row per quote_ref per batch.
+    columns:
+      quote_ref:
+        required: true
+    metadata:
+      bronzeObjectId: brz_10026
+      sourceId: src_0010
+      sourceObjectName: quote_register
+      landingPath: /Volumes/allianz_coe/landing/data_files/{product_id}/src_0010/csv/
+      fileFormat: csv
+      writeMode: append
+      schemaEvolution: true
+  crm_address_book_csv:
+    name: crm_address_book_csv
+    primaryKey: address_ref
+    businessKey: address_ref
+    businessName: Crm Address Book Csv
+    grain: One row per address_ref per batch.
+    columns:
+      address_ref:
+        required: true
+    metadata:
+      bronzeObjectId: brz_10002
+      sourceId: src_0010
+      sourceObjectName: address_book
+      landingPath: /Volumes/allianz_coe/landing/data_files/{product_id}/src_0010/csv/
+      fileFormat: csv
+      writeMode: append
+      schemaEvolution: true
+  crm_account_book_csv:
+    name: crm_account_book_csv
+    primaryKey: account_ref
+    businessKey: account_ref
+    businessName: Crm Account Book Csv
+    grain: One row per account_ref per batch.
+    columns:
+      account_ref:
+        required: true
+    metadata:
+      bronzeObjectId: brz_10001
+      sourceId: src_0010
+      sourceObjectName: account_book
+      landingPath: /Volumes/allianz_coe/landing/data_files/{product_id}/src_0010/csv/
+      fileFormat: csv
+      writeMode: append
+      schemaEvolution: true
+  crm_claim_register_csv:
+    name: crm_claim_register_csv
+    primaryKey: src_claim_ref
+    businessKey: src_claim_ref
+    businessName: Crm Claim Register Csv
+    grain: One row per src_claim_ref per batch.
+    columns:
+      src_claim_ref:
+        required: true
+    metadata:
+      bronzeObjectId: brz_10007
+      sourceId: src_0010
+      sourceObjectName: claim_register
+      landingPath: /Volumes/allianz_coe/landing/data_files/{product_id}/src_0010/csv/
+      fileFormat: csv
+      writeMode: append
+      schemaEvolution: true
+  crm_lead_register_csv:
+    name: crm_lead_register_csv
+    primaryKey: lead_ref
+    businessKey: lead_ref
+    businessName: Crm Lead Register Csv
+    grain: One row per lead_ref per batch.
+    columns:
+      lead_ref:
+        required: true
+    metadata:
+      bronzeObjectId: brz_10020
+      sourceId: src_0010
+      sourceObjectName: lead_register
+      landingPath: /Volumes/allianz_coe/landing/data_files/{product_id}/src_0010/csv/
+      fileFormat: csv
+      writeMode: append
+      schemaEvolution: true
+  crm_regulation_register_csv:
+    name: crm_regulation_register_csv
+    primaryKey: src_regulation_ref
+    businessKey: src_regulation_ref
+    businessName: Crm Regulation Register Csv
+    grain: One row per src_regulation_ref per batch.
+    columns:
+      src_regulation_ref:
+        required: true
+    metadata:
+      bronzeObjectId: brz_10027
+      sourceId: src_0010
+      sourceObjectName: regulation_register
+      landingPath: /Volumes/allianz_coe/landing/data_files/{product_id}/src_0010/csv/
+      fileFormat: csv
+      writeMode: append
+      schemaEvolution: true
+  crm_enhanced_address_book_csv:
+    name: crm_enhanced_address_book_csv
+    primaryKey: src_address_ref
+    businessKey: src_address_ref
+    businessName: Crm Enhanced Address Book Csv
+    grain: One row per src_address_ref per batch.
+    columns:
+      src_address_ref:
+        required: true
+    metadata:
+      bronzeObjectId: brz_10014
+      sourceId: src_0010
+      sourceObjectName: enhanced_address_book
+      landingPath: /Volumes/allianz_coe/landing/data_files/{product_id}/src_0010/csv/
+      fileFormat: csv
+      writeMode: append
+      schemaEvolution: true
+  crm_complaint_register_csv:
+    name: crm_complaint_register_csv
+    primaryKey: src_complaint_ref
+    businessKey: src_complaint_ref
+    businessName: Crm Complaint Register Csv
+    grain: One row per src_complaint_ref per batch.
+    columns:
+      src_complaint_ref:
+        required: true
+    metadata:
+      bronzeObjectId: brz_10009
+      sourceId: src_0010
+      sourceObjectName: complaint_register
+      landingPath: /Volumes/allianz_coe/landing/data_files/{product_id}/src_0010/csv/
+      fileFormat: csv
+      writeMode: append
+      schemaEvolution: true
+  crm_override_register_csv:
+    name: crm_override_register_csv
+    primaryKey: src_override_ref
+    businessKey: src_override_ref
+    businessName: Crm Override Register Csv
+    grain: One row per src_override_ref per batch.
+    columns:
+      src_override_ref:
+        required: true
+    metadata:
+      bronzeObjectId: brz_10021
+      sourceId: src_0010
+      sourceObjectName: override_register
+      landingPath: /Volumes/allianz_coe/landing/data_files/{product_id}/src_0010/csv/
+      fileFormat: csv
+      writeMode: append
+      schemaEvolution: true
+  crm_campaign_register_csv:
+    name: crm_campaign_register_csv
+    primaryKey: src_campaign_ref
+    businessKey: src_campaign_ref
+    businessName: Crm Campaign Register Csv
+    grain: One row per src_campaign_ref per batch.
+    columns:
+      src_campaign_ref:
+        required: true
+    metadata:
+      bronzeObjectId: brz_10004
+      sourceId: src_0010
+      sourceObjectName: campaign_register
+      landingPath: /Volumes/allianz_coe/landing/data_files/{product_id}/src_0010/csv/
+      fileFormat: csv
+      writeMode: append
+      schemaEvolution: true
+  crm_channel_catalog_csv:
+    name: crm_channel_catalog_csv
+    primaryKey: src_channel_ref
+    businessKey: src_channel_ref
+    businessName: Crm Channel Catalog Csv
+    grain: One row per src_channel_ref per batch.
+    columns:
+      src_channel_ref:
+        required: true
+    metadata:
+      bronzeObjectId: brz_10006
+      sourceId: src_0010
+      sourceObjectName: channel_catalog
+      landingPath: /Volumes/allianz_coe/landing/data_files/{product_id}/src_0010/csv/
+      fileFormat: csv
+      writeMode: append
+      schemaEvolution: true
+  crm_broker_book_csv:
+    name: crm_broker_book_csv
+    primaryKey: src_broker_ref
+    businessKey: src_broker_ref
+    businessName: Crm Broker Book Csv
+    grain: One row per src_broker_ref per batch.
+    columns:
+      src_broker_ref:
+        required: true
+    metadata:
+      bronzeObjectId: brz_10003
+      sourceId: src_0010
+      sourceObjectName: broker_book
+      landingPath: /Volumes/allianz_coe/landing/data_files/{product_id}/src_0010/csv/
+      fileFormat: csv
+      writeMode: append
+      schemaEvolution: true
+  sap_product_db:
+    name: sap_product_db
+    primaryKey: product_id
+    businessKey: product_id
+    businessName: Sap Product Db
+    grain: One row per product_id per batch.
+    columns:
+      product_id:
+        required: true
+    metadata:
+      bronzeObjectId: brz_11006
+      sourceId: src_0011
+      sourceObjectName: product/
+      landingPath: /Volumes/allianz_coe/landing/data_files/{product_id}/src_0011/db/
+      fileFormat: parquet
+      writeMode: append
+      schemaEvolution: true
+  sap_address_db:
+    name: sap_address_db
+    primaryKey: address_id
+    businessKey: address_id
+    businessName: Sap Address Db
+    grain: One row per address_id per batch.
+    columns:
+      address_id:
+        required: true
+    metadata:
+      bronzeObjectId: brz_11001
+      sourceId: src_0011
+      sourceObjectName: address/
+      landingPath: /Volumes/allianz_coe/landing/data_files/{product_id}/src_0011/db/
+      fileFormat: parquet
+      writeMode: append
+      schemaEvolution: true
+  sap_person_db:
+    name: sap_person_db
+    primaryKey: person_id
+    businessKey: person_id
+    businessName: Sap Person Db
+    grain: One row per person_id per batch.
+    columns:
+      person_id:
+        required: true
+    metadata:
+      bronzeObjectId: brz_11005
+      sourceId: src_0011
+      sourceObjectName: person/
+      landingPath: /Volumes/allianz_coe/landing/data_files/{product_id}/src_0011/db/
+      fileFormat: parquet
+      writeMode: append
+      schemaEvolution: true
+  sap_motor_db:
+    name: sap_motor_db
+    primaryKey: motor_id
+    businessKey: motor_id
+    businessName: Sap Motor Db
+    grain: One row per motor_id per batch.
+    columns:
+      motor_id:
+        required: true
+    metadata:
+      bronzeObjectId: brz_11004
+      sourceId: src_0011
+      sourceObjectName: motor/
+      landingPath: /Volumes/allianz_coe/landing/data_files/{product_id}/src_0011/db/
+      fileFormat: parquet
+      writeMode: append
+      schemaEvolution: true
+  sap_home_db:
+    name: sap_home_db
+    primaryKey: home_id
+    businessKey: home_id
+    businessName: Sap Home Db
+    grain: One row per home_id per batch.
+    columns:
+      home_id:
+        required: true
+    metadata:
+      bronzeObjectId: brz_11002
+      sourceId: src_0011
+      sourceObjectName: home/
+      landingPath: /Volumes/allianz_coe/landing/data_files/{product_id}/src_0011/db/
+      fileFormat: parquet
+      writeMode: append
+      schemaEvolution: true
+  crm_party_master_csv:
+    name: crm_party_master_csv
+    primaryKey: party_ref
+    businessKey: party_ref
+    businessName: Crm Party Master Csv
+    grain: One row per party_ref per batch.
+    columns:
+      party_ref:
+        required: true
+    metadata:
+      bronzeObjectId: brz_10022
+      sourceId: src_0010
+      sourceObjectName: party_master
+      landingPath: /Volumes/allianz_coe/landing/data_files/{product_id}/src_0010/csv/
+      fileFormat: csv
+      writeMode: append
+      schemaEvolution: true

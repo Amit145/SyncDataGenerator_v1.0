@@ -99,6 +99,11 @@ data_contract/
   new 2.txt
   Data Contract Workstreams and Required Tasks.docx
   contract_run_config.yaml
+  inputs/
+    bronze_tables_c360.xlsx
+    silver_tables_c360.xlsx
+    gold_tables_c360.xlsx
+    dq_rules.xlsx
   generated/
     claims/
     enhanced/
@@ -107,8 +112,12 @@ data_contract/
     create_data_contract.py
     verify_data_contract.py
     run_data_contracts.py
+    create_layer_contract_configs.py
     contract_config_example.yaml
     contract_config_example.csv
+    bronze_c360_contract_config.yaml
+    silver_c360_contract_config.yaml
+    gold_c360_contract_config.yaml
     enhanced_prd01_contract_config.yaml
     enhanced_prd01_contract_config.csv
     enhanced_prd02_contract_config.yaml
@@ -170,19 +179,56 @@ Enhanced PRD2 also has a dedicated config for the SAP/source-2 file keys:
 data_contract/tools/enhanced_prd02_contract_config.yaml
 ```
 
+Bronze, Silver, and Gold C360 layer config files are generated from Excel metadata under `data_contract/inputs`:
+
+```text
+data_contract/inputs/bronze_tables_c360.xlsx
+data_contract/inputs/silver_tables_c360.xlsx
+data_contract/inputs/gold_tables_c360.xlsx
+data_contract/inputs/dq_rules.xlsx
+```
+
+Run this when the Excel inputs change:
+
+```powershell
+.\venv\Scripts\python.exe .\data_contract\tools\create_layer_contract_configs.py
+```
+
+It creates:
+
+```text
+data_contract/tools/bronze_c360_contract_config.yaml
+data_contract/tools/silver_c360_contract_config.yaml
+data_contract/tools/gold_c360_contract_config.yaml
+```
+
+These configs currently contain table-level metadata and key definitions:
+
+- table name
+- primary key
+- business key
+- required PK/BK columns
+- source table/source key where supplied
+- SCD2 flag
+- layer-appropriate table rules from `dq_rules.xlsx`
+
+Bronze has no explicit `tableRules` in the generated config because PK/BK null and duplicate checks are automatically added by `create_data_contract.py` whenever `primaryKey` and `businessKey` are supplied. Silver and Gold include additional SCD2/reconciliation rules where the Excel metadata supports them.
+
 ## Quick Start
 
 Default automated flow when `main.py` runs:
 
 ```text
 1. Run main.py.
-2. main.py generates raw claims and enhanced data as configured in config/scenario_v1.json.
+2. main.py generates raw claims, enhanced, and policy data as configured in config/scenario_v1.json.
 3. main.py reads data_contract/contract_run_config.yaml.
 4. For each enabled contract whose input was produced, main.py creates the ODCS YAML contract.
 5. main.py verifies the generated contract against the generated CSV files.
-6. If failMainOnContractError=true, main.py fails when contract verification has critical errors.
-7. Generated contracts go to data_contract/generated/.
-8. Validation reports go to data_contract/reports/.
+6. main.py exports an official ODCS Excel workbook under data_contract/gen_excels/.
+7. main.py runs datacontract import excel to create a YAML copy from the Excel workbook.
+8. main.py runs datacontract lint against the Excel-imported YAML.
+9. If failMainOnContractError=true, main.py fails when contract verification has critical errors.
+10. If excelRoundTrip.failMainOnError=true, main.py fails when Excel import/lint fails.
 ```
 
 Command:
@@ -197,17 +243,22 @@ During the run, `main.py` prints each contract execution:
 DATA CONTRACT claims_raw_prd01:
   input: data\raw\claims\<run_id>\prd_01
   contract: data_contract\generated\claims\raw\prd_01\claims_prd_01_raw_ODCS.yaml
+  excel: data_contract\gen_excels\claims\raw\prd_01\claims_prd_01_raw_ODCS.xlsx
+  imported yaml: data_contract\gen_excels\claims\raw\prd_01\claims_prd_01_raw_imported.yaml
   report: data_contract\reports\claims_prd_01_contract_validation.json
   verification: pass (critical=0, warnings=0)
+  excel import/lint: pass
 ```
 
-At the final summary, `main.py` prints the input, generated contract path, report path, and verification result again for each contract.
+At the final summary, `main.py` prints the input, generated contract path, Excel path, Excel-imported YAML path, report path, contract verification result, and Excel import/lint result again for each contract.
 
 The default contract run config currently creates and verifies:
 
 ```text
 claims_raw_prd01
 claims_raw_prd02
+policy_raw_prd01
+policy_raw_prd02
 enhanced_raw_prd01
 enhanced_raw_prd02
 ```
@@ -221,6 +272,34 @@ Each entry in `data_contract/contract_run_config.yaml` controls:
 - `config`: YAML/CSV override config for keys and rules.
 - `output`: generated ODCS YAML path.
 - `report`: verification report path.
+
+The Excel round-trip is controlled globally in `data_contract/contract_run_config.yaml`:
+
+```yaml
+excelRoundTrip:
+  enabled: true
+  template: dc_nb/odcs-template.xlsx
+  outputBase: data_contract/gen_excels
+  lintImportedYaml: true
+  failMainOnError: true
+```
+
+The generated Excel uses the official ODCS Excel template structure: one `Schema <table_name>` sheet per table/source object, plus central `Quality`, `Fundamentals`, `Servers`, `Team`, and support sheets.
+
+The generated YAML under `data_contract/generated/` remains the executable source of truth for ingestion validation. The Excel-imported YAML under `data_contract/gen_excels/` is a round-trip compatibility artifact used to prove that the Excel workbook can be imported and linted by the Data Contract CLI. Some library quality metrics are represented as SQL checks in the Excel workbook to stay compatible with the current CLI Excel importer.
+
+The same commands can be run manually:
+
+```powershell
+datacontract import excel --source data_contract\gen_excels\enhanced\raw\prd_01\enhanced_prd_01_raw_ODCS.xlsx --output data_contract\gen_excels\enhanced\raw\prd_01\enhanced_prd_01_raw_imported.yaml
+datacontract lint data_contract\gen_excels\enhanced\raw\prd_01\enhanced_prd_01_raw_imported.yaml
+```
+
+Install the CLI if the command is unavailable:
+
+```powershell
+pip install datacontract-cli
+```
 
 If an input was not generated in the current run, the contract is skipped and `main.py` prints the reason. For example, if claims product generation is disabled, claims contracts are skipped.
 

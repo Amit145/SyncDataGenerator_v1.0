@@ -1,0 +1,114 @@
+purpose: "Validate policy PRD2 SAP raw source files before ingestion."
+limitations: "Generated from synthetic policy SAP source data; SAP PRD2 only supplies policy, coverage, and policy-coverage extracts."
+usage: "Used as an ingestion gate and DQ metadata source for policy PRD2 raw."
+
+frequency: 1
+frequencyUnit: d
+latency: 24
+latencyUnit: h
+retention: 7
+retentionUnit: y
+
+teamName: "Data Modelling & Engineering CoE"
+firstLevelApprovers: "Policy Data Owner"
+secondLevelApprovers: "Data Governance"
+supportChannel: "coe-data-contracts"
+supportUrl: "mailto:coe-data-contracts@example-internal"
+
+tables:
+  sap_policy.csv:
+    primaryKey: sap_policy_id
+    businessKey: sap_policy_id
+    businessName: Policy SAP Policy
+    grain: "One row per sap_policy_id per batch."
+    columns:
+      batch_ref:
+        required: true
+      pull_ts:
+        required: true
+      origin_sys:
+        required: true
+        allowedValues:
+          - SAP
+      sap_policy_id:
+        required: true
+      crm_policy_ref:
+        required: true
+      policy_number:
+        required: true
+      policy_start_date:
+        required: true
+      policy_end_date:
+        required: true
+      gross_written_premium:
+        minValue: 0
+      gross_earned_premium:
+        minValue: 0
+      current_renewal_premium:
+        minValue: 0
+      next_renewal_premium:
+        minValue: 0
+      auto_renew_flag:
+        allowedValues:
+          - Y
+          - N
+      fraud_flag:
+        allowedValues:
+          - Y
+          - N
+    tableRules:
+      - ruleId: dq_sap_policy_dates_valid
+        ruleName: SAP policy start date before end date
+        type: sql
+        query: >
+          SELECT COUNT(*) AS invalid_dates
+          FROM {full_table_name}
+          WHERE to_date(policy_start_date) > to_date(policy_end_date)
+            AND {target_watermak_exp}
+        mustBe:
+          invalid_dates: 0
+        dimension: accuracy
+        severity: error
+        description: "SAP policy start date must not be after SAP policy end date."
+        referencedColumns:
+          - policy_start_date
+          - policy_end_date
+        failureAction: reject
+  sap_coverage.csv:
+    primaryKey: sap_coverage_id
+    businessKey: sap_coverage_id
+    businessName: Policy SAP Coverage
+    grain: "One row per sap_coverage_id per batch."
+    columns:
+      sap_coverage_id:
+        required: true
+      crm_coverage_ref:
+        required: true
+      limit_amount:
+        minValue: 0
+      deductible_amount:
+        minValue: 0
+  sap_policy_coverage.csv:
+    primaryKey: sap_policy_coverage_id
+    businessKey: sap_policy_coverage_id
+    businessName: Policy SAP Policy Coverage
+    grain: "One row per sap_policy_coverage_id per batch."
+    columns:
+      sap_policy_coverage_id:
+        required: true
+      crm_policy_coverage_ref:
+        required: true
+      sap_policy_id:
+        required: true
+      sap_coverage_id:
+        required: true
+      sum_insured_amount:
+        minValue: 0
+      gross_annual_premium:
+        minValue: 0
+      deductible_amount:
+        minValue: 0
+      automatic_indexation_flag:
+        allowedValues:
+          - Y
+          - N

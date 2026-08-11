@@ -3,6 +3,12 @@ failMainOnContractError: true
 checkKeys: true
 generatedBase: data_contract/generated
 reportsBase: data_contract/reports
+excelRoundTrip:
+  enabled: true
+  template: dc_nb/odcs-template.xlsx
+  outputBase: data_contract/gen_excels
+  lintImportedYaml: true
+  failMainOnError: true
 
 contracts:
   - name: claims_raw_prd01
@@ -30,6 +36,32 @@ contracts:
     config: data_contract/tools/contract_config_example.yaml
     output: data_contract/generated/claims/raw/prd_02/claims_prd_02_raw_ODCS.yaml
     report: data_contract/reports/claims_prd_02_contract_validation.json
+
+  - name: policy_raw_prd01
+    enabled: true
+    inputFrom: policy_raw_outputs.prd_01
+    domain: policy
+    layer: raw
+    sourceFeed: prd_01
+    sourceSystem: Policy CRM source-1
+    contractId: policy-prd-01-raw-0001
+    contractName: Policy PRD 01 Raw Source Feed
+    config: data_contract/tools/policy_prd01_contract_config.yaml
+    output: data_contract/generated/policy/raw/prd_01/policy_prd_01_raw_ODCS.yaml
+    report: data_contract/reports/policy_prd_01_contract_validation.json
+
+  - name: policy_raw_prd02
+    enabled: true
+    inputFrom: policy_raw_outputs.prd_02
+    domain: policy
+    layer: raw
+    sourceFeed: prd_02
+    sourceSystem: Policy SAP source-2
+    contractId: policy-prd-02-raw-0001
+    contractName: Policy PRD 02 Raw Source Feed
+    config: data_contract/tools/policy_prd02_contract_config.yaml
+    output: data_contract/generated/policy/raw/prd_02/policy_prd_02_raw_ODCS.yaml
+    report: data_contract/reports/policy_prd_02_contract_validation.json
 
   - name: enhanced_raw_prd01
     enabled: true
