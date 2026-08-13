@@ -387,45 +387,85 @@ def infer_key(df: pd.DataFrame, file_name: str, table_cfg: dict[str, Any]) -> li
     return [unique[0]] if unique else []
 
 
-def quality_rule(rule_id: str, key: str) -> dict[str, Any]:
-    concat_expr = f"concat({key})"
-    if rule_id == "rule_0001":
-        return {
-            "type": "sql",
-            "query": (
-                "select count(*) as null_count from {full_table_name} a "
-                f"where {concat_expr} is null and {{target_watermak_exp}}"
-            ),
-            "mustBe": {"null_count": 0},
-            "dimension": "completeness",
-            "severity": "error",
-            "description": f"rule_0001: BK Check - {key} business key must not be null.",
-        }
-    if rule_id == "rule_0003":
-        return {
-            "type": "sql",
-            "query": (
-                f"SELECT SUM(CASE WHEN {concat_expr} is null THEN 1 ELSE 0 END) AS pk_nulls, "
-                f"COUNT(1) - COUNT(DISTINCT {concat_expr}) AS pk_duplicates "
-                "FROM {full_table_name} a WHERE {target_watermak_exp}"
-            ),
-            "mustBe": {"pk_nulls": 0, "pk_duplicates": 0},
-            "dimension": "uniqueness",
-            "severity": "error",
-            "description": f"rule_0003: Not Null Check - {key} primary key must be populated and unique.",
-        }
+def _referenced_columns_from_key(key: str) -> list[str]:
+    return [part.strip() for part in str(key).split(",") if part.strip()]
+
+
+def _library_quality_rule(
+    rule_id: str,
+    rule_name: str,
+    metric: str,
+    columns: list[str],
+    dimension: str,
+    description: str,
+) -> dict[str, Any]:
     return {
-        "type": "sql",
-        "query": (
-            f"SELECT SUM(CASE WHEN {concat_expr} is null THEN 1 ELSE 0 END) AS bk_nulls, "
-            f"COUNT(1) - COUNT(DISTINCT {concat_expr}) AS bk_duplicates "
-            "FROM {full_table_name} a WHERE {target_watermak_exp}"
-        ),
-        "mustBe": {"bk_nulls": 0, "bk_duplicates": 0},
-        "dimension": "uniqueness",
+        "id": stable_id(f"{rule_id}_{metric}_{'_'.join(columns)}"),
+        "name": f"{rule_id} - {rule_name}",
+        "type": "library",
+        "metric": metric,
+        "mustBe": 0,
+        "dimension": dimension,
         "severity": "error",
-        "description": f"rule_0007: BK Not Null Check - {key} business key must be populated and unique.",
+        "description": description,
+        "customProperties": [
+            {"property": "ruleId", "value": rule_id},
+            {"property": "ruleName", "value": rule_name},
+            {"property": "referencedColumns", "value": columns},
+        ],
     }
+
+
+def quality_rules(rule_id: str, key: str) -> list[dict[str, Any]]:
+    columns = _referenced_columns_from_key(key)
+    if rule_id == "rule_0001":
+        return [
+            _library_quality_rule(
+                rule_id="rule_0001",
+                rule_name="BK Check",
+                metric="nullValues",
+                columns=columns,
+                dimension="completeness",
+                description=f"rule_0001: BK Check - {key} business key must not be null.",
+            )
+        ]
+    if rule_id == "rule_0003":
+        return [
+            _library_quality_rule(
+                rule_id="rule_0003",
+                rule_name="Not Null Check",
+                metric="nullValues",
+                columns=columns,
+                dimension="completeness",
+                description=f"rule_0003: Not Null Check - {key} primary key must be populated.",
+            ),
+            _library_quality_rule(
+                rule_id="rule_0003",
+                rule_name="Not Null Check",
+                metric="duplicateValues",
+                columns=columns,
+                dimension="uniqueness",
+                description=f"rule_0003: Not Null Check - {key} primary key must be unique.",
+            ),
+        ]
+    return [
+        _library_quality_rule(
+            rule_id="rule_0007",
+            rule_name="BK Not Null Check",
+            metric="nullValues",
+            columns=columns,
+            dimension="completeness",
+            description=f"rule_0007: BK Not Null Check - {key} business key must be populated.",
+        ),
+        _library_quality_rule(
+            rule_id="rule_0007",
+            rule_name="BK Not Null Check",
+            metric="duplicateValues",
+            columns=columns,
+            dimension="uniqueness",
+            description=f"rule_0007: BK Not Null Check - {key} business key must be unique.",
+        ),
+    ]
 
 
 QUALITY_DIRECT_FIELDS = {
@@ -453,22 +493,53 @@ QUALITY_DIRECT_FIELDS = {
     "unit",
     "method",
 }
+QUALITY_OPERATOR_FIELDS = {
+    "mustBe",
+    "mustNotBe",
+    "mustBeGreaterThan",
+    "mustBeGreaterOrEqualTo",
+    "mustBeLessThan",
+    "mustBeLessOrEqualTo",
+    "mustBeBetween",
+    "mustNotBeBetween",
+}
 
 
 def normalize_quality_rule(rule: dict[str, Any], default_column: str | None = None) -> dict[str, Any]:
     """Convert config rule syntax into an ODCS-compatible quality rule."""
     normalized: dict[str, Any] = {}
     custom_properties: list[dict[str, Any]] = []
+    rule_id: str | None = None
+    rule_name: str | None = None
 
     for key, value in rule.items():
         if key == "ruleId":
-            normalized["id"] = stable_id(str(value))
+            rule_id = str(value)
+            normalized["id"] = stable_id(rule_id)
+            custom_properties.append({"property": "ruleId", "value": rule_id})
         elif key == "ruleName":
-            normalized["name"] = str(value)
+            rule_name = str(value)
+            normalized["name"] = rule_name
+        elif key == "query":
+            custom_properties.append({"property": "executionLogic", "value": "framework_resolved"})
         elif key in QUALITY_DIRECT_FIELDS:
             normalized[key] = value
         else:
             custom_properties.append({"property": key, "value": value})
+
+    if normalized.get("type") == "sql" or "query" in rule:
+        normalized["type"] = "custom"
+        normalized["engine"] = "business_rule_catalog"
+        normalized["implementation"] = rule_id or rule_name or normalized.get("id") or normalized.get("name")
+        normalized.pop("query", None)
+        for operator in QUALITY_OPERATOR_FIELDS:
+            if operator in normalized:
+                custom_properties.append(
+                    {
+                        "property": "expectedOutcome",
+                        "value": {"operator": operator, "value": normalized.pop(operator)},
+                    }
+                )
 
     if default_column:
         existing_refs = next(
@@ -502,15 +573,13 @@ def min_value_quality_rule(column: str, value: int | float) -> dict[str, Any]:
     return {
         "id": stable_id(f"{column}_min_value"),
         "name": f"{column} minimum value",
-        "type": "sql",
-        "query": (
-            f"SELECT COUNT(*) AS invalid_values FROM {{full_table_name}} "
-            f"WHERE {column} < {value} AND {{target_watermak_exp}}"
-        ),
-        "mustBe": {"invalid_values": 0},
+        "type": "library",
+        "metric": "invalidValues",
+        "mustBe": 0,
         "dimension": "accuracy",
         "severity": "error",
         "description": f"{column} must be greater than or equal to {value}.",
+        "arguments": {"minValue": value},
         "customProperties": [{"property": "referencedColumns", "value": [column]}],
     }
 
@@ -519,15 +588,13 @@ def max_value_quality_rule(column: str, value: int | float) -> dict[str, Any]:
     return {
         "id": stable_id(f"{column}_max_value"),
         "name": f"{column} maximum value",
-        "type": "sql",
-        "query": (
-            f"SELECT COUNT(*) AS invalid_values FROM {{full_table_name}} "
-            f"WHERE {column} > {value} AND {{target_watermak_exp}}"
-        ),
-        "mustBe": {"invalid_values": 0},
+        "type": "library",
+        "metric": "invalidValues",
+        "mustBe": 0,
         "dimension": "accuracy",
         "severity": "error",
         "description": f"{column} must be less than or equal to {value}.",
+        "arguments": {"maxValue": value},
         "customProperties": [{"property": "referencedColumns", "value": [column]}],
     }
 
@@ -591,22 +658,22 @@ def rule_catalog(rule_rows: list[dict[str, str]], entities: list[dict[str, Any]]
             "severity": "error",
             "failureAction": "reject",
             "expectedOutcome": {"null_count": 0},
-            "queryTemplate": "select count(*) as null_count from {full_table_name} a where ({table_bk}) is null and {target_watermak_exp}",
             "queryDesc": "Business key should not be null.",
+            "executionLogic": "library:nullValues",
         },
         "rule_0003": {
             "severity": "error",
             "failureAction": "reject",
             "expectedOutcome": {"pk_nulls": 0, "pk_duplicates": 0},
-            "queryTemplate": "SELECT SUM(CASE WHEN concat({table_pk}) is null THEN 1 ELSE 0 END) AS pk_nulls, COUNT(1) - COUNT(DISTINCT {table_pk}) AS pk_duplicates FROM {full_table_name} a WHERE {target_watermak_exp}",
             "queryDesc": "Primary key should be populated and unique.",
+            "executionLogic": "library:nullValues+duplicateValues",
         },
         "rule_0007": {
             "severity": "error",
             "failureAction": "reject",
             "expectedOutcome": {"bk_nulls": 0, "bk_duplicates": 0},
-            "queryTemplate": "SELECT SUM(CASE WHEN concat({table_bk}) is null THEN 1 ELSE 0 END) AS bk_nulls, COUNT(1) - COUNT(DISTINCT {table_bk}) AS bk_duplicates FROM {full_table_name} a WHERE {target_watermak_exp}",
             "queryDesc": "Business key should be populated and unique.",
+            "executionLogic": "library:nullValues+duplicateValues",
         },
     }
 
@@ -632,7 +699,7 @@ def rule_catalog(rule_rows: list[dict[str, str]], entities: list[dict[str, Any]]
                     **common,
                     "reasonNotActive": "Requires a source-to-target comparison; apply during reconciliation, not standalone raw source arrival.",
                     "expectedOutcome": {"missing_keys": 0},
-                    "queryTemplate": row.get("query_text", "").strip(),
+                    "executionLogic": "framework_resolved",
                 }
             )
         else:
@@ -640,7 +707,7 @@ def rule_catalog(rule_rows: list[dict[str, str]], entities: list[dict[str, Any]]
                 {
                     **common,
                     "reasonNotActive": "Requires SCD2 effective dating columns that are not expected in raw source files.",
-                    "queryTemplate": row.get("query_text", "").strip(),
+                    "executionLogic": "framework_resolved",
                 }
             )
 
@@ -683,7 +750,9 @@ def build_contract(args: argparse.Namespace, config: dict[str, Any]) -> dict[str
         if key_cols:
             key_expr = ", ".join(key_cols)
             concat_key_expr = ", ".join(key_cols)
-            quality.extend([quality_rule("rule_0003", concat_key_expr), quality_rule("rule_0001", key_expr), quality_rule("rule_0007", concat_key_expr)])
+            quality.extend(quality_rules("rule_0003", concat_key_expr))
+            quality.extend(quality_rules("rule_0001", key_expr))
+            quality.extend(quality_rules("rule_0007", concat_key_expr))
             entity_config = {
                 "entity": table_name,
                 "sourceFile": path.name,
@@ -748,15 +817,11 @@ def build_contract(args: argparse.Namespace, config: dict[str, Any]) -> dict[str
                 "entityField": "name",
                 "batchParameter": "batch_ref",
                 "defaultTargetWatermakExp": args.batch_filter,
-                "placeholderStyle": "python_format",
-                "placeholders": {
-                    "full_table_name": "Databricks temp view or fully qualified table name for the current source object",
-                    "target_watermak_exp": "Batch filter expression used by existing ETL DQ SQL templates",
-                    "table_pk": "Primary key column list for the current source object",
-                    "table_bk": "Business key column list for the current source object",
-                    "table_bk_join": "Join condition between aliases a and b for the business key",
-                    "source_table": "Source table/view used for reconciliation checks",
-                    "source_pk": "Source primary key used for reconciliation checks",
+                "executionStyle": "metric_and_rule_catalog",
+                "supportedMetrics": ["rowCount", "nullValues", "missingValues", "invalidValues", "duplicateValues"],
+                "ruleResolution": {
+                    "standardChecks": "ODCS library metrics are executed by the validation notebook/framework.",
+                    "customChecks": "business_rule_catalog implementations are resolved by the validation notebook/framework.",
                 },
                 "entities": entities,
             },

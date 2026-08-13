@@ -1,5 +1,5 @@
 purpose: "Validate policy PRD2 SAP raw source files before ingestion."
-limitations: "Generated from synthetic policy SAP source data; SAP PRD2 only supplies policy, coverage, and policy-coverage extracts."
+limitations: "Generated from the latest policy input workbook. SAP PRD2 supplies policy, coverage, and policy coverage only."
 usage: "Used as an ingestion gate and DQ metadata source for policy PRD2 raw."
 
 frequency: 1
@@ -16,99 +16,63 @@ supportChannel: "coe-data-contracts"
 supportUrl: "mailto:coe-data-contracts@example-internal"
 
 tables:
-  sap_policy.csv:
-    primaryKey: sap_policy_id
-    businessKey: sap_policy_id
-    businessName: Policy SAP Policy
-    grain: "One row per sap_policy_id per batch."
+  policy.csv:
+    primaryKey: policy_identifier
+    businessKey: policy_identifier
     columns:
-      batch_ref:
-        required: true
-      pull_ts:
-        required: true
-      origin_sys:
-        required: true
-        allowedValues:
-          - SAP
-      sap_policy_id:
-        required: true
-      crm_policy_ref:
-        required: true
       policy_number:
         required: true
       policy_start_date:
         required: true
       policy_end_date:
         required: true
-      gross_written_premium:
-        minValue: 0
-      gross_earned_premium:
-        minValue: 0
-      current_renewal_premium:
-        minValue: 0
-      next_renewal_premium:
-        minValue: 0
-      auto_renew_flag:
+      product_identifier:
+        required: true
+      is_fraud:
         allowedValues:
           - Y
           - N
-      fraud_flag:
+      is_auto_renew_enabled:
         allowedValues:
           - Y
           - N
-    tableRules:
-      - ruleId: dq_sap_policy_dates_valid
-        ruleName: SAP policy start date before end date
-        type: sql
-        query: >
-          SELECT COUNT(*) AS invalid_dates
-          FROM {full_table_name}
-          WHERE to_date(policy_start_date) > to_date(policy_end_date)
-            AND {target_watermak_exp}
-        mustBe:
-          invalid_dates: 0
-        dimension: accuracy
-        severity: error
-        description: "SAP policy start date must not be after SAP policy end date."
-        referencedColumns:
-          - policy_start_date
-          - policy_end_date
-        failureAction: reject
-  sap_coverage.csv:
-    primaryKey: sap_coverage_id
-    businessKey: sap_coverage_id
-    businessName: Policy SAP Coverage
-    grain: "One row per sap_coverage_id per batch."
+      is_policy_renewal:
+        allowedValues:
+          - Y
+          - N
+      policy_sum_insured:
+        minValue: 0
+      policy_base_premium:
+        minValue: 0
+      policy_retention_limit:
+        minValue: 0
+      limit_for_indemnification:
+        minValue: 0
+
+  coverage.csv:
+    primaryKey: coverage_identifier
+    businessKey: coverage_identifier
     columns:
-      sap_coverage_id:
+      coverage_code:
         required: true
-      crm_coverage_ref:
+      maximum_deductible:
+        minValue: 0
+      default_limit:
+        minValue: 0
+
+  policy_coverage.csv:
+    primaryKey: policy_coverage_identifier
+    businessKey: policy_coverage_identifier
+    columns:
+      policy_identifier:
         required: true
-      limit_amount:
+      coverage_identifier:
+        required: true
+      coverage_amount:
         minValue: 0
       deductible_amount:
         minValue: 0
-  sap_policy_coverage.csv:
-    primaryKey: sap_policy_coverage_id
-    businessKey: sap_policy_coverage_id
-    businessName: Policy SAP Policy Coverage
-    grain: "One row per sap_policy_coverage_id per batch."
-    columns:
-      sap_policy_coverage_id:
-        required: true
-      crm_policy_coverage_ref:
-        required: true
-      sap_policy_id:
-        required: true
-      sap_coverage_id:
-        required: true
-      sum_insured_amount:
+      coverage_limit_amount:
         minValue: 0
-      gross_annual_premium:
+      gross_premium:
         minValue: 0
-      deductible_amount:
-        minValue: 0
-      automatic_indexation_flag:
-        allowedValues:
-          - Y
-          - N

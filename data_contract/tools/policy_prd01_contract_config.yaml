@@ -1,5 +1,5 @@
 purpose: "Validate policy PRD1 CRM raw source files before ingestion."
-limitations: "Generated from synthetic policy CRM source data; review business descriptions before production approval."
+limitations: "Generated from the latest policy input workbook. Columns are lowercase snake_case raw attributes."
 usage: "Used as an ingestion gate and DQ metadata source for policy PRD1 raw."
 
 frequency: 1
@@ -16,69 +16,115 @@ supportChannel: "coe-data-contracts"
 supportUrl: "mailto:coe-data-contracts@example-internal"
 
 tables:
-  party_master.csv:
-    primaryKey: party_ref
-    businessKey: party_ref
-    businessName: Policy CRM Party Master
-    grain: "One row per party_ref per batch."
+  billing.csv:
+    primaryKey: billing_identifier
+    businessKey: billing_identifier
     columns:
-      batch_ref:
+      policy_identifier:
         required: true
-      pull_ts:
-        required: true
-      origin_sys:
-        required: true
-        allowedValues:
-          - CRM
-      party_ref:
-        required: true
-      party_kind:
-        required: true
-  contact_point.csv:
-    primaryKey: contact_ref
-    businessKey: contact_ref
-  address_book.csv:
-    primaryKey: address_ref
-    businessKey: address_ref
-  customer_portfolio.csv:
-    primaryKey: customer_ref
-    businessKey: customer_ref
-  account_book.csv:
-    primaryKey: account_ref
-    businessKey: account_ref
-  product_catalog.csv:
-    primaryKey: product_ref
-    businessKey: product_ref
-  quote_register.csv:
-    primaryKey: quote_ref
-    businessKey: quote_ref
-  policy_register.csv:
-    primaryKey: policy_ref
-    businessKey: policy_ref
-    businessName: Policy CRM Register
-    grain: "One row per policy_ref per batch."
+      annual_premium_amount:
+        minValue: 0
+      billed_premium_amount:
+        minValue: 0
+      net_premium_amount:
+        minValue: 0
+      outstanding_amount:
+        minValue: 0
+
+  claim.csv:
+    primaryKey: claim_identifier
+    businessKey: claim_identifier
     columns:
-      origin_sys:
+      policy_identifier:
         required: true
-        allowedValues:
-          - CRM
-      policy_ref:
+      loss_event_identifier:
         required: true
-      policy_no:
-        required: true
-      policy_start_dt:
-        required: true
-      policy_end_dt:
-        required: true
-      renewal_premium_curr:
+      claim_amt:
         minValue: 0
-      renewal_premium_next:
+      claims_paid:
         minValue: 0
-      gross_amt:
+      total_incurred:
         minValue: 0
-      net_amt:
+
+  coverage.csv:
+    primaryKey: coverage_identifier
+    businessKey: coverage_identifier
+    columns:
+      coverage_code:
+        required: true
+      maximum_deductible:
         minValue: 0
-      fraud_ind:
+      default_limit:
+        minValue: 0
+
+  event_type.csv:
+    primaryKey: event_type_identifier
+    businessKey: event_type_code
+
+  geography.csv:
+    primaryKey: geography_identifier
+    businessKey: geography_identifier
+    columns:
+      city:
+        required: true
+      country:
+        required: true
+      state:
+        required: true
+
+  home.csv:
+    primaryKey: insured_object_identifier
+    businessKey: insured_object_identifier
+    columns:
+      geography_identifier:
+        required: true
+      policy_identifier:
+        required: true
+      insured_value:
+        minValue: 0
+
+  loss_event.csv:
+    primaryKey: loss_event_identifier
+    businessKey: loss_event_identifier
+    columns:
+      insured_object_identifier:
+        required: true
+      geography_identifier:
+        required: true
+
+  motor.csv:
+    primaryKey: insured_object_identifier
+    businessKey: insured_object_identifier
+    columns:
+      geography_identifier:
+        required: true
+      policy_identifier:
+        required: true
+      insured_value:
+        minValue: 0
+
+  person.csv:
+    primaryKey: person_identifier
+    businessKey: person_identifier
+    columns:
+      geography_identifier:
+        required: true
+      person_type:
+        required: true
+
+  policy.csv:
+    primaryKey: policy_identifier
+    businessKey: policy_identifier
+    columns:
+      policy_number:
+        required: true
+      policy_start_date:
+        required: true
+      policy_end_date:
+        required: true
+      product_identifier:
+        required: true
+      is_fraud:
         allowedValues:
           - Y
           - N
@@ -86,11 +132,7 @@ tables:
         allowedValues:
           - Y
           - N
-      is_direct_debit_cancellation:
-        allowedValues:
-          - Y
-          - N
-      is_installment_default:
+      is_policy_renewal:
         allowedValues:
           - Y
           - N
@@ -98,54 +140,96 @@ tables:
         allowedValues:
           - Y
           - N
-    tableRules:
-      - ruleId: dq_policy_dates_valid
-        ruleName: Policy start date before end date
-        type: sql
-        query: >
-          SELECT COUNT(*) AS invalid_dates
-          FROM {full_table_name}
-          WHERE to_date(policy_start_dt) > to_date(policy_end_dt)
-            AND {target_watermak_exp}
-        mustBe:
-          invalid_dates: 0
-        dimension: accuracy
-        severity: error
-        description: "Policy start date must not be after policy end date."
-        referencedColumns:
-          - policy_start_dt
-          - policy_end_dt
-        failureAction: reject
-  property_asset.csv:
-    primaryKey: property_ref
-    businessKey: property_ref
-  vehicle_asset.csv:
-    primaryKey: vehicle_ref
-    businessKey: vehicle_ref
-  coverage_catalog.csv:
-    primaryKey: coverage_ref
-    businessKey: coverage_ref
+      policy_sum_insured:
+        minValue: 0
+      policy_base_premium:
+        minValue: 0
+      policy_retention_limit:
+        minValue: 0
+      limit_for_indemnification:
+        minValue: 0
+
   policy_coverage.csv:
-    primaryKey: policy_coverage_ref
-    businessKey: policy_coverage_ref
+    primaryKey: policy_coverage_identifier
+    businessKey: policy_coverage_identifier
     columns:
-      sum_insured_amt:
+      policy_identifier:
+        required: true
+      coverage_identifier:
+        required: true
+      coverage_amount:
         minValue: 0
-      gross_annual_premium_amt:
+      deductible_amount:
         minValue: 0
-      deductible_amt:
+      coverage_limit_amount:
         minValue: 0
-      automatic_indexation_ind:
+      gross_premium:
+        minValue: 0
+
+  policy_event.csv:
+    primaryKey: policy_event_identifier
+    businessKey: policy_event_identifier
+    columns:
+      policy_identifier:
+        required: true
+      event_type_identifier:
+        required: true
+      premium_impact_amount:
+        minValue: 0
+
+  policy_participant.csv:
+    primaryKey: policy_participant_identifier
+    businessKey: policy_participant_identifier
+    columns:
+      policy_identifier:
+        required: true
+      person_identifier:
+        required: true
+      role_identifier:
+        required: true
+      primary_indicator:
         allowedValues:
           - Y
           - N
-  billing_register.csv:
-    primaryKey: billing_ref
-    businessKey: billing_ref
+
+  product.csv:
+    primaryKey: product_identifier
+    businessKey: product_identifier
+
+  quote.csv:
+    primaryKey: quote_identifier
+    businessKey: quote_identifier
     columns:
-      annual_premium_amt:
+      product_identifier:
+        required: true
+      person_identifier:
+        required: true
+      quoted_gross_premium_amount:
         minValue: 0
-      billed_premium_amt:
+      quoted_net_premium_amount:
         minValue: 0
-      paid_premium_amt:
+      quote_premium:
         minValue: 0
+
+  risk_assessment.csv:
+    primaryKey: risk_assessment_identifier
+    businessKey: risk_assessment_identifier
+    columns:
+      insured_object_identifier:
+        required: true
+      risk_score:
+        minValue: 0
+      exposure_amount:
+        minValue: 0
+      claim_amount:
+        minValue: 0
+      total_incurred_amount:
+        minValue: 0
+
+  role.csv:
+    primaryKey: role_identifier
+    businessKey: role_code
+
+  sales_channel.csv:
+    primaryKey: sales_channel_identifier
+    businessKey: sales_channel_identifier

@@ -284,15 +284,27 @@ excelRoundTrip:
   failMainOnError: true
 ```
 
-The generated Excel uses the official ODCS Excel template structure: one `Schema <table_name>` sheet per table/source object, plus central `Quality`, `Fundamentals`, `Servers`, `Team`, and support sheets.
+The generated Excel uses the official ODCS Excel template structure: one `Schema <table_name>` sheet per table/source object, plus central `Quality`, `Fundamentals`, `Servers`, `Team`, and support sheets. The `Quality` sheet is customer-facing: true table-level rules, such as row count greater than zero, have `Schema` populated and `Property` blank. Key and column validations have both `Schema` and `Property` populated, for example `Schema=account_book` and `Property=account_ref`. Full SQL is not written to the Excel. Instead, `Implementation (Custom)` carries rule-catalog labels such as `rule_0007 - BK Not Null Check`, `rule_0003 - Not Null Check`, `rule_0001 - BK Check`, and `rule_0002 - Missing Keys Check`.
 
-The generated YAML under `data_contract/generated/` remains the executable source of truth for ingestion validation. The Excel-imported YAML under `data_contract/gen_excels/` is a round-trip compatibility artifact used to prove that the Excel workbook can be imported and linted by the Data Contract CLI. Some library quality metrics are represented as SQL checks in the Excel workbook to stay compatible with the current CLI Excel importer.
+The generated YAML under `data_contract/generated/` remains the executable source of truth for ingestion validation, but it does not expose SQL. Standard checks use ODCS library metrics such as `rowCount`, `nullValues`, `duplicateValues`, and `invalidValues`. Complex framework checks use custom rule-catalog references. The Excel-imported YAML under `data_contract/gen_excels/` is a round-trip compatibility artifact used to prove that the Excel workbook can be imported and linted by the Data Contract CLI.
 
 The same commands can be run manually:
 
 ```powershell
 datacontract import excel --source data_contract\gen_excels\enhanced\raw\prd_01\enhanced_prd_01_raw_ODCS.xlsx --output data_contract\gen_excels\enhanced\raw\prd_01\enhanced_prd_01_raw_imported.yaml
 datacontract lint data_contract\gen_excels\enhanced\raw\prd_01\enhanced_prd_01_raw_imported.yaml
+```
+
+Or use the repo wrapper that performs both steps and returns a failing exit code when import or lint fails:
+
+```powershell
+python data_contract\tools\import_excel_contract.py --source data_contract\gen_excels\enhanced\raw\prd_01\enhanced_prd_01_raw_ODCS.xlsx
+```
+
+Optional explicit output:
+
+```powershell
+python data_contract\tools\import_excel_contract.py --source data_contract\gen_excels\enhanced\raw\prd_01\enhanced_prd_01_raw_ODCS.xlsx --output data_contract\gen_excels\enhanced\raw\prd_01\enhanced_prd_01_raw_imported.yaml
 ```
 
 Install the CLI if the command is unavailable:
@@ -348,14 +360,9 @@ tables:
     tableRules:
       - ruleId: dq_claim_register_amounts_non_negative
         ruleName: Claim amounts non-negative
-        type: sql
-        query: >
-          SELECT COUNT(*) AS invalid_amounts
-          FROM {full_table_name}
-          WHERE claim_requested_amount < 0
-            AND {target_watermak_exp}
-        mustBe:
-          invalid_amounts: 0
+        type: custom
+        engine: business_rule_catalog
+        implementation: dq_claim_register_amounts_non_negative
         dimension: accuracy
         severity: error
         description: "Claim requested amount must not be negative."
@@ -713,7 +720,7 @@ The notebook should:
 - check required fields are not null
 - check primary/business keys are not null
 - check primary/business keys are unique
-- run active `schema[].quality` SQL checks
+- run active `schema[].quality` library metric and custom catalog checks
 - skip inactive rules unless the required context is provided
 - write validation results to a Delta table
 - fail the job when critical/error rules fail and `run_mode = fail_fast`
@@ -782,26 +789,28 @@ The notebook may need `PyYAML` on the cluster:
 dbutils.library.restartPython()
 ```
 
-For each contract object, the notebook can read CSV data and register a temp view:
+For each contract object, the notebook can read CSV data and validate ODCS library metrics:
 
 ```python
 df = spark.read.option("header", True).csv(file_path)
-df.createOrReplaceTempView(entity_name)
 ```
 
-Then SQL quality rules can replace:
+The contract should not expose SQL. Standard validations are resolved from ODCS metrics:
 
 ```text
-{full_table_name}
-{table_pk}
-{table_bk}
-{target_watermak_exp}
+rowCount
+nullValues
+duplicateValues
+invalidValues
 ```
 
-and execute with:
+Custom rules are referenced by catalog identifiers such as:
 
-```python
-spark.sql(rendered_query)
+```text
+rule_0007 - BK Not Null Check
+rule_0003 - Not Null Check
+rule_0001 - BK Check
+rule_0002 - Missing Keys Check
 ```
 
 ## PGSQL Ingestion Validation

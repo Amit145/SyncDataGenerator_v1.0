@@ -126,7 +126,9 @@ datacontract import excel --source <xlsx> --output <yaml>
 
 Excel sheet names have a 31-character limit. For long table names, the sheet title may be shortened, but the full ODCS schema name must remain in cell `B5`.
 
-The current Data Contract CLI Excel importer writes library quality checks as `rule`, while ODCS lint expects `metric`. To keep Excel import/lint passing, `export_odcs_excel.py` converts library checks into equivalent SQL checks in the Excel workbook. The source-of-truth generated ODCS YAML still keeps the original library quality metrics.
+The customer-facing Excel should keep the official ODCS sheet structure. Do not add separate table/column validation sheets. Use the official `Quality` sheet to show both levels: true table-level checks, such as row count greater than zero, have `Schema` populated and `Property` blank. Key/column validations, including PK/BK checks, must have both `Schema` and `Property` populated.
+
+Do not expose executable SQL in generated contracts or generated Excel. Customers may not know SQL. Source-of-truth YAML should use ODCS library metrics such as `rowCount`, `nullValues`, `duplicateValues`, and `invalidValues` for standard checks. Complex framework checks should use `type: custom`, `engine: business_rule_catalog`, and `implementation` values such as `rule_0007`, `rule_0003`, `rule_0001`, and `rule_0002`. Notebook/framework code owns the execution logic.
 
 ## Commands
 
@@ -153,6 +155,12 @@ Manual Excel import/lint example:
 ```powershell
 datacontract import excel --source data_contract\gen_excels\enhanced\raw\prd_01\enhanced_prd_01_raw_ODCS.xlsx --output data_contract\gen_excels\enhanced\raw\prd_01\enhanced_prd_01_raw_imported.yaml
 datacontract lint data_contract\gen_excels\enhanced\raw\prd_01\enhanced_prd_01_raw_imported.yaml
+```
+
+Repo wrapper for the same ad hoc terminal check:
+
+```powershell
+python data_contract\tools\import_excel_contract.py --source data_contract\gen_excels\enhanced\raw\prd_01\enhanced_prd_01_raw_ODCS.xlsx
 ```
 
 Install the CLI if needed:

@@ -14,6 +14,12 @@ from openpyxl.workbook.defined_name import DefinedName
 
 
 DEFAULT_EXCEL_TEMPLATE = Path("dc_nb/odcs-template.xlsx")
+RULE_NAMES = {
+    "rule_0007": "BK Not Null Check",
+    "rule_0003": "Not Null Check",
+    "rule_0001": "BK Check",
+    "rule_0002": "Missing Keys Check",
+}
 
 
 def _scalar(value: Any) -> Any:
@@ -69,6 +75,66 @@ def _library_quality_query(metric: str | None, prop_name: str | None, quality: d
             )
         return f"SELECT COUNT(*) AS invalid_count FROM {{full_table_name}} WHERE {prop_name} IS NULL"
     return "SELECT COUNT(*) AS check_count FROM {full_table_name}"
+
+
+def _quality_operator(quality: dict[str, Any]) -> tuple[str | None, Any]:
+    operator_keys = [
+        "mustBe",
+        "mustNotBe",
+        "mustBeGreaterThan",
+        "mustBeGreaterOrEqualTo",
+        "mustBeLessThan",
+        "mustBeLessOrEqualTo",
+        "mustBeBetween",
+    ]
+    operator = next((key for key in operator_keys if key in quality), None)
+    return operator, quality.get(operator) if operator else None
+
+
+def _rule_no(quality: dict[str, Any]) -> str | None:
+    for key in ("id", "name", "description"):
+        value = quality.get(key)
+        if not value:
+            continue
+        match = re.search(r"\b(rule[_-]?\d+|dq_[A-Za-z0-9_]+)\b", str(value), flags=re.IGNORECASE)
+        if match:
+            return match.group(1)
+    return quality.get("id") or quality.get("name") or quality.get("metric")
+
+
+def _referenced_columns(quality: dict[str, Any], prop_name: str | None) -> str | None:
+    if prop_name:
+        return prop_name
+    for item in quality.get("customProperties") or []:
+        if item.get("property") == "referencedColumns":
+            return _join_values(item.get("value"))
+    return None
+
+
+def _query_reference(schema_name: str, prop_name: str | None, quality: dict[str, Any]) -> str:
+    rule = _rule_no(quality) or "n/a"
+    columns = _referenced_columns(quality, prop_name)
+    if columns:
+        return f"rule={rule}; column={columns}"
+    return f"rule={rule}; table={schema_name}"
+
+
+def _quality_type(quality: dict[str, Any]) -> str:
+    return quality.get("type") or ("library" if quality.get("metric") else "sql" if quality.get("query") else "custom")
+
+
+def _rule_label(quality: dict[str, Any]) -> str | None:
+    rule = _rule_no(quality)
+    name = quality.get("name") or RULE_NAMES.get(str(rule or "").lower())
+    if not name and quality.get("description"):
+        match = re.search(r"\b(rule[_-]?\d+|dq_[A-Za-z0-9_]+)\s*:\s*([^-]+)", str(quality["description"]))
+        if match:
+            name = match.group(2).strip()
+    if name and rule and str(name) != str(rule):
+        return f"{rule} - {name}"
+    if rule:
+        return str(rule)
+    return name
 
 
 def _copy_row_style(ws: Any, source_row: int, target_row: int, max_col: int) -> None:
@@ -135,6 +201,39 @@ def _clear_rows(ws: Any, start_row: int, max_col: int) -> None:
     for row in range(start_row, max(ws.max_row, start_row) + 1):
         for col in range(1, max_col + 1):
             ws.cell(row, col).value = None
+
+
+def _all_quality_rows(contract: dict[str, Any]) -> list[tuple[str, str | None, dict[str, Any]]]:
+    quality_rows: list[tuple[str, str | None, dict[str, Any]]] = []
+    for schema in contract.get("schema") or []:
+        schema_name = schema.get("name") or schema.get("id")
+        for quality in schema.get("quality") or []:
+            quality_rows.append((schema_name, _schema_quality_property(schema, quality), quality))
+        for prop in schema.get("properties") or []:
+            for quality in prop.get("quality") or []:
+                quality_rows.append((schema_name, prop.get("name") or prop.get("id"), quality))
+    return quality_rows
+
+
+def _schema_quality_property(schema: dict[str, Any], quality: dict[str, Any]) -> str | None:
+    if quality.get("metric") == "rowCount":
+        return None
+
+    for item in quality.get("customProperties") or []:
+        if item.get("property") == "referencedColumns":
+            return _join_values(item.get("value"))
+
+    description = str(quality.get("description") or "")
+    match = re.search(r"-\s+(.+?)\s+(?:primary key|business key)\b", description, flags=re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+
+    query = str(quality.get("query") or "")
+    match = re.search(r"concat\(([^)]+)\)", query, flags=re.IGNORECASE)
+    if match:
+        return ", ".join(part.strip() for part in match.group(1).split(",") if part.strip())
+
+    return None
 
 
 def _write_fundamentals(wb: Any, contract: dict[str, Any]) -> None:
@@ -248,53 +347,27 @@ def _write_schema_sheets(wb: Any, contract: dict[str, Any]) -> list[str]:
 def _write_quality(wb: Any, contract: dict[str, Any]) -> int:
     ws = wb["Quality"]
     _clear_rows(ws, 5, 13)
-    operator_keys = [
-        "mustBe",
-        "mustNotBe",
-        "mustBeGreaterThan",
-        "mustBeGreaterOrEqualTo",
-        "mustBeLessThan",
-        "mustBeLessOrEqualTo",
-        "mustBeBetween",
-    ]
-    quality_rows: list[tuple[str, str | None, dict[str, Any]]] = []
-    for schema in contract.get("schema") or []:
-        schema_name = schema.get("name") or schema.get("id")
-        for quality in schema.get("quality") or []:
-            quality_rows.append((schema_name, None, quality))
-        for prop in schema.get("properties") or []:
-            for quality in prop.get("quality") or []:
-                quality_rows.append((schema_name, prop.get("name") or prop.get("id"), quality))
+    quality_rows = _all_quality_rows(contract)
 
     for offset, (schema_name, prop_name, quality) in enumerate(quality_rows):
         row = 5 + offset
         if row > ws.max_row:
             _copy_row_style(ws, 5, row, 13)
-        operator = next((key for key in operator_keys if key in quality), None)
-        operator_value = quality.get(operator) if operator else None
-        cli_supported_operator = operator
-        cli_supported_value = operator_value
+        operator, operator_value = _quality_operator(quality)
+        excel_threshold_value = operator_value
         if isinstance(operator_value, (dict, list)) and operator != "mustBeBetween":
-            cli_supported_value = _first_numeric_value(operator_value)
-        quality_type = quality.get("type") or (
-            "library" if quality.get("metric") else "sql" if quality.get("query") else "custom"
-        )
-        metric = quality.get("metric")
-        query = quality.get("query")
-        if quality_type == "library":
-            quality_type = "sql"
-            metric = None
-            query = _library_quality_query(quality.get("metric"), prop_name, quality)
+            excel_threshold_value = _first_numeric_value(operator_value)
+        rule_label = _rule_label(quality)
         ws.cell(row, 1).value = schema_name
         ws.cell(row, 2).value = prop_name
-        ws.cell(row, 3).value = quality_type
+        ws.cell(row, 3).value = "custom"
         ws.cell(row, 4).value = quality.get("description")
-        ws.cell(row, 5).value = metric
-        ws.cell(row, 6).value = query
-        ws.cell(row, 7).value = cli_supported_operator
-        ws.cell(row, 8).value = _scalar(cli_supported_value) if cli_supported_operator else None
-        ws.cell(row, 9).value = quality.get("engine") or quality.get("qualityEngine")
-        ws.cell(row, 10).value = _scalar(quality.get("implementation"))
+        ws.cell(row, 5).value = None
+        ws.cell(row, 6).value = None
+        ws.cell(row, 7).value = operator
+        ws.cell(row, 8).value = _scalar(excel_threshold_value)
+        ws.cell(row, 9).value = "business_rule_catalog"
+        ws.cell(row, 10).value = rule_label
         ws.cell(row, 11).value = quality.get("severity")
         ws.cell(row, 12).value = quality.get("scheduler")
         ws.cell(row, 13).value = quality.get("schedule")

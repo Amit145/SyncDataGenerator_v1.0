@@ -399,6 +399,10 @@ def run_library_quality(obj: dict[str, Any], df: DataFrame, rule: dict[str, Any]
     rule_id = rule.get("id") or metric or "library_quality"
     rule_name = rule.get("name") or rule.get("description") or rule_id
     severity = rule.get("severity", "error")
+    custom = custom_property_map(rule.get("customProperties"))
+    referenced_columns = custom.get("referencedColumns") or []
+    if isinstance(referenced_columns, str):
+        referenced_columns = [referenced_columns]
     expected_operator = next(
         (op for op in ("mustBe", "mustBeGreaterThan", "mustBeGreaterOrEqualTo", "mustBeLessThan", "mustBeLessOrEqualTo") if op in rule),
         None,
@@ -411,16 +415,21 @@ def run_library_quality(obj: dict[str, Any], df: DataFrame, rule: dict[str, Any]
     if metric == "rowCount":
         actual_value = df.count()
     elif metric in {"nullValues", "missingValues"}:
-        if not scope_column:
+        cols = [scope_column] if scope_column else referenced_columns
+        if not cols:
             status = "skip"
             actual_value = None
-            message = "nullValues/missingValues requires a column scope."
-        elif scope_column not in df.columns:
+            message = "nullValues/missingValues requires referencedColumns or a column scope."
+        elif any(col not in df.columns for col in cols):
             status = "fail"
             actual_value = None
-            message = f"Column not found: {scope_column}"
+            message = f"Column not found for nullValues/missingValues: {cols}"
         else:
-            actual_value = df.filter(F.col(scope_column).isNull()).count()
+            condition = None
+            for col in cols:
+                col_condition = F.col(col).isNull()
+                condition = col_condition if condition is None else condition | col_condition
+            actual_value = df.filter(condition).count()
     elif metric == "duplicateValues":
         cols = [scope_column] if scope_column else key_columns(obj, get_entity_config(CONTRACT, entity), "primaryKeyColumns")
         if not cols or any(col not in df.columns for col in cols):
@@ -430,17 +439,26 @@ def run_library_quality(obj: dict[str, Any], df: DataFrame, rule: dict[str, Any]
         else:
             actual_value = df.groupBy(*cols).count().filter(F.col("count") > 1).count()
     elif metric == "invalidValues":
-        valid_values = ((rule.get("arguments") or {}).get("validValues")) or []
+        arguments = rule.get("arguments") or {}
+        valid_values = arguments.get("validValues") or []
+        min_value = arguments.get("minValue")
+        max_value = arguments.get("maxValue")
         if not scope_column:
-            custom = custom_property_map(rule.get("customProperties"))
-            refs = custom.get("referencedColumns") or []
-            scope_column = refs[0] if refs else None
+            scope_column = referenced_columns[0] if referenced_columns else None
         if not scope_column or scope_column not in df.columns:
             status = "fail"
             actual_value = None
             message = f"invalidValues column not found: {scope_column}"
+        elif min_value is not None:
+            actual_value = df.filter(F.col(scope_column).isNotNull() & (F.col(scope_column).cast("double") < float(min_value))).count()
+        elif max_value is not None:
+            actual_value = df.filter(F.col(scope_column).isNotNull() & (F.col(scope_column).cast("double") > float(max_value))).count()
+        elif valid_values:
+            actual_value = df.filter(F.col(scope_column).isNotNull() & ~F.col(scope_column).isin(valid_values)).count()
         else:
-            actual_value = df.filter(~F.col(scope_column).isin(valid_values)).count()
+            status = "skip"
+            actual_value = None
+            message = "invalidValues requires validValues, minValue, or maxValue arguments."
     else:
         status = "skip"
         actual_value = None
@@ -473,7 +491,7 @@ def run_library_quality(obj: dict[str, Any], df: DataFrame, rule: dict[str, Any]
         actual_value={"actual": actual_value},
         status=status,
         message=message,
-        failure_action=custom_property_map(rule.get("customProperties")).get("failureAction", ""),
+        failure_action=custom.get("failureAction", ""),
     )
 
 
