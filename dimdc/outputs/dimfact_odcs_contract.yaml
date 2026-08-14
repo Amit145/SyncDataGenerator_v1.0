@@ -1,0 +1,2205 @@
+version: v1
+kind: DataContract
+apiVersion: v3.0.2
+id: src_0010
+name: crm_prd_02_customer360
+tenant: Allianz
+tags:
+- datacontract
+status: draft
+servers:
+- server: allianz
+  type: databricks
+  catalog: allianz_coe
+  schema: customer360
+dataProduct: customer360
+description:
+  usage: Used to document table keys, source lineage, and active data quality rule
+    assignments.
+  purpose: Data contract for gold dimension and fact tables generated from approved
+    dimdc metadata and rule mappings.
+  limitations: Column coverage is limited to table metadata fields supplied in dimfacttablemetadat.csv.
+domain: crm
+schema:
+- name: dim_geography
+  physicalType: table
+  description: Gold dim_geography table generated from dim/fact metadata.
+  businessName: Dim Geography
+  tags:
+  - gold
+  - bvault_gold
+  - snapshot
+  logicalType: object
+  physicalName: dim_geography
+  dataGranularityDescription: One row per city, state, country, region.
+  properties:
+  - name: geography_sk
+    physicalType: varchar(64)
+    description: Primary key for this gold table.
+    businessName: Geography Sk
+    tags:
+    - primary_key
+    logicalType: string
+    required: true
+    unique: true
+    classification: restricted
+    quality:
+    - description: 'rule_0003: Not Null Check - PK should be unique'
+      severity: Warning
+      type: custom
+      rule: rule_0003
+      engine: business_rule_catalog
+      implementation: 'rule_0003: Not Null Check'
+  - name: city
+    physicalType: varchar(128)
+    description: Business key for this gold table.
+    businessName: City
+    tags:
+    - business_key
+    logicalType: string
+    required: true
+    unique: false
+    classification: confidential
+  - name: state
+    physicalType: varchar(128)
+    description: Business key for this gold table.
+    businessName: State
+    tags:
+    - business_key
+    logicalType: string
+    required: true
+    unique: false
+    classification: confidential
+  - name: country
+    physicalType: varchar(128)
+    description: Business key for this gold table.
+    businessName: Country
+    tags:
+    - business_key
+    primaryKey: true
+    primaryKeyPosition: 1
+    logicalType: string
+    required: true
+    unique: false
+    classification: confidential
+    criticalDataElement: true
+  - name: region
+    physicalType: varchar(128)
+    description: Business key for this gold table.
+    businessName: Region
+    tags:
+    - business_key
+    logicalType: string
+    required: true
+    unique: false
+    classification: confidential
+  - name: load_ts
+    physicalType: timestamp
+    description: Gold table load timestamp.
+    businessName: Load Ts
+    tags:
+    - audit
+    logicalType: timestamp
+    required: false
+    unique: false
+    classification: internal
+  - name: record_source
+    physicalType: varchar(128)
+    description: Source system or source table for the row.
+    businessName: Record Source
+    tags:
+    - audit
+    logicalType: string
+    required: false
+    unique: false
+    classification: internal
+  - name: Source Table
+    businessName: dev_allianz_raw.bvault_silver.bv_address_master
+  quality:
+  - description: 'rule_0001: BK Check - PK should not be null'
+    severity: Warning
+    type: custom
+    rule: rule_0001
+    engine: business_rule_catalog
+    implementation: 'rule_0001: BK Check'
+  - description: 'rule_0002: Missing Keys Check - Checks missing value between source
+      and target'
+    severity: Warning
+    type: custom
+    rule: rule_0002
+    engine: business_rule_catalog
+    implementation: 'rule_0002: Missing Keys Check'
+- name: dim_identity
+  physicalType: table
+  description: Gold dim_identity table generated from dim/fact metadata.
+  businessName: Dim Identity
+  tags:
+  - gold
+  - bvault_gold
+  - scd2
+  logicalType: object
+  physicalName: dim_identity
+  dataGranularityDescription: One row per identity_id.
+  properties:
+  - name: identity_sk
+    physicalType: varchar(64)
+    description: Primary key for this gold table.
+    businessName: Identity Sk
+    tags:
+    - primary_key
+    logicalType: string
+    required: true
+    unique: true
+    classification: restricted
+    quality:
+    - description: 'rule_0003: Not Null Check - PK should be unique'
+      severity: Warning
+      type: custom
+      rule: rule_0003
+      engine: business_rule_catalog
+      implementation: 'rule_0003: Not Null Check'
+  - name: identity_id
+    physicalType: varchar(64)
+    description: Business key for this gold table.
+    businessName: Identity Id
+    tags:
+    - business_key
+    logicalType: string
+    required: true
+    unique: true
+    classification: confidential
+    quality:
+    - description: 'rule_0001: BK Check - PK should not be null'
+      severity: Warning
+      type: custom
+      rule: rule_0001
+      engine: business_rule_catalog
+      implementation: 'rule_0001: BK Check'
+  - name: effective_from_ts
+    physicalType: timestamp
+    description: SCD2 effective start timestamp.
+    businessName: Effective From Ts
+    tags:
+    - scd2
+    logicalType: timestamp
+    required: true
+    unique: false
+    classification: internal
+  - name: effective_to_ts
+    physicalType: timestamp
+    description: SCD2 effective end timestamp.
+    businessName: Effective To Ts
+    tags:
+    - scd2
+    primaryKey: true
+    primaryKeyPosition: 1
+    logicalType: timestamp
+    required: true
+    unique: false
+    classification: internal
+    criticalDataElement: true
+  - name: is_current
+    physicalType: boolean
+    description: Current active record indicator.
+    businessName: Is Current
+    tags:
+    - scd2
+    logicalType: boolean
+    required: true
+    unique: false
+    classification: internal
+  - name: load_ts
+    physicalType: timestamp
+    description: Gold table load timestamp.
+    businessName: Load Ts
+    tags:
+    - audit
+    logicalType: timestamp
+    required: false
+    unique: false
+    classification: internal
+  - name: record_source
+    physicalType: varchar(128)
+    description: Source system or source table for the row.
+    businessName: Record Source
+    tags:
+    - audit
+    logicalType: string
+    required: false
+    unique: false
+    classification: internal
+  - name: Source Table
+    businessName: dev_allianz_raw.bvault_silver.hub_identities
+  quality:
+  - description: 'rule_0002: Missing Keys Check - Checks missing value between source
+      and target'
+    severity: Warning
+    type: custom
+    rule: rule_0002
+    engine: business_rule_catalog
+    implementation: 'rule_0002: Missing Keys Check'
+  - description: 'rule_0004: SCD2 Effective Dates Check - effective start date should
+      be less than effective end date'
+    severity: Warning
+    type: custom
+    rule: rule_0004
+    engine: business_rule_catalog
+    implementation: 'rule_0004: SCD2 Effective Dates Check'
+  - description: 'rule_0005: Overlapping Period Check - There should not be any overlapping
+      period for each bussiness key'
+    severity: Warning
+    type: custom
+    rule: rule_0005
+    engine: business_rule_catalog
+    implementation: 'rule_0005: Overlapping Period Check'
+  - description: 'rule_0006: Duplicate Active Records Check - This query tests for
+      duplicate active records'
+    severity: Warning
+    type: custom
+    rule: rule_0006
+    engine: business_rule_catalog
+    implementation: 'rule_0006: Duplicate Active Records Check'
+- name: dim_account
+  physicalType: table
+  description: Gold dim_account table generated from dim/fact metadata.
+  businessName: Dim Account
+  tags:
+  - gold
+  - bvault_gold
+  - scd2
+  logicalType: object
+  physicalName: dim_account
+  dataGranularityDescription: One row per account_id.
+  properties:
+  - name: account_sk
+    physicalType: varchar(64)
+    description: Primary key for this gold table.
+    businessName: Account Sk
+    tags:
+    - primary_key
+    logicalType: string
+    required: true
+    unique: true
+    classification: restricted
+    quality:
+    - description: 'rule_0003: Not Null Check - PK should be unique'
+      severity: Warning
+      type: custom
+      rule: rule_0003
+      engine: business_rule_catalog
+      implementation: 'rule_0003: Not Null Check'
+  - name: account_id
+    physicalType: varchar(64)
+    description: Business key for this gold table.
+    businessName: Account Id
+    tags:
+    - business_key
+    logicalType: string
+    required: true
+    unique: true
+    classification: confidential
+    quality:
+    - description: 'rule_0001: BK Check - PK should not be null'
+      severity: Warning
+      type: custom
+      rule: rule_0001
+      engine: business_rule_catalog
+      implementation: 'rule_0001: BK Check'
+  - name: effective_from_ts
+    physicalType: timestamp
+    description: SCD2 effective start timestamp.
+    businessName: Effective From Ts
+    tags:
+    - scd2
+    logicalType: timestamp
+    required: true
+    unique: false
+    classification: internal
+  - name: effective_to_ts
+    physicalType: timestamp
+    description: SCD2 effective end timestamp.
+    businessName: Effective To Ts
+    tags:
+    - scd2
+    primaryKey: true
+    primaryKeyPosition: 1
+    logicalType: timestamp
+    required: true
+    unique: false
+    classification: internal
+    criticalDataElement: true
+  - name: is_current
+    physicalType: boolean
+    description: Current active record indicator.
+    businessName: Is Current
+    tags:
+    - scd2
+    logicalType: boolean
+    required: true
+    unique: false
+    classification: internal
+  - name: load_ts
+    physicalType: timestamp
+    description: Gold table load timestamp.
+    businessName: Load Ts
+    tags:
+    - audit
+    logicalType: timestamp
+    required: false
+    unique: false
+    classification: internal
+  - name: record_source
+    physicalType: varchar(128)
+    description: Source system or source table for the row.
+    businessName: Record Source
+    tags:
+    - audit
+    logicalType: string
+    required: false
+    unique: false
+    classification: internal
+  - name: Source Table
+    businessName: dev_allianz_raw.bvault_silver.hub_account
+  quality:
+  - description: 'rule_0002: Missing Keys Check - Checks missing value between source
+      and target'
+    severity: Warning
+    type: custom
+    rule: rule_0002
+    engine: business_rule_catalog
+    implementation: 'rule_0002: Missing Keys Check'
+  - description: 'rule_0004: SCD2 Effective Dates Check - effective start date should
+      be less than effective end date'
+    severity: Warning
+    type: custom
+    rule: rule_0004
+    engine: business_rule_catalog
+    implementation: 'rule_0004: SCD2 Effective Dates Check'
+  - description: 'rule_0005: Overlapping Period Check - There should not be any overlapping
+      period for each bussiness key'
+    severity: Warning
+    type: custom
+    rule: rule_0005
+    engine: business_rule_catalog
+    implementation: 'rule_0005: Overlapping Period Check'
+  - description: 'rule_0006: Duplicate Active Records Check - This query tests for
+      duplicate active records'
+    severity: Warning
+    type: custom
+    rule: rule_0006
+    engine: business_rule_catalog
+    implementation: 'rule_0006: Duplicate Active Records Check'
+- name: dim_broker
+  physicalType: table
+  description: Gold dim_broker table generated from dim/fact metadata.
+  businessName: Dim Broker
+  tags:
+  - gold
+  - bvault_gold
+  - scd2
+  logicalType: object
+  physicalName: dim_broker
+  dataGranularityDescription: One row per agent_id.
+  properties:
+  - name: broker_sk
+    physicalType: varchar(64)
+    description: Primary key for this gold table.
+    businessName: Broker Sk
+    tags:
+    - primary_key
+    logicalType: string
+    required: true
+    unique: true
+    classification: restricted
+    quality:
+    - description: 'rule_0003: Not Null Check - PK should be unique'
+      severity: Warning
+      type: custom
+      rule: rule_0003
+      engine: business_rule_catalog
+      implementation: 'rule_0003: Not Null Check'
+  - name: agent_id
+    physicalType: varchar(64)
+    description: Business key for this gold table.
+    businessName: Agent Id
+    tags:
+    - business_key
+    logicalType: string
+    required: true
+    unique: true
+    classification: confidential
+    quality:
+    - description: 'rule_0001: BK Check - PK should not be null'
+      severity: Warning
+      type: custom
+      rule: rule_0001
+      engine: business_rule_catalog
+      implementation: 'rule_0001: BK Check'
+  - name: effective_from_ts
+    physicalType: timestamp
+    description: SCD2 effective start timestamp.
+    businessName: Effective From Ts
+    tags:
+    - scd2
+    logicalType: timestamp
+    required: true
+    unique: false
+    classification: internal
+  - name: effective_to_ts
+    physicalType: timestamp
+    description: SCD2 effective end timestamp.
+    businessName: Effective To Ts
+    tags:
+    - scd2
+    primaryKey: true
+    primaryKeyPosition: 1
+    logicalType: timestamp
+    required: true
+    unique: false
+    classification: internal
+    criticalDataElement: true
+  - name: is_current
+    physicalType: boolean
+    description: Current active record indicator.
+    businessName: Is Current
+    tags:
+    - scd2
+    logicalType: boolean
+    required: true
+    unique: false
+    classification: internal
+  - name: load_ts
+    physicalType: timestamp
+    description: Gold table load timestamp.
+    businessName: Load Ts
+    tags:
+    - audit
+    logicalType: timestamp
+    required: false
+    unique: false
+    classification: internal
+  - name: record_source
+    physicalType: varchar(128)
+    description: Source system or source table for the row.
+    businessName: Record Source
+    tags:
+    - audit
+    logicalType: string
+    required: false
+    unique: false
+    classification: internal
+  - name: Source Table
+    businessName: dev_allianz_raw.bvault_silver.hub_broker
+  quality:
+  - description: 'rule_0002: Missing Keys Check - Checks missing value between source
+      and target'
+    severity: Warning
+    type: custom
+    rule: rule_0002
+    engine: business_rule_catalog
+    implementation: 'rule_0002: Missing Keys Check'
+  - description: 'rule_0004: SCD2 Effective Dates Check - effective start date should
+      be less than effective end date'
+    severity: Warning
+    type: custom
+    rule: rule_0004
+    engine: business_rule_catalog
+    implementation: 'rule_0004: SCD2 Effective Dates Check'
+  - description: 'rule_0005: Overlapping Period Check - There should not be any overlapping
+      period for each bussiness key'
+    severity: Warning
+    type: custom
+    rule: rule_0005
+    engine: business_rule_catalog
+    implementation: 'rule_0005: Overlapping Period Check'
+  - description: 'rule_0006: Duplicate Active Records Check - This query tests for
+      duplicate active records'
+    severity: Warning
+    type: custom
+    rule: rule_0006
+    engine: business_rule_catalog
+    implementation: 'rule_0006: Duplicate Active Records Check'
+- name: dim_campaign
+  physicalType: table
+  description: Gold dim_campaign table generated from dim/fact metadata.
+  businessName: Dim Campaign
+  tags:
+  - gold
+  - bvault_gold
+  - snapshot
+  logicalType: object
+  physicalName: dim_campaign
+  dataGranularityDescription: One row per campaign_id.
+  properties:
+  - name: campaign_sk
+    physicalType: varchar(64)
+    description: Primary key for this gold table.
+    businessName: Campaign Sk
+    tags:
+    - primary_key
+    logicalType: string
+    required: true
+    unique: true
+    classification: restricted
+    quality:
+    - description: 'rule_0003: Not Null Check - PK should be unique'
+      severity: Warning
+      type: custom
+      rule: rule_0003
+      engine: business_rule_catalog
+      implementation: 'rule_0003: Not Null Check'
+  - name: campaign_id
+    physicalType: varchar(64)
+    description: Business key for this gold table.
+    businessName: Campaign Id
+    tags:
+    - business_key
+    logicalType: string
+    required: true
+    unique: true
+    classification: confidential
+    quality:
+    - description: 'rule_0001: BK Check - PK should not be null'
+      severity: Warning
+      type: custom
+      rule: rule_0001
+      engine: business_rule_catalog
+      implementation: 'rule_0001: BK Check'
+  - name: load_ts
+    physicalType: timestamp
+    description: Gold table load timestamp.
+    businessName: Load Ts
+    tags:
+    - audit
+    logicalType: timestamp
+    required: false
+    unique: false
+    classification: internal
+  - name: record_source
+    physicalType: varchar(128)
+    description: Source system or source table for the row.
+    businessName: Record Source
+    tags:
+    - audit
+    primaryKey: true
+    primaryKeyPosition: 1
+    logicalType: string
+    required: false
+    unique: false
+    classification: internal
+    criticalDataElement: true
+  - name: Source Table
+    businessName: dev_allianz_raw.bvault_silver.hub_campaign
+  quality:
+  - description: 'rule_0002: Missing Keys Check - Checks missing value between source
+      and target'
+    severity: Warning
+    type: custom
+    rule: rule_0002
+    engine: business_rule_catalog
+    implementation: 'rule_0002: Missing Keys Check'
+- name: dim_channel
+  physicalType: table
+  description: Gold dim_channel table generated from dim/fact metadata.
+  businessName: Dim Channel
+  tags:
+  - gold
+  - bvault_gold
+  - snapshot
+  logicalType: object
+  physicalName: dim_channel
+  dataGranularityDescription: One row per channel_id.
+  properties:
+  - name: channel_sk
+    physicalType: varchar(64)
+    description: Primary key for this gold table.
+    businessName: Channel Sk
+    tags:
+    - primary_key
+    logicalType: string
+    required: true
+    unique: true
+    classification: restricted
+    quality:
+    - description: 'rule_0003: Not Null Check - PK should be unique'
+      severity: Warning
+      type: custom
+      rule: rule_0003
+      engine: business_rule_catalog
+      implementation: 'rule_0003: Not Null Check'
+  - name: channel_id
+    physicalType: varchar(64)
+    description: Business key for this gold table.
+    businessName: Channel Id
+    tags:
+    - business_key
+    logicalType: string
+    required: true
+    unique: true
+    classification: confidential
+    quality:
+    - description: 'rule_0001: BK Check - PK should not be null'
+      severity: Warning
+      type: custom
+      rule: rule_0001
+      engine: business_rule_catalog
+      implementation: 'rule_0001: BK Check'
+  - name: load_ts
+    physicalType: timestamp
+    description: Gold table load timestamp.
+    businessName: Load Ts
+    tags:
+    - audit
+    logicalType: timestamp
+    required: false
+    unique: false
+    classification: internal
+  - name: record_source
+    physicalType: varchar(128)
+    description: Source system or source table for the row.
+    businessName: Record Source
+    tags:
+    - audit
+    primaryKey: true
+    primaryKeyPosition: 1
+    logicalType: string
+    required: false
+    unique: false
+    classification: internal
+    criticalDataElement: true
+  - name: Source Table
+    businessName: dev_allianz_raw.bvault_silver.hub_channel
+  quality:
+  - description: 'rule_0002: Missing Keys Check - Checks missing value between source
+      and target'
+    severity: Warning
+    type: custom
+    rule: rule_0002
+    engine: business_rule_catalog
+    implementation: 'rule_0002: Missing Keys Check'
+- name: dim_claim
+  physicalType: table
+  description: Gold dim_claim table generated from dim/fact metadata.
+  businessName: Dim Claim
+  tags:
+  - gold
+  - bvault_gold
+  - scd2
+  logicalType: object
+  physicalName: dim_claim
+  dataGranularityDescription: One row per claim_id.
+  properties:
+  - name: claim_sk
+    physicalType: varchar(64)
+    description: Primary key for this gold table.
+    businessName: Claim Sk
+    tags:
+    - primary_key
+    logicalType: string
+    required: true
+    unique: true
+    classification: restricted
+    quality:
+    - description: 'rule_0003: Not Null Check - PK should be unique'
+      severity: Warning
+      type: custom
+      rule: rule_0003
+      engine: business_rule_catalog
+      implementation: 'rule_0003: Not Null Check'
+  - name: claim_id
+    physicalType: varchar(64)
+    description: Business key for this gold table.
+    businessName: Claim Id
+    tags:
+    - business_key
+    logicalType: string
+    required: true
+    unique: true
+    classification: confidential
+    quality:
+    - description: 'rule_0001: BK Check - PK should not be null'
+      severity: Warning
+      type: custom
+      rule: rule_0001
+      engine: business_rule_catalog
+      implementation: 'rule_0001: BK Check'
+  - name: effective_from_ts
+    physicalType: timestamp
+    description: SCD2 effective start timestamp.
+    businessName: Effective From Ts
+    tags:
+    - scd2
+    logicalType: timestamp
+    required: true
+    unique: false
+    classification: internal
+  - name: effective_to_ts
+    physicalType: timestamp
+    description: SCD2 effective end timestamp.
+    businessName: Effective To Ts
+    tags:
+    - scd2
+    primaryKey: true
+    primaryKeyPosition: 1
+    logicalType: timestamp
+    required: true
+    unique: false
+    classification: internal
+    criticalDataElement: true
+  - name: is_current
+    physicalType: boolean
+    description: Current active record indicator.
+    businessName: Is Current
+    tags:
+    - scd2
+    logicalType: boolean
+    required: true
+    unique: false
+    classification: internal
+  - name: load_ts
+    physicalType: timestamp
+    description: Gold table load timestamp.
+    businessName: Load Ts
+    tags:
+    - audit
+    logicalType: timestamp
+    required: false
+    unique: false
+    classification: internal
+  - name: record_source
+    physicalType: varchar(128)
+    description: Source system or source table for the row.
+    businessName: Record Source
+    tags:
+    - audit
+    logicalType: string
+    required: false
+    unique: false
+    classification: internal
+  - name: Source Table
+    businessName: dev_allianz_raw.bvault_silver.hub_claim
+  quality:
+  - description: 'rule_0002: Missing Keys Check - Checks missing value between source
+      and target'
+    severity: Warning
+    type: custom
+    rule: rule_0002
+    engine: business_rule_catalog
+    implementation: 'rule_0002: Missing Keys Check'
+  - description: 'rule_0004: SCD2 Effective Dates Check - effective start date should
+      be less than effective end date'
+    severity: Warning
+    type: custom
+    rule: rule_0004
+    engine: business_rule_catalog
+    implementation: 'rule_0004: SCD2 Effective Dates Check'
+  - description: 'rule_0005: Overlapping Period Check - There should not be any overlapping
+      period for each bussiness key'
+    severity: Warning
+    type: custom
+    rule: rule_0005
+    engine: business_rule_catalog
+    implementation: 'rule_0005: Overlapping Period Check'
+  - description: 'rule_0006: Duplicate Active Records Check - This query tests for
+      duplicate active records'
+    severity: Warning
+    type: custom
+    rule: rule_0006
+    engine: business_rule_catalog
+    implementation: 'rule_0006: Duplicate Active Records Check'
+- name: dim_customer
+  physicalType: table
+  description: Gold dim_customer table generated from dim/fact metadata.
+  businessName: Dim Customer
+  tags:
+  - gold
+  - bvault_gold
+  - scd2
+  logicalType: object
+  physicalName: dim_customer
+  dataGranularityDescription: One row per customer_id.
+  properties:
+  - name: customer_sk
+    physicalType: varchar(64)
+    description: Primary key for this gold table.
+    businessName: Customer Sk
+    tags:
+    - primary_key
+    logicalType: string
+    required: true
+    unique: true
+    classification: restricted
+    quality:
+    - description: 'rule_0003: Not Null Check - PK should be unique'
+      severity: Warning
+      type: custom
+      rule: rule_0003
+      engine: business_rule_catalog
+      implementation: 'rule_0003: Not Null Check'
+  - name: customer_id
+    physicalType: varchar(64)
+    description: Business key for this gold table.
+    businessName: Customer Id
+    tags:
+    - business_key
+    logicalType: string
+    required: true
+    unique: true
+    classification: confidential
+    quality:
+    - description: 'rule_0001: BK Check - PK should not be null'
+      severity: Warning
+      type: custom
+      rule: rule_0001
+      engine: business_rule_catalog
+      implementation: 'rule_0001: BK Check'
+  - name: effective_from_ts
+    physicalType: timestamp
+    description: SCD2 effective start timestamp.
+    businessName: Effective From Ts
+    tags:
+    - scd2
+    logicalType: timestamp
+    required: true
+    unique: false
+    classification: internal
+  - name: effective_to_ts
+    physicalType: timestamp
+    description: SCD2 effective end timestamp.
+    businessName: Effective To Ts
+    tags:
+    - scd2
+    primaryKey: true
+    primaryKeyPosition: 1
+    logicalType: timestamp
+    required: true
+    unique: false
+    classification: internal
+    criticalDataElement: true
+  - name: is_current
+    physicalType: boolean
+    description: Current active record indicator.
+    businessName: Is Current
+    tags:
+    - scd2
+    logicalType: boolean
+    required: true
+    unique: false
+    classification: internal
+  - name: load_ts
+    physicalType: timestamp
+    description: Gold table load timestamp.
+    businessName: Load Ts
+    tags:
+    - audit
+    logicalType: timestamp
+    required: false
+    unique: false
+    classification: internal
+  - name: record_source
+    physicalType: varchar(128)
+    description: Source system or source table for the row.
+    businessName: Record Source
+    tags:
+    - audit
+    logicalType: string
+    required: false
+    unique: false
+    classification: internal
+  - name: Source Table
+    businessName: dev_allianz_raw.bvault_silver.hub_customer
+  quality:
+  - description: 'rule_0002: Missing Keys Check - Checks missing value between source
+      and target'
+    severity: Warning
+    type: custom
+    rule: rule_0002
+    engine: business_rule_catalog
+    implementation: 'rule_0002: Missing Keys Check'
+  - description: 'rule_0004: SCD2 Effective Dates Check - effective start date should
+      be less than effective end date'
+    severity: Warning
+    type: custom
+    rule: rule_0004
+    engine: business_rule_catalog
+    implementation: 'rule_0004: SCD2 Effective Dates Check'
+  - description: 'rule_0005: Overlapping Period Check - There should not be any overlapping
+      period for each bussiness key'
+    severity: Warning
+    type: custom
+    rule: rule_0005
+    engine: business_rule_catalog
+    implementation: 'rule_0005: Overlapping Period Check'
+  - description: 'rule_0006: Duplicate Active Records Check - This query tests for
+      duplicate active records'
+    severity: Warning
+    type: custom
+    rule: rule_0006
+    engine: business_rule_catalog
+    implementation: 'rule_0006: Duplicate Active Records Check'
+- name: dim_insured_object
+  physicalType: table
+  description: Gold dim_insured_object table generated from dim/fact metadata.
+  businessName: Dim Insured Object
+  tags:
+  - gold
+  - bvault_gold
+  - snapshot
+  logicalType: object
+  physicalName: dim_insured_object
+  dataGranularityDescription: One row per insured_object_id.
+  properties:
+  - name: insured_object_sk
+    physicalType: varchar(64)
+    description: Primary key for this gold table.
+    businessName: Insured Object Sk
+    tags:
+    - primary_key
+    logicalType: string
+    required: true
+    unique: true
+    classification: restricted
+    quality:
+    - description: 'rule_0003: Not Null Check - PK should be unique'
+      severity: Warning
+      type: custom
+      rule: rule_0003
+      engine: business_rule_catalog
+      implementation: 'rule_0003: Not Null Check'
+  - name: insured_object_id
+    physicalType: varchar(64)
+    description: Business key for this gold table.
+    businessName: Insured Object Id
+    tags:
+    - business_key
+    logicalType: string
+    required: true
+    unique: true
+    classification: confidential
+    quality:
+    - description: 'rule_0001: BK Check - PK should not be null'
+      severity: Warning
+      type: custom
+      rule: rule_0001
+      engine: business_rule_catalog
+      implementation: 'rule_0001: BK Check'
+  - name: load_ts
+    physicalType: timestamp
+    description: Gold table load timestamp.
+    businessName: Load Ts
+    tags:
+    - audit
+    logicalType: timestamp
+    required: false
+    unique: false
+    classification: internal
+  - name: record_source
+    physicalType: varchar(128)
+    description: Source system or source table for the row.
+    businessName: Record Source
+    tags:
+    - audit
+    primaryKey: true
+    primaryKeyPosition: 1
+    logicalType: string
+    required: false
+    unique: false
+    classification: internal
+    criticalDataElement: true
+  - name: Source Table
+    businessName: dev_allianz_raw.bvault_silver.hub_insured_object
+  quality:
+  - description: 'rule_0002: Missing Keys Check - Checks missing value between source
+      and target'
+    severity: Warning
+    type: custom
+    rule: rule_0002
+    engine: business_rule_catalog
+    implementation: 'rule_0002: Missing Keys Check'
+- name: dim_override
+  physicalType: table
+  description: Gold dim_override table generated from dim/fact metadata.
+  businessName: Dim Override
+  tags:
+  - gold
+  - bvault_gold
+  - snapshot
+  logicalType: object
+  physicalName: dim_override
+  dataGranularityDescription: One row per override_id.
+  properties:
+  - name: override_sk
+    physicalType: varchar(64)
+    description: Primary key for this gold table.
+    businessName: Override Sk
+    tags:
+    - primary_key
+    logicalType: string
+    required: true
+    unique: true
+    classification: restricted
+    quality:
+    - description: 'rule_0003: Not Null Check - PK should be unique'
+      severity: Warning
+      type: custom
+      rule: rule_0003
+      engine: business_rule_catalog
+      implementation: 'rule_0003: Not Null Check'
+  - name: override_id
+    physicalType: varchar(64)
+    description: Business key for this gold table.
+    businessName: Override Id
+    tags:
+    - business_key
+    logicalType: string
+    required: true
+    unique: true
+    classification: confidential
+    quality:
+    - description: 'rule_0001: BK Check - PK should not be null'
+      severity: Warning
+      type: custom
+      rule: rule_0001
+      engine: business_rule_catalog
+      implementation: 'rule_0001: BK Check'
+  - name: load_ts
+    physicalType: timestamp
+    description: Gold table load timestamp.
+    businessName: Load Ts
+    tags:
+    - audit
+    logicalType: timestamp
+    required: false
+    unique: false
+    classification: internal
+  - name: record_source
+    physicalType: varchar(128)
+    description: Source system or source table for the row.
+    businessName: Record Source
+    tags:
+    - audit
+    primaryKey: true
+    primaryKeyPosition: 1
+    logicalType: string
+    required: false
+    unique: false
+    classification: internal
+    criticalDataElement: true
+  - name: Source Table
+    businessName: dev_allianz_raw.bvault_silver.hub_override
+  quality:
+  - description: 'rule_0002: Missing Keys Check - Checks missing value between source
+      and target'
+    severity: Warning
+    type: custom
+    rule: rule_0002
+    engine: business_rule_catalog
+    implementation: 'rule_0002: Missing Keys Check'
+- name: dim_regulation
+  physicalType: table
+  description: Gold dim_regulation table generated from dim/fact metadata.
+  businessName: Dim Regulation
+  tags:
+  - gold
+  - bvault_gold
+  - snapshot
+  logicalType: object
+  physicalName: dim_regulation
+  dataGranularityDescription: One row per regulation_id.
+  properties:
+  - name: regulation_sk
+    physicalType: varchar(64)
+    description: Primary key for this gold table.
+    businessName: Regulation Sk
+    tags:
+    - primary_key
+    logicalType: string
+    required: true
+    unique: true
+    classification: restricted
+    quality:
+    - description: 'rule_0003: Not Null Check - PK should be unique'
+      severity: Warning
+      type: custom
+      rule: rule_0003
+      engine: business_rule_catalog
+      implementation: 'rule_0003: Not Null Check'
+  - name: regulation_id
+    physicalType: varchar(64)
+    description: Business key for this gold table.
+    businessName: Regulation Id
+    tags:
+    - business_key
+    logicalType: string
+    required: true
+    unique: true
+    classification: confidential
+    quality:
+    - description: 'rule_0001: BK Check - PK should not be null'
+      severity: Warning
+      type: custom
+      rule: rule_0001
+      engine: business_rule_catalog
+      implementation: 'rule_0001: BK Check'
+  - name: load_ts
+    physicalType: timestamp
+    description: Gold table load timestamp.
+    businessName: Load Ts
+    tags:
+    - audit
+    logicalType: timestamp
+    required: false
+    unique: false
+    classification: internal
+  - name: record_source
+    physicalType: varchar(128)
+    description: Source system or source table for the row.
+    businessName: Record Source
+    tags:
+    - audit
+    primaryKey: true
+    primaryKeyPosition: 1
+    logicalType: string
+    required: false
+    unique: false
+    classification: internal
+    criticalDataElement: true
+  - name: Source Table
+    businessName: dev_allianz_raw.bvault_silver.hub_regulation
+  quality:
+  - description: 'rule_0002: Missing Keys Check - Checks missing value between source
+      and target'
+    severity: Warning
+    type: custom
+    rule: rule_0002
+    engine: business_rule_catalog
+    implementation: 'rule_0002: Missing Keys Check'
+- name: dim_marketing
+  physicalType: table
+  description: Gold dim_marketing table generated from dim/fact metadata.
+  businessName: Dim Marketing
+  tags:
+  - gold
+  - bvault_gold
+  - scd2
+  logicalType: object
+  physicalName: dim_marketing
+  dataGranularityDescription: One row per marketing_preference_id,marketing_engagement_id.
+  properties:
+  - name: marketing_sk
+    physicalType: varchar(64)
+    description: Primary key for this gold table.
+    businessName: Marketing Sk
+    tags:
+    - primary_key
+    logicalType: string
+    required: true
+    unique: true
+    classification: restricted
+    quality:
+    - description: 'rule_0003: Not Null Check - PK should be unique'
+      severity: Warning
+      type: custom
+      rule: rule_0003
+      engine: business_rule_catalog
+      implementation: 'rule_0003: Not Null Check'
+  - name: marketing_preference_id
+    physicalType: varchar(128)
+    description: Business key for this gold table.
+    businessName: Marketing Preference Id
+    tags:
+    - business_key
+    logicalType: string
+    required: true
+    unique: false
+    classification: confidential
+  - name: marketing_engagement_id
+    physicalType: varchar(128)
+    description: Business key for this gold table.
+    businessName: Marketing Engagement Id
+    tags:
+    - business_key
+    logicalType: string
+    required: true
+    unique: false
+    classification: confidential
+  - name: effective_from_ts
+    physicalType: timestamp
+    description: SCD2 effective start timestamp.
+    businessName: Effective From Ts
+    tags:
+    - scd2
+    primaryKey: true
+    primaryKeyPosition: 1
+    logicalType: timestamp
+    required: true
+    unique: false
+    classification: internal
+    criticalDataElement: true
+  - name: effective_to_ts
+    physicalType: timestamp
+    description: SCD2 effective end timestamp.
+    businessName: Effective To Ts
+    tags:
+    - scd2
+    logicalType: timestamp
+    required: true
+    unique: false
+    classification: internal
+  - name: is_current
+    physicalType: boolean
+    description: Current active record indicator.
+    businessName: Is Current
+    tags:
+    - scd2
+    logicalType: boolean
+    required: true
+    unique: false
+    classification: internal
+  - name: load_ts
+    physicalType: timestamp
+    description: Gold table load timestamp.
+    businessName: Load Ts
+    tags:
+    - audit
+    logicalType: timestamp
+    required: false
+    unique: false
+    classification: internal
+  - name: record_source
+    physicalType: varchar(128)
+    description: Source system or source table for the row.
+    businessName: Record Source
+    tags:
+    - audit
+    logicalType: string
+    required: false
+    unique: false
+    classification: internal
+  - name: Source Table
+    businessName: dev_allianz_raw.bvault_silver.hub_marketing_preference
+  quality:
+  - description: 'rule_0001: BK Check - PK should not be null'
+    severity: Warning
+    type: custom
+    rule: rule_0001
+    engine: business_rule_catalog
+    implementation: 'rule_0001: BK Check'
+  - description: 'rule_0004: SCD2 Effective Dates Check - effective start date should
+      be less than effective end date'
+    severity: Warning
+    type: custom
+    rule: rule_0004
+    engine: business_rule_catalog
+    implementation: 'rule_0004: SCD2 Effective Dates Check'
+  - description: 'rule_0005: Overlapping Period Check - There should not be any overlapping
+      period for each bussiness key'
+    severity: Warning
+    type: custom
+    rule: rule_0005
+    engine: business_rule_catalog
+    implementation: 'rule_0005: Overlapping Period Check'
+  - description: 'rule_0006: Duplicate Active Records Check - This query tests for
+      duplicate active records'
+    severity: Warning
+    type: custom
+    rule: rule_0006
+    engine: business_rule_catalog
+    implementation: 'rule_0006: Duplicate Active Records Check'
+- name: dim_motor
+  physicalType: table
+  description: Gold dim_motor table generated from dim/fact metadata.
+  businessName: Dim Motor
+  tags:
+  - gold
+  - bvault_gold
+  - scd2
+  logicalType: object
+  physicalName: dim_motor
+  dataGranularityDescription: One row per insured_object_motor_id.
+  properties:
+  - name: insured_object_sk
+    physicalType: varchar(64)
+    description: Primary key for this gold table.
+    businessName: Insured Object Sk
+    tags:
+    - primary_key
+    logicalType: string
+    required: true
+    unique: true
+    classification: restricted
+    quality:
+    - description: 'rule_0003: Not Null Check - PK should be unique'
+      severity: Warning
+      type: custom
+      rule: rule_0003
+      engine: business_rule_catalog
+      implementation: 'rule_0003: Not Null Check'
+  - name: insured_object_motor_id
+    physicalType: varchar(64)
+    description: Business key for this gold table.
+    businessName: Insured Object Motor Id
+    tags:
+    - business_key
+    logicalType: string
+    required: true
+    unique: true
+    classification: confidential
+    quality:
+    - description: 'rule_0001: BK Check - PK should not be null'
+      severity: Warning
+      type: custom
+      rule: rule_0001
+      engine: business_rule_catalog
+      implementation: 'rule_0001: BK Check'
+  - name: effective_from_ts
+    physicalType: timestamp
+    description: SCD2 effective start timestamp.
+    businessName: Effective From Ts
+    tags:
+    - scd2
+    logicalType: timestamp
+    required: true
+    unique: false
+    classification: internal
+  - name: effective_to_ts
+    physicalType: timestamp
+    description: SCD2 effective end timestamp.
+    businessName: Effective To Ts
+    tags:
+    - scd2
+    primaryKey: true
+    primaryKeyPosition: 1
+    logicalType: timestamp
+    required: true
+    unique: false
+    classification: internal
+    criticalDataElement: true
+  - name: is_current
+    physicalType: boolean
+    description: Current active record indicator.
+    businessName: Is Current
+    tags:
+    - scd2
+    logicalType: boolean
+    required: true
+    unique: false
+    classification: internal
+  - name: load_ts
+    physicalType: timestamp
+    description: Gold table load timestamp.
+    businessName: Load Ts
+    tags:
+    - audit
+    logicalType: timestamp
+    required: false
+    unique: false
+    classification: internal
+  - name: record_source
+    physicalType: varchar(128)
+    description: Source system or source table for the row.
+    businessName: Record Source
+    tags:
+    - audit
+    logicalType: string
+    required: false
+    unique: false
+    classification: internal
+  - name: Source Table
+    businessName: dev_allianz_raw.bvault_silver.bv_motor_master
+  quality:
+  - description: 'rule_0002: Missing Keys Check - Checks missing value between source
+      and target'
+    severity: Warning
+    type: custom
+    rule: rule_0002
+    engine: business_rule_catalog
+    implementation: 'rule_0002: Missing Keys Check'
+  - description: 'rule_0004: SCD2 Effective Dates Check - effective start date should
+      be less than effective end date'
+    severity: Warning
+    type: custom
+    rule: rule_0004
+    engine: business_rule_catalog
+    implementation: 'rule_0004: SCD2 Effective Dates Check'
+  - description: 'rule_0005: Overlapping Period Check - There should not be any overlapping
+      period for each bussiness key'
+    severity: Warning
+    type: custom
+    rule: rule_0005
+    engine: business_rule_catalog
+    implementation: 'rule_0005: Overlapping Period Check'
+  - description: 'rule_0006: Duplicate Active Records Check - This query tests for
+      duplicate active records'
+    severity: Warning
+    type: custom
+    rule: rule_0006
+    engine: business_rule_catalog
+    implementation: 'rule_0006: Duplicate Active Records Check'
+- name: dim_home
+  physicalType: table
+  description: Gold dim_home table generated from dim/fact metadata.
+  businessName: Dim Home
+  tags:
+  - gold
+  - bvault_gold
+  - scd2
+  logicalType: object
+  physicalName: dim_home
+  dataGranularityDescription: One row per insured_object_home_id.
+  properties:
+  - name: insured_object_sk
+    physicalType: varchar(64)
+    description: Primary key for this gold table.
+    businessName: Insured Object Sk
+    tags:
+    - primary_key
+    logicalType: string
+    required: true
+    unique: true
+    classification: restricted
+    quality:
+    - description: 'rule_0003: Not Null Check - PK should be unique'
+      severity: Warning
+      type: custom
+      rule: rule_0003
+      engine: business_rule_catalog
+      implementation: 'rule_0003: Not Null Check'
+  - name: insured_object_home_id
+    physicalType: varchar(64)
+    description: Business key for this gold table.
+    businessName: Insured Object Home Id
+    tags:
+    - business_key
+    logicalType: string
+    required: true
+    unique: true
+    classification: confidential
+    quality:
+    - description: 'rule_0001: BK Check - PK should not be null'
+      severity: Warning
+      type: custom
+      rule: rule_0001
+      engine: business_rule_catalog
+      implementation: 'rule_0001: BK Check'
+  - name: effective_from_ts
+    physicalType: timestamp
+    description: SCD2 effective start timestamp.
+    businessName: Effective From Ts
+    tags:
+    - scd2
+    logicalType: timestamp
+    required: true
+    unique: false
+    classification: internal
+  - name: effective_to_ts
+    physicalType: timestamp
+    description: SCD2 effective end timestamp.
+    businessName: Effective To Ts
+    tags:
+    - scd2
+    primaryKey: true
+    primaryKeyPosition: 1
+    logicalType: timestamp
+    required: true
+    unique: false
+    classification: internal
+    criticalDataElement: true
+  - name: is_current
+    physicalType: boolean
+    description: Current active record indicator.
+    businessName: Is Current
+    tags:
+    - scd2
+    logicalType: boolean
+    required: true
+    unique: false
+    classification: internal
+  - name: load_ts
+    physicalType: timestamp
+    description: Gold table load timestamp.
+    businessName: Load Ts
+    tags:
+    - audit
+    logicalType: timestamp
+    required: false
+    unique: false
+    classification: internal
+  - name: record_source
+    physicalType: varchar(128)
+    description: Source system or source table for the row.
+    businessName: Record Source
+    tags:
+    - audit
+    logicalType: string
+    required: false
+    unique: false
+    classification: internal
+  - name: Source Table
+    businessName: dev_allianz_raw.bvault_silver.bv_home_master
+  quality:
+  - description: 'rule_0002: Missing Keys Check - Checks missing value between source
+      and target'
+    severity: Warning
+    type: custom
+    rule: rule_0002
+    engine: business_rule_catalog
+    implementation: 'rule_0002: Missing Keys Check'
+  - description: 'rule_0004: SCD2 Effective Dates Check - effective start date should
+      be less than effective end date'
+    severity: Warning
+    type: custom
+    rule: rule_0004
+    engine: business_rule_catalog
+    implementation: 'rule_0004: SCD2 Effective Dates Check'
+  - description: 'rule_0005: Overlapping Period Check - There should not be any overlapping
+      period for each bussiness key'
+    severity: Warning
+    type: custom
+    rule: rule_0005
+    engine: business_rule_catalog
+    implementation: 'rule_0005: Overlapping Period Check'
+  - description: 'rule_0006: Duplicate Active Records Check - This query tests for
+      duplicate active records'
+    severity: Warning
+    type: custom
+    rule: rule_0006
+    engine: business_rule_catalog
+    implementation: 'rule_0006: Duplicate Active Records Check'
+- name: dim_product
+  physicalType: table
+  description: Gold dim_product table generated from dim/fact metadata.
+  businessName: Dim Product
+  tags:
+  - gold
+  - bvault_gold
+  - scd2
+  logicalType: object
+  physicalName: dim_product
+  dataGranularityDescription: One row per product_id.
+  properties:
+  - name: product_sk
+    physicalType: varchar(64)
+    description: Primary key for this gold table.
+    businessName: Product Sk
+    tags:
+    - primary_key
+    logicalType: string
+    required: true
+    unique: true
+    classification: restricted
+    quality:
+    - description: 'rule_0003: Not Null Check - PK should be unique'
+      severity: Warning
+      type: custom
+      rule: rule_0003
+      engine: business_rule_catalog
+      implementation: 'rule_0003: Not Null Check'
+  - name: product_id
+    physicalType: varchar(64)
+    description: Business key for this gold table.
+    businessName: Product Id
+    tags:
+    - business_key
+    logicalType: string
+    required: true
+    unique: true
+    classification: confidential
+    quality:
+    - description: 'rule_0001: BK Check - PK should not be null'
+      severity: Warning
+      type: custom
+      rule: rule_0001
+      engine: business_rule_catalog
+      implementation: 'rule_0001: BK Check'
+  - name: effective_from_ts
+    physicalType: timestamp
+    description: SCD2 effective start timestamp.
+    businessName: Effective From Ts
+    tags:
+    - scd2
+    logicalType: timestamp
+    required: true
+    unique: false
+    classification: internal
+  - name: effective_to_ts
+    physicalType: timestamp
+    description: SCD2 effective end timestamp.
+    businessName: Effective To Ts
+    tags:
+    - scd2
+    primaryKey: true
+    primaryKeyPosition: 1
+    logicalType: timestamp
+    required: true
+    unique: false
+    classification: internal
+    criticalDataElement: true
+  - name: is_current
+    physicalType: boolean
+    description: Current active record indicator.
+    businessName: Is Current
+    tags:
+    - scd2
+    logicalType: boolean
+    required: true
+    unique: false
+    classification: internal
+  - name: load_ts
+    physicalType: timestamp
+    description: Gold table load timestamp.
+    businessName: Load Ts
+    tags:
+    - audit
+    logicalType: timestamp
+    required: false
+    unique: false
+    classification: internal
+  - name: record_source
+    physicalType: varchar(128)
+    description: Source system or source table for the row.
+    businessName: Record Source
+    tags:
+    - audit
+    logicalType: string
+    required: false
+    unique: false
+    classification: internal
+  - name: Source Table
+    businessName: dev_allianz_raw.bvault_silver.bv_product_master
+  quality:
+  - description: 'rule_0002: Missing Keys Check - Checks missing value between source
+      and target'
+    severity: Warning
+    type: custom
+    rule: rule_0002
+    engine: business_rule_catalog
+    implementation: 'rule_0002: Missing Keys Check'
+  - description: 'rule_0004: SCD2 Effective Dates Check - effective start date should
+      be less than effective end date'
+    severity: Warning
+    type: custom
+    rule: rule_0004
+    engine: business_rule_catalog
+    implementation: 'rule_0004: SCD2 Effective Dates Check'
+  - description: 'rule_0005: Overlapping Period Check - There should not be any overlapping
+      period for each bussiness key'
+    severity: Warning
+    type: custom
+    rule: rule_0005
+    engine: business_rule_catalog
+    implementation: 'rule_0005: Overlapping Period Check'
+  - description: 'rule_0006: Duplicate Active Records Check - This query tests for
+      duplicate active records'
+    severity: Warning
+    type: custom
+    rule: rule_0006
+    engine: business_rule_catalog
+    implementation: 'rule_0006: Duplicate Active Records Check'
+- name: dim_policy
+  physicalType: table
+  description: Gold dim_policy table generated from dim/fact metadata.
+  businessName: Dim Policy
+  tags:
+  - gold
+  - bvault_gold
+  - scd2
+  logicalType: object
+  physicalName: dim_policy
+  dataGranularityDescription: One row per policy_id.
+  properties:
+  - name: policy_sk
+    physicalType: varchar(64)
+    description: Primary key for this gold table.
+    businessName: Policy Sk
+    tags:
+    - primary_key
+    logicalType: string
+    required: true
+    unique: true
+    classification: restricted
+    quality:
+    - description: 'rule_0003: Not Null Check - PK should be unique'
+      severity: Warning
+      type: custom
+      rule: rule_0003
+      engine: business_rule_catalog
+      implementation: 'rule_0003: Not Null Check'
+  - name: policy_id
+    physicalType: varchar(64)
+    description: Business key for this gold table.
+    businessName: Policy Id
+    tags:
+    - business_key
+    logicalType: string
+    required: true
+    unique: true
+    classification: confidential
+    quality:
+    - description: 'rule_0001: BK Check - PK should not be null'
+      severity: Warning
+      type: custom
+      rule: rule_0001
+      engine: business_rule_catalog
+      implementation: 'rule_0001: BK Check'
+  - name: effective_from_ts
+    physicalType: timestamp
+    description: SCD2 effective start timestamp.
+    businessName: Effective From Ts
+    tags:
+    - scd2
+    logicalType: timestamp
+    required: true
+    unique: false
+    classification: internal
+  - name: effective_to_ts
+    physicalType: timestamp
+    description: SCD2 effective end timestamp.
+    businessName: Effective To Ts
+    tags:
+    - scd2
+    primaryKey: true
+    primaryKeyPosition: 1
+    logicalType: timestamp
+    required: true
+    unique: false
+    classification: internal
+    criticalDataElement: true
+  - name: is_current
+    physicalType: boolean
+    description: Current active record indicator.
+    businessName: Is Current
+    tags:
+    - scd2
+    logicalType: boolean
+    required: true
+    unique: false
+    classification: internal
+  - name: load_ts
+    physicalType: timestamp
+    description: Gold table load timestamp.
+    businessName: Load Ts
+    tags:
+    - audit
+    logicalType: timestamp
+    required: false
+    unique: false
+    classification: internal
+  - name: record_source
+    physicalType: varchar(128)
+    description: Source system or source table for the row.
+    businessName: Record Source
+    tags:
+    - audit
+    logicalType: string
+    required: false
+    unique: false
+    classification: internal
+  - name: Source Table
+    businessName: dev_allianz_raw.bvault_silver.sat_policy_crm
+  quality:
+  - description: 'rule_0002: Missing Keys Check - Checks missing value between source
+      and target'
+    severity: Warning
+    type: custom
+    rule: rule_0002
+    engine: business_rule_catalog
+    implementation: 'rule_0002: Missing Keys Check'
+  - description: 'rule_0004: SCD2 Effective Dates Check - effective start date should
+      be less than effective end date'
+    severity: Warning
+    type: custom
+    rule: rule_0004
+    engine: business_rule_catalog
+    implementation: 'rule_0004: SCD2 Effective Dates Check'
+  - description: 'rule_0005: Overlapping Period Check - There should not be any overlapping
+      period for each bussiness key'
+    severity: Warning
+    type: custom
+    rule: rule_0005
+    engine: business_rule_catalog
+    implementation: 'rule_0005: Overlapping Period Check'
+  - description: 'rule_0006: Duplicate Active Records Check - This query tests for
+      duplicate active records'
+    severity: Warning
+    type: custom
+    rule: rule_0006
+    engine: business_rule_catalog
+    implementation: 'rule_0006: Duplicate Active Records Check'
+- name: dim_person
+  physicalType: table
+  description: Gold dim_person table generated from dim/fact metadata.
+  businessName: Dim Person
+  tags:
+  - gold
+  - bvault_gold
+  - scd2
+  logicalType: object
+  physicalName: dim_person
+  dataGranularityDescription: One row per person_id.
+  properties:
+  - name: person_sk
+    physicalType: varchar(64)
+    description: Primary key for this gold table.
+    businessName: Person Sk
+    tags:
+    - primary_key
+    logicalType: string
+    required: true
+    unique: true
+    classification: restricted
+    quality:
+    - description: 'rule_0003: Not Null Check - PK should be unique'
+      severity: Warning
+      type: custom
+      rule: rule_0003
+      engine: business_rule_catalog
+      implementation: 'rule_0003: Not Null Check'
+  - name: person_id
+    physicalType: varchar(64)
+    description: Business key for this gold table.
+    businessName: Person Id
+    tags:
+    - business_key
+    logicalType: string
+    required: true
+    unique: true
+    classification: confidential
+    quality:
+    - description: 'rule_0001: BK Check - PK should not be null'
+      severity: Warning
+      type: custom
+      rule: rule_0001
+      engine: business_rule_catalog
+      implementation: 'rule_0001: BK Check'
+  - name: effective_from_ts
+    physicalType: timestamp
+    description: SCD2 effective start timestamp.
+    businessName: Effective From Ts
+    tags:
+    - scd2
+    logicalType: timestamp
+    required: true
+    unique: false
+    classification: internal
+  - name: effective_to_ts
+    physicalType: timestamp
+    description: SCD2 effective end timestamp.
+    businessName: Effective To Ts
+    tags:
+    - scd2
+    primaryKey: true
+    primaryKeyPosition: 1
+    logicalType: timestamp
+    required: true
+    unique: false
+    classification: internal
+    criticalDataElement: true
+  - name: is_current
+    physicalType: boolean
+    description: Current active record indicator.
+    businessName: Is Current
+    tags:
+    - scd2
+    logicalType: boolean
+    required: true
+    unique: false
+    classification: internal
+  - name: load_ts
+    physicalType: timestamp
+    description: Gold table load timestamp.
+    businessName: Load Ts
+    tags:
+    - audit
+    logicalType: timestamp
+    required: false
+    unique: false
+    classification: internal
+  - name: record_source
+    physicalType: varchar(128)
+    description: Source system or source table for the row.
+    businessName: Record Source
+    tags:
+    - audit
+    logicalType: string
+    required: false
+    unique: false
+    classification: internal
+  quality:
+  - description: 'rule_0002: Missing Keys Check - Checks missing value between source
+      and target'
+    severity: Warning
+    type: custom
+    rule: rule_0002
+    engine: business_rule_catalog
+    implementation: 'rule_0002: Missing Keys Check'
+  - description: 'rule_0004: SCD2 Effective Dates Check - effective start date should
+      be less than effective end date'
+    severity: Warning
+    type: custom
+    rule: rule_0004
+    engine: business_rule_catalog
+    implementation: 'rule_0004: SCD2 Effective Dates Check'
+  - description: 'rule_0005: Overlapping Period Check - There should not be any overlapping
+      period for each bussiness key'
+    severity: Warning
+    type: custom
+    rule: rule_0005
+    engine: business_rule_catalog
+    implementation: 'rule_0005: Overlapping Period Check'
+  - description: 'rule_0006: Duplicate Active Records Check - This query tests for
+      duplicate active records'
+    severity: Warning
+    type: custom
+    rule: rule_0006
+    engine: business_rule_catalog
+    implementation: 'rule_0006: Duplicate Active Records Check'
+- name: fact_complaint
+  physicalType: table
+  description: Gold fact_complaint table generated from dim/fact metadata.
+  businessName: Fact Complaint
+  tags:
+  - gold
+  - bvault_gold
+  - snapshot
+  logicalType: object
+  physicalName: fact_complaint
+  dataGranularityDescription: One row per complaint_id.
+  properties:
+  - name: complaint_id
+    physicalType: varchar(64)
+    description: Primary key for this gold table.
+    businessName: Complaint Id
+    tags:
+    - primary_key
+    logicalType: string
+    required: true
+    unique: true
+    classification: internal
+    quality:
+    - description: 'rule_0003: Not Null Check - PK should be unique'
+      severity: Warning
+      type: custom
+      rule: rule_0003
+      engine: business_rule_catalog
+      implementation: 'rule_0003: Not Null Check'
+    - description: 'rule_0007: BK Not Null Check - BK should be unique'
+      severity: Warning
+      type: custom
+      rule: rule_0007
+      engine: business_rule_catalog
+      implementation: 'rule_0007: BK Not Null Check'
+    - description: 'rule_0001: BK Check - PK should not be null'
+      severity: Warning
+      type: custom
+      rule: rule_0001
+      engine: business_rule_catalog
+      implementation: 'rule_0001: BK Check'
+    - description: 'rule_0003: Not Null Check - PK should be unique'
+      severity: Warning
+      type: custom
+      rule: rule_0003
+      engine: business_rule_catalog
+      implementation: 'rule_0003: Not Null Check'
+  - name: load_ts
+    physicalType: timestamp
+    description: Gold table load timestamp.
+    businessName: Load Ts
+    tags:
+    - audit
+    logicalType: timestamp
+    required: false
+    unique: false
+    classification: internal
+  - name: record_source
+    physicalType: varchar(128)
+    description: Source system or source table for the row.
+    businessName: Record Source
+    tags:
+    - audit
+    logicalType: string
+    required: false
+    unique: false
+    classification: internal
+- name: fact_policy
+  physicalType: table
+  description: Gold fact_policy table generated from dim/fact metadata.
+  businessName: Fact Policy
+  tags:
+  - gold
+  - bvault_gold
+  - snapshot
+  logicalType: object
+  physicalName: fact_policy
+  dataGranularityDescription: One row per policy_sk.
+  properties:
+  - name: policy_sk
+    physicalType: varchar(64)
+    description: Primary key for this gold table.
+    businessName: Policy Sk
+    tags:
+    - primary_key
+    logicalType: string
+    required: true
+    unique: true
+    classification: restricted
+    quality:
+    - description: 'rule_0003: Not Null Check - PK should be unique'
+      severity: Warning
+      type: custom
+      rule: rule_0003
+      engine: business_rule_catalog
+      implementation: 'rule_0003: Not Null Check'
+  - name: load_ts
+    physicalType: timestamp
+    description: Gold table load timestamp.
+    businessName: Load Ts
+    tags:
+    - audit
+    logicalType: timestamp
+    required: false
+    unique: false
+    classification: internal
+  - name: record_source
+    physicalType: varchar(128)
+    description: Source system or source table for the row.
+    businessName: Record Source
+    tags:
+    - audit
+    logicalType: string
+    required: false
+    unique: false
+    classification: internal
+- name: fact_quote
+  physicalType: table
+  description: Gold fact_quote table generated from dim/fact metadata.
+  businessName: Fact Quote
+  tags:
+  - gold
+  - bvault_gold
+  - snapshot
+  logicalType: object
+  physicalName: fact_quote
+  dataGranularityDescription: One row per quote_id.
+  properties:
+  - name: quote_id
+    physicalType: varchar(64)
+    description: Primary key for this gold table.
+    businessName: Quote Id
+    tags:
+    - primary_key
+    logicalType: string
+    required: true
+    unique: true
+    classification: internal
+    quality:
+    - description: 'rule_0003: Not Null Check - PK should be unique'
+      severity: Warning
+      type: custom
+      rule: rule_0003
+      engine: business_rule_catalog
+      implementation: 'rule_0003: Not Null Check'
+  - name: load_ts
+    physicalType: timestamp
+    description: Gold table load timestamp.
+    businessName: Load Ts
+    tags:
+    - audit
+    logicalType: timestamp
+    required: false
+    unique: false
+    classification: internal
+  - name: record_source
+    physicalType: varchar(128)
+    description: Source system or source table for the row.
+    businessName: Record Source
+    tags:
+    - audit
+    logicalType: string
+    required: false
+    unique: false
+    classification: internal
+- name: fact_lead
+  physicalType: table
+  description: Gold fact_lead table generated from dim/fact metadata.
+  businessName: Fact Lead
+  tags:
+  - gold
+  - bvault_gold
+  - snapshot
+  logicalType: object
+  physicalName: fact_lead
+  dataGranularityDescription: One row per lead_id.
+  properties:
+  - name: lead_id
+    physicalType: varchar(64)
+    description: Primary key for this gold table.
+    businessName: Lead Id
+    tags:
+    - primary_key
+    logicalType: string
+    required: true
+    unique: true
+    classification: internal
+    quality:
+    - description: 'rule_0003: Not Null Check - PK should be unique'
+      severity: Warning
+      type: custom
+      rule: rule_0003
+      engine: business_rule_catalog
+      implementation: 'rule_0003: Not Null Check'
+  - name: load_ts
+    physicalType: timestamp
+    description: Gold table load timestamp.
+    businessName: Load Ts
+    tags:
+    - audit
+    logicalType: timestamp
+    required: false
+    unique: false
+    classification: internal
+  - name: record_source
+    physicalType: varchar(128)
+    description: Source system or source table for the row.
+    businessName: Record Source
+    tags:
+    - audit
+    logicalType: string
+    required: false
+    unique: false
+    classification: internal
+support:
+- channel: Teams
+  url: Teams Channel
+  description: COE Team
+price:
+  priceAmount: 1000.0
+  priceCurrency: Dollar
+  priceUnit: $
+roles:
+- role: Data Engineer
+  description: Data Engineer Role
+  access: Read, Write
+  firstLevelApprovers: Gourav
+  secondLevelApprovers: Sanjay
+slaProperties:
+- property: frequency
+  value: '1'
+  unit: d
+- property: latency
+  value: '24'
+  unit: h
+- property: retention
+  value: '7'
+  unit: y
+customProperties:
+- property: owner
+  value: gourav
+- property: sourceSystem
+  value: crm
+- property: channel
+  value: csv
+- property: file_format
+  value: csv
+- property: sourceID
+  value: src_0010

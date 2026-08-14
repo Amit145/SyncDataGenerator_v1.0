@@ -1,0 +1,797 @@
+version: v1
+kind: DataContract
+apiVersion: v3.0.2
+id: src_0010
+name: crm_prd_02_customer360
+tenant: Allianz
+tags:
+- datacontract
+status: draft
+servers:
+- server: allianz
+  type: databricks
+  catalog: allianz_coe
+  schema: customer360
+dataProduct: customer360
+description:
+  usage: Used to bootstrap an ODCS data contract workbook from a folder of CSV files.
+  purpose: Ad hoc ODCS Excel generated from CSV files in data\raw\policy\20260813095628\prd_02.
+  limitations: Generated from CSV headers and sampled values; review inferred types
+    and key columns before approval.
+domain: crm
+schema:
+- name: coverage
+  physicalType: table
+  description: CSV source records for coverage.
+  businessName: Coverage
+  tags:
+  - adhoc
+  - csv
+  - source_feed
+  logicalType: object
+  physicalName: coverage.csv
+  dataGranularityDescription: One row per coverage_identifier.
+  properties:
+  - name: batch_ref
+    physicalType: bigint
+    description: Source field batch_ref.
+    businessName: Batch Ref
+    logicalType: integer
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - '20260813095628'
+  - name: pull_ts
+    physicalType: timestamp
+    description: Source field pull_ts.
+    businessName: Pull Ts
+    logicalType: timestamp
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - '2025-05-25T19:33:43'
+  - name: origin_sys
+    physicalType: varchar(32)
+    description: Source field origin_sys.
+    businessName: Origin Sys
+    logicalType: string
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - SAP
+  - name: coverage_identifier
+    physicalType: varchar(64)
+    description: Source field coverage_identifier.
+    businessName: Coverage Identifier
+    tags:
+    - primary_key
+    logicalType: string
+    required: true
+    unique: true
+    classification: internal
+    examples:
+    - COV_PRD_20260813_095628_42_000007
+    quality:
+    - description: Primary key must not contain null values.
+      severity: Warning
+      type: custom
+      rule: nullValues
+      engine: odcs_metric
+      implementation: nullValues mustBe 0
+    - description: Primary key must not contain duplicate values.
+      severity: Warning
+      type: custom
+      rule: duplicateValues
+      engine: odcs_metric
+      implementation: duplicateValues mustBe 0
+    - description: 'rule_0001: BK Check - PK should not be null'
+      severity: Warning
+      type: custom
+      rule: rule_0001
+      engine: business_rule_catalog
+      implementation: 'rule_0001: BK Check'
+    - description: 'rule_0007: BK Not Null Check - BK should be unique'
+      severity: Warning
+      type: custom
+      rule: rule_0007
+      engine: business_rule_catalog
+      implementation: 'rule_0007: BK Not Null Check'
+  - name: coverage_code
+    physicalType: varchar(64)
+    description: Source field coverage_code.
+    businessName: Coverage Code
+    logicalType: string
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - COV_PRD_20260813_095628_42_000007
+  - name: coverage_category
+    physicalType: varchar(32)
+    description: Source field coverage_category.
+    businessName: Coverage Category
+    logicalType: string
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - General
+  - name: coverage_effective_date
+    physicalType: timestamp
+    description: Source field coverage_effective_date.
+    businessName: Coverage Effective Date
+    logicalType: timestamp
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - '2026-02-14'
+  - name: coverage_discontinue_date
+    physicalType: timestamp
+    description: Source field coverage_discontinue_date.
+    businessName: Coverage Discontinue Date
+    logicalType: timestamp
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - '2026-03-03'
+  - name: coverage_type
+    physicalType: varchar(32)
+    description: Source field coverage_type.
+    businessName: Coverage Type
+    logicalType: string
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - Core
+  - name: maximum_deductible
+    physicalType: decimal(18,2)
+    description: Source field maximum_deductible.
+    businessName: Maximum Deductible
+    logicalType: number
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - '100.00'
+  - name: coverage_name
+    physicalType: varchar(64)
+    description: Source field coverage_name.
+    businessName: Coverage Name
+    logicalType: string
+    required: true
+    unique: false
+    classification: confidential
+    examples:
+    - Core base cover for PRD_CYBER_INSURANCE
+  - name: default_limit
+    physicalType: decimal(18,2)
+    description: Source field default_limit.
+    businessName: Default Limit
+    logicalType: number
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - '71424.00'
+  - name: waiting_period
+    physicalType: boolean
+    description: Source field waiting_period.
+    businessName: Waiting Period
+    logicalType: boolean
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - '0'
+  quality:
+  - description: Table must contain at least one row.
+    severity: Warning
+    type: custom
+    rule: rowCount
+    engine: odcs_metric
+    implementation: rowCount mustBeGreaterThan 0
+- name: policy
+  physicalType: table
+  description: CSV source records for policy.
+  businessName: Policy
+  tags:
+  - adhoc
+  - csv
+  - source_feed
+  logicalType: object
+  physicalName: policy.csv
+  dataGranularityDescription: One row per policy_identifier.
+  properties:
+  - name: batch_ref
+    physicalType: bigint
+    description: Source field batch_ref.
+    businessName: Batch Ref
+    logicalType: integer
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - '20260813095628'
+  - name: pull_ts
+    physicalType: timestamp
+    description: Source field pull_ts.
+    businessName: Pull Ts
+    logicalType: timestamp
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - '2025-05-25T19:33:43'
+  - name: origin_sys
+    physicalType: varchar(32)
+    description: Source field origin_sys.
+    businessName: Origin Sys
+    logicalType: string
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - SAP
+  - name: policy_cover_option
+    physicalType: varchar(32)
+    description: Source field policy_cover_option.
+    businessName: Policy Cover Option
+    logicalType: string
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - BASE_ONLY
+  - name: is_fraud
+    physicalType: boolean
+    description: Source field is_fraud.
+    businessName: Is Fraud
+    logicalType: boolean
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - N
+  - name: policy_cycle
+    physicalType: bigint
+    description: Source field policy_cycle.
+    businessName: Policy Cycle
+    logicalType: integer
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - '0'
+  - name: policy_end_date
+    physicalType: timestamp
+    description: Source field policy_end_date.
+    businessName: Policy End Date
+    logicalType: timestamp
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - '2026-03-03'
+  - name: policy_number
+    physicalType: bigint
+    description: Source field policy_number.
+    businessName: Policy Number
+    logicalType: integer
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - '4757905'
+  - name: policy_start_date
+    physicalType: timestamp
+    description: Source field policy_start_date.
+    businessName: Policy Start Date
+    logicalType: timestamp
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - '2026-02-14'
+  - name: policy_status
+    physicalType: varchar(32)
+    description: Source field policy_status.
+    businessName: Policy Status
+    logicalType: string
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - CANCELLED
+  - name: renewal_date
+    physicalType: timestamp
+    description: Source field renewal_date.
+    businessName: Renewal Date
+    logicalType: timestamp
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - '2026-02-21'
+  - name: product_identifier
+    physicalType: varchar(32)
+    description: Source field product_identifier.
+    businessName: Product Identifier
+    logicalType: string
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - PRD_20260813_095628_42_000007
+  - name: record_version
+    physicalType: boolean
+    description: Source field record_version.
+    businessName: Record Version
+    logicalType: boolean
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - '1'
+  - name: policy_issue_date
+    physicalType: timestamp
+    description: Source field policy_issue_date.
+    businessName: Policy Issue Date
+    logicalType: timestamp
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - '2026-02-14'
+  - name: policy_sum_insured
+    physicalType: decimal(18,2)
+    description: Source field policy_sum_insured.
+    businessName: Policy Sum Insured
+    logicalType: number
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - '224194.80'
+  - name: policy_tenure
+    physicalType: varchar(64)
+    description: Source field policy_tenure.
+    businessName: Policy Tenure
+    logicalType: string
+    required: false
+    unique: false
+    classification: internal
+  - name: policy_type
+    physicalType: varchar(64)
+    description: Source field policy_type.
+    businessName: Policy Type
+    logicalType: string
+    required: false
+    unique: false
+    classification: internal
+  - name: is_policy_renewal
+    physicalType: boolean
+    description: Source field is_policy_renewal.
+    businessName: Is Policy Renewal
+    logicalType: boolean
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - Y
+  - name: policy_cancellation_date
+    physicalType: varchar(64)
+    description: Source field policy_cancellation_date.
+    businessName: Policy Cancellation Date
+    logicalType: string
+    required: false
+    unique: false
+    classification: internal
+  - name: policy_cancellation_reason
+    physicalType: varchar(64)
+    description: Source field policy_cancellation_reason.
+    businessName: Policy Cancellation Reason
+    logicalType: string
+    required: false
+    unique: false
+    classification: internal
+  - name: policy_retention_limit
+    physicalType: decimal(18,2)
+    description: Source field policy_retention_limit.
+    businessName: Policy Retention Limit
+    logicalType: number
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - '2802.43'
+  - name: policy_base_premium
+    physicalType: decimal(18,2)
+    description: Source field policy_base_premium.
+    businessName: Policy Base Premium
+    logicalType: number
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - '1868.29'
+  - name: sales_channel_identifier
+    physicalType: varchar(32)
+    description: Source field sales_channel_identifier.
+    businessName: Sales Channel Identifier
+    logicalType: string
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - CHAN_ONLINE
+  - name: quote_identifier
+    physicalType: varchar(32)
+    description: Source field quote_identifier.
+    businessName: Quote Identifier
+    logicalType: string
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - QUO_20260813_095628_42_000001
+  - name: policy_status_date
+    physicalType: timestamp
+    description: Source field policy_status_date.
+    businessName: Policy Status Date
+    logicalType: timestamp
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - '2026-02-14'
+  - name: limit_for_indemnification
+    physicalType: decimal(18,2)
+    description: Source field limit_for_indemnification.
+    businessName: Limit For Indemnification
+    logicalType: number
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - '224194.80'
+  - name: policy_expiry_date
+    physicalType: timestamp
+    description: Source field policy_expiry_date.
+    businessName: Policy Expiry Date
+    logicalType: timestamp
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - '2026-03-03'
+  - name: is_auto_renew_enabled
+    physicalType: boolean
+    description: Source field is_auto_renew_enabled.
+    businessName: Is Auto Renew Enabled
+    logicalType: boolean
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - N
+  - name: policy_renewal_satisfaction_score
+    physicalType: varchar(64)
+    description: Source field policy_renewal_satisfaction_score.
+    businessName: Policy Renewal Satisfaction Score
+    logicalType: string
+    required: false
+    unique: false
+    classification: internal
+  - name: policy_renewal_feedback
+    physicalType: varchar(64)
+    description: Source field policy_renewal_feedback.
+    businessName: Policy Renewal Feedback
+    logicalType: string
+    required: false
+    unique: false
+    classification: internal
+  - name: number_of_insured_persons
+    physicalType: boolean
+    description: Source field number_of_insured_persons.
+    businessName: Number Of Insured Persons
+    logicalType: boolean
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - '1'
+  - name: loyalty_discount_usage
+    physicalType: varchar(64)
+    description: Source field loyalty_discount_usage.
+    businessName: Loyalty Discount Usage
+    logicalType: string
+    required: false
+    unique: false
+    classification: internal
+  - name: policy_identifier
+    physicalType: varchar(32)
+    description: Source field policy_identifier.
+    businessName: Policy Identifier
+    tags:
+    - primary_key
+    logicalType: string
+    required: true
+    unique: true
+    classification: internal
+    examples:
+    - POL_20260813_095628_42_000001
+    quality:
+    - description: Primary key must not contain null values.
+      severity: Warning
+      type: custom
+      rule: nullValues
+      engine: odcs_metric
+      implementation: nullValues mustBe 0
+    - description: Primary key must not contain duplicate values.
+      severity: Warning
+      type: custom
+      rule: duplicateValues
+      engine: odcs_metric
+      implementation: duplicateValues mustBe 0
+    - description: 'rule_0001: BK Check - PK should not be null'
+      severity: Warning
+      type: custom
+      rule: rule_0001
+      engine: business_rule_catalog
+      implementation: 'rule_0001: BK Check'
+    - description: 'rule_0007: BK Not Null Check - BK should be unique'
+      severity: Warning
+      type: custom
+      rule: rule_0007
+      engine: business_rule_catalog
+      implementation: 'rule_0007: BK Not Null Check'
+  - name: discount
+    physicalType: varchar(64)
+    description: Source field discount.
+    businessName: Discount
+    logicalType: string
+    required: false
+    unique: false
+    classification: internal
+  - name: is_renewal_escalation
+    physicalType: varchar(64)
+    description: Source field is_renewal_escalation.
+    businessName: Is Renewal Escalation
+    logicalType: string
+    required: false
+    unique: false
+    classification: internal
+  quality:
+  - description: Table must contain at least one row.
+    severity: Warning
+    type: custom
+    rule: rowCount
+    engine: odcs_metric
+    implementation: rowCount mustBeGreaterThan 0
+- name: policy_coverage
+  physicalType: table
+  description: CSV source records for policy_coverage.
+  businessName: Policy Coverage
+  tags:
+  - adhoc
+  - csv
+  - source_feed
+  logicalType: object
+  physicalName: policy_coverage.csv
+  dataGranularityDescription: One row per policy_coverage_identifier.
+  properties:
+  - name: batch_ref
+    physicalType: bigint
+    description: Source field batch_ref.
+    businessName: Batch Ref
+    logicalType: integer
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - '20260813095628'
+  - name: pull_ts
+    physicalType: timestamp
+    description: Source field pull_ts.
+    businessName: Pull Ts
+    logicalType: timestamp
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - '2025-05-25T19:33:43'
+  - name: origin_sys
+    physicalType: varchar(32)
+    description: Source field origin_sys.
+    businessName: Origin Sys
+    logicalType: string
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - SAP
+  - name: coverage_start_date
+    physicalType: timestamp
+    description: Source field coverage_start_date.
+    businessName: Coverage Start Date
+    logicalType: timestamp
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - '2026-02-14'
+  - name: coverage_amount
+    physicalType: decimal(18,2)
+    description: Source field coverage_amount.
+    businessName: Coverage Amount
+    logicalType: number
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - '71424.00'
+  - name: deductible_amount
+    physicalType: decimal(18,2)
+    description: Source field deductible_amount.
+    businessName: Deductible Amount
+    logicalType: number
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - '100.00'
+  - name: coverage_identifier
+    physicalType: varchar(64)
+    description: Source field coverage_identifier.
+    businessName: Coverage Identifier
+    logicalType: string
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - COV_PRD_20260813_095628_42_000007
+  - name: coverage_status
+    physicalType: varchar(32)
+    description: Source field coverage_status.
+    businessName: Coverage Status
+    logicalType: string
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - CANCELLED
+  - name: policy_coverage_identifier
+    physicalType: varchar(64)
+    description: Source field policy_coverage_identifier.
+    businessName: Policy Coverage Identifier
+    tags:
+    - primary_key
+    logicalType: string
+    required: true
+    unique: true
+    classification: internal
+    examples:
+    - PCOV_POL_20260813_095628_42_000001
+    quality:
+    - description: Primary key must not contain null values.
+      severity: Warning
+      type: custom
+      rule: nullValues
+      engine: odcs_metric
+      implementation: nullValues mustBe 0
+    - description: Primary key must not contain duplicate values.
+      severity: Warning
+      type: custom
+      rule: duplicateValues
+      engine: odcs_metric
+      implementation: duplicateValues mustBe 0
+    - description: 'rule_0001: BK Check - PK should not be null'
+      severity: Warning
+      type: custom
+      rule: rule_0001
+      engine: business_rule_catalog
+      implementation: 'rule_0001: BK Check'
+    - description: 'rule_0007: BK Not Null Check - BK should be unique'
+      severity: Warning
+      type: custom
+      rule: rule_0007
+      engine: business_rule_catalog
+      implementation: 'rule_0007: BK Not Null Check'
+  - name: coverage_status_code
+    physicalType: varchar(32)
+    description: Source field coverage_status_code.
+    businessName: Coverage Status Code
+    logicalType: string
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - CANCELLED
+  - name: coverage_limit_amount
+    physicalType: decimal(18,2)
+    description: Source field coverage_limit_amount.
+    businessName: Coverage Limit Amount
+    logicalType: number
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - '71424.00'
+  - name: gross_premium
+    physicalType: decimal(18,2)
+    description: Source field gross_premium.
+    businessName: Gross Premium
+    logicalType: number
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - '595.20'
+  - name: coverage_end_date
+    physicalType: timestamp
+    description: Source field coverage_end_date.
+    businessName: Coverage End Date
+    logicalType: timestamp
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - '2026-03-03'
+  - name: policy_identifier
+    physicalType: varchar(32)
+    description: Source field policy_identifier.
+    businessName: Policy Identifier
+    logicalType: string
+    required: true
+    unique: false
+    classification: internal
+    examples:
+    - POL_20260813_095628_42_000001
+  quality:
+  - description: Table must contain at least one row.
+    severity: Warning
+    type: custom
+    rule: rowCount
+    engine: odcs_metric
+    implementation: rowCount mustBeGreaterThan 0
+support:
+- channel: Teams
+  url: Teams Channel
+  description: COE Team
+price:
+  priceAmount: 1000.0
+  priceCurrency: Dollar
+  priceUnit: $
+roles:
+- role: Data Engineer
+  description: Data Engineer Role
+  access: Read, Write
+  firstLevelApprovers: Gourav
+  secondLevelApprovers: Sanjay
+slaProperties:
+- property: frequency
+  value: '1'
+  unit: d
+- property: latency
+  value: '24'
+  unit: h
+- property: retention
+  value: '7'
+  unit: y
+customProperties:
+- property: owner
+  value: gourav
+- property: sourceSystem
+  value: crm
+- property: channel
+  value: csv
+- property: file_format
+  value: csv
+- property: sourceID
+  value: src_0010
