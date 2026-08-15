@@ -11,3 +11,4 @@ PyYAML
 jsonschema
 openpyxl
 datacontract-cli
+databricks-sql-connector

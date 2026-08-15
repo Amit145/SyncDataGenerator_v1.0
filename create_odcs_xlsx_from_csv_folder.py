@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
 import re
+import sys
 from copy import copy
 from datetime import datetime
 from pathlib import Path
@@ -17,6 +19,7 @@ DEFAULT_TEMPLATE = Path("dimdc/odcs-template-updated.xlsx")
 DEFAULT_OUTPUT_DIR = Path("dimdc/outputs")
 DEFAULT_RULES = Path("dimdc/rules.csv")
 DEFAULT_CUSTOM_RULE_IDS = "rule_0001,rule_0007"
+INPUT_MODES = {"csv", "catalog-schema", "information-schema"}
 
 PROPERTY_COLUMNS = [
     "Property",
@@ -239,6 +242,25 @@ def _classification(column: str) -> str:
     return "internal"
 
 
+def _logical_type_from_database_type(data_type: str) -> tuple[str, str]:
+    normalized = data_type.lower().strip()
+    if any(token in normalized for token in ("tinyint", "smallint", "int", "bigint")):
+        return "integer", data_type
+    if any(token in normalized for token in ("decimal", "numeric", "double", "float", "real")):
+        return "number", data_type
+    if "bool" in normalized:
+        return "boolean", data_type
+    if "timestamp" in normalized or "datetime" in normalized:
+        return "timestamp", data_type
+    if normalized == "date" or normalized.startswith("date"):
+        return "date", data_type
+    if "array" in normalized:
+        return "array", data_type
+    if "struct" in normalized or "map" in normalized:
+        return "object", data_type
+    return "string", data_type or "string"
+
+
 def _infer_primary_key(table_name: str, columns: list[str], rows: list[dict[str, str]]) -> str | None:
     candidates = [
         f"{table_name}_id",
@@ -309,6 +331,137 @@ def _table_metadata(path: Path, sample_rows: int) -> dict[str, Any]:
     }
 
 
+def _property_rows_from_information_schema(
+    table_name: str,
+    columns: list[dict[str, Any]],
+    pk: str | None,
+) -> list[dict[str, Any]]:
+    properties = []
+    for column in columns:
+        column_name = str(column["column_name"])
+        data_type = str(column.get("data_type") or "string")
+        logical_type, physical_type = _logical_type_from_database_type(data_type)
+        is_pk = column_name == pk
+        properties.append({
+            "Property": column_name,
+            "Business Name": _business_name(column_name),
+            "Logical Type": logical_type,
+            "Physical Type": physical_type,
+            "Example(s)": "",
+            "Description": str(column.get("comment") or f"Information schema field {column_name}."),
+            "Required": "TRUE" if is_pk or column_name.lower().endswith(("_id", "_identifier", "_sk")) else "FALSE",
+            "Unique": "TRUE" if is_pk else "FALSE",
+            "Classification": _classification(column_name),
+            "Tags": "primary_key" if is_pk else "",
+            "Authoritative Definition URL": "",
+            "Authoritative Definition Type": "",
+        })
+    return properties
+
+
+def _table_metadata_from_information_schema(
+    table_name: str,
+    columns: list[dict[str, Any]],
+    table_comment: str = "",
+) -> dict[str, Any]:
+    column_names = [str(column["column_name"]) for column in columns]
+    pk = _infer_primary_key(table_name, column_names, [])
+    return {
+        "table_name": table_name,
+        "physical_name": table_name,
+        "path": None,
+        "columns": column_names,
+        "rows": [],
+        "row_count": None,
+        "primary_key": pk,
+        "description": table_comment or f"Table {table_name} from information_schema.",
+        "properties": _property_rows_from_information_schema(table_name, columns, pk),
+    }
+
+
+def _quote_identifier(identifier: str) -> str:
+    return "`" + identifier.replace("`", "``") + "`"
+
+
+def _parse_catalog_schema(value: str) -> tuple[str, str]:
+    parts = [part.strip() for part in str(value or "").split(".") if part.strip()]
+    if len(parts) != 2:
+        raise RuntimeError("catalog-schema mode expects --input-path in the form <catalog>.<schema>.")
+    return parts[0], parts[1]
+
+
+def _fetch_information_schema_tables(
+    catalog_name: str,
+    schema_name: str,
+    server_hostname: str | None,
+    http_path: str | None,
+    access_token: str | None,
+    table_filter: list[str],
+) -> list[dict[str, Any]]:
+    try:
+        from databricks import sql
+    except ImportError as exc:
+        raise RuntimeError(
+            "information-schema mode requires databricks-sql-connector. "
+            "Install it with: pip install databricks-sql-connector"
+        ) from exc
+
+    missing = []
+    if not server_hostname:
+        missing.append("DATABRICKS_SERVER_HOSTNAME or --databricks-server-hostname")
+    if not http_path:
+        missing.append("DATABRICKS_HTTP_PATH or --databricks-http-path")
+    if not access_token:
+        missing.append("DATABRICKS_TOKEN or --databricks-token")
+    if missing:
+        raise RuntimeError("Missing Databricks connection settings: " + ", ".join(missing))
+
+    catalog_ref = _quote_identifier(catalog_name)
+    table_filter_set = {table.lower() for table in table_filter}
+    columns_query = f"""
+        SELECT table_name, column_name, data_type, ordinal_position, comment
+        FROM {catalog_ref}.information_schema.columns
+        WHERE table_schema = ?
+        ORDER BY table_name, ordinal_position
+    """
+    tables_query = f"""
+        SELECT table_name, comment
+        FROM {catalog_ref}.information_schema.tables
+        WHERE table_schema = ?
+    """
+
+    with sql.connect(
+        server_hostname=server_hostname,
+        http_path=http_path,
+        access_token=access_token,
+    ) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(tables_query, (schema_name,))
+            table_comments = {
+                str(row[0]): str(row[1] or "")
+                for row in cursor.fetchall()
+                if not table_filter_set or str(row[0]).lower() in table_filter_set
+            }
+            cursor.execute(columns_query, (schema_name,))
+            columns_by_table: dict[str, list[dict[str, Any]]] = {}
+            for row in cursor.fetchall():
+                table_name = str(row[0])
+                if table_filter_set and table_name.lower() not in table_filter_set:
+                    continue
+                columns_by_table.setdefault(table_name, []).append({
+                    "table_name": table_name,
+                    "column_name": str(row[1]),
+                    "data_type": str(row[2] or "string"),
+                    "ordinal_position": row[3],
+                    "comment": str(row[4] or ""),
+                })
+
+    return [
+        _table_metadata_from_information_schema(table_name, columns, table_comments.get(table_name, ""))
+        for table_name, columns in sorted(columns_by_table.items())
+    ]
+
+
 def _write_fundamentals(wb: Any, input_path: Path, contract_name: str, domain: str, data_product: str) -> None:
     if "Fundamentals" not in wb.sheetnames:
         return
@@ -323,7 +476,7 @@ def _write_fundamentals(wb: Any, input_path: Path, contract_name: str, domain: s
         "Domain": domain,
         "Data Product": data_product,
         "Tenant": "",
-        "Purpose": f"Ad hoc ODCS Excel generated from CSV files in {input_path}.",
+        "Purpose": f"Ad hoc ODCS Excel generated from {input_path}.",
         "Limitations": "Generated from CSV headers and sampled values; review inferred types and key columns before approval.",
         "Usage": "Used to bootstrap an ODCS data contract workbook from a folder of CSV files.",
     }
@@ -336,7 +489,7 @@ def _write_schema_sheet(ws: Any, table: dict[str, Any], tags: str) -> None:
     table_name = table["table_name"]
     _set_label_value(ws, "Name", table_name)
     _set_label_value(ws, "Type", "table")
-    _set_label_value(ws, "Description", f"CSV source records for {table_name}.")
+    _set_label_value(ws, "Description", table.get("description") or f"CSV source records for {table_name}.")
     _set_label_value(ws, "Business Name", _business_name(table_name))
     _set_label_value(ws, "Physical Name", table["physical_name"])
     grain = f"One row per {table['primary_key']}." if table["primary_key"] else "One row per CSV record."
@@ -473,20 +626,57 @@ def create_odcs_xlsx_from_csv_folder(
     tags: str,
     rules_path: Path | None,
     custom_rule_ids: list[str],
+    input_mode: str = "csv",
+    catalog_name: str | None = None,
+    schema_name: str | None = None,
+    databricks_server_hostname: str | None = None,
+    databricks_http_path: str | None = None,
+    databricks_token: str | None = None,
+    table_filter: list[str] | None = None,
 ) -> Path:
-    if not input_path.exists() or not input_path.is_dir():
-        raise FileNotFoundError(f"Input path is not a directory: {input_path}")
     if not template_path.exists():
         raise FileNotFoundError(f"ODCS Excel template not found: {template_path}")
 
-    csv_files = sorted(input_path.glob("*.csv"))
-    if not csv_files:
-        raise RuntimeError(f"No CSV files found in {input_path}")
+    if input_mode not in INPUT_MODES:
+        raise RuntimeError(f"Unsupported input mode {input_mode!r}. Use one of: {', '.join(sorted(INPUT_MODES))}")
 
-    tables = [_table_metadata(path, sample_rows) for path in csv_files]
+    if input_mode in {"catalog-schema", "information-schema"}:
+        if (not catalog_name or not schema_name) and str(input_path):
+            parsed_catalog, parsed_schema = _parse_catalog_schema(str(input_path))
+            catalog_name = catalog_name or parsed_catalog
+            schema_name = schema_name or parsed_schema
+        if not catalog_name or not schema_name:
+            raise RuntimeError("catalog-schema mode requires --input-path <catalog>.<schema> or --catalog-name and --schema-name.")
+        tables = _fetch_information_schema_tables(
+            catalog_name=catalog_name,
+            schema_name=schema_name,
+            server_hostname=databricks_server_hostname or os.getenv("DATABRICKS_SERVER_HOSTNAME"),
+            http_path=databricks_http_path or os.getenv("DATABRICKS_HTTP_PATH"),
+            access_token=databricks_token or os.getenv("DATABRICKS_TOKEN"),
+            table_filter=table_filter or [],
+        )
+        if not tables:
+            raise RuntimeError(f"No tables found in {catalog_name}.{schema_name}")
+        source_label = Path(f"{catalog_name}.{schema_name}")
+    else:
+        if not input_path.exists():
+            raise FileNotFoundError(f"Input path does not exist: {input_path}")
+        if input_path.is_file():
+            if input_path.suffix.lower() != ".csv":
+                raise RuntimeError(f"Input file must be a CSV file: {input_path}")
+            csv_files = [input_path]
+            source_label = input_path.parent
+        else:
+            csv_files = sorted(input_path.glob("*.csv"))
+            source_label = input_path
+
+        if not csv_files:
+            raise RuntimeError(f"No CSV files found in {input_path}")
+        tables = [_table_metadata(path, sample_rows) for path in csv_files]
+
     rule_catalog = _load_rule_catalog(rules_path)
     wb = load_workbook(template_path)
-    _write_fundamentals(wb, input_path, contract_name, domain, data_product)
+    _write_fundamentals(wb, source_label, contract_name, domain, data_product)
 
     schema_templates = [name for name in wb.sheetnames if name.startswith("Schema")]
     if not schema_templates:
@@ -517,13 +707,19 @@ def create_odcs_xlsx_from_csv_folder(
 
 
 def _default_output(input_path: Path) -> Path:
-    safe_name = re.sub(r"[^a-zA-Z0-9_-]+", "_", input_path.name).strip("_") or "csv_folder"
+    safe_name = re.sub(r"[^a-zA-Z0-9_-]+", "_", input_path.stem if input_path.is_file() else input_path.name).strip("_") or "csv_input"
     return DEFAULT_OUTPUT_DIR / f"{safe_name}_odcs_contract.xlsx"
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Create an ODCS Excel workbook from all CSV files in a folder.")
-    parser.add_argument("--input-path", required=True, help="Folder containing CSV files. Each CSV becomes one schema sheet.")
+    parser = argparse.ArgumentParser(description="Create an ODCS Excel workbook from CSV files or Databricks catalog.schema.")
+    parser.add_argument(
+        "--input-mode",
+        choices=sorted(INPUT_MODES),
+        default="csv",
+        help="csv reads a CSV file/folder. catalog-schema reads table/column metadata from Databricks information_schema for <catalog>.<schema>. information-schema is a backwards-compatible alias.",
+    )
+    parser.add_argument("--input-path", help="CSV file/folder for csv mode, or <catalog>.<schema> for catalog-schema mode.")
     parser.add_argument("--output", help="Output XLSX path. Defaults to dimdc/outputs/<folder>_odcs_contract.xlsx.")
     parser.add_argument("--template", default=str(DEFAULT_TEMPLATE), help="ODCS Excel template path.")
     parser.add_argument("--sample-rows", type=int, default=1000, help="Rows sampled per CSV for type/key inference.")
@@ -531,6 +727,12 @@ def main() -> None:
     parser.add_argument("--domain", default="adhoc")
     parser.add_argument("--data-product", default="csv_folder")
     parser.add_argument("--tags", default="adhoc, csv, source_feed")
+    parser.add_argument("--catalog-name", help="Optional Databricks catalog name for catalog-schema mode.")
+    parser.add_argument("--schema-name", help="Optional Databricks schema/database name for catalog-schema mode.")
+    parser.add_argument("--table-names", default="", help="Optional comma-separated table list for catalog-schema mode.")
+    parser.add_argument("--databricks-server-hostname", help="Databricks server hostname. Defaults to DATABRICKS_SERVER_HOSTNAME.")
+    parser.add_argument("--databricks-http-path", help="Databricks SQL warehouse HTTP path. Defaults to DATABRICKS_HTTP_PATH.")
+    parser.add_argument("--databricks-token", help="Databricks token. Defaults to DATABRICKS_TOKEN.")
     parser.add_argument("--rules", default=str(DEFAULT_RULES), help="Rule catalog CSV for custom quality rule references.")
     parser.add_argument(
         "--custom-rule-ids",
@@ -539,21 +741,38 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    input_path = Path(args.input_path)
+    if args.input_mode == "csv" and not args.input_path:
+        parser.error("--input-path is required when --input-mode csv")
+    if args.input_mode in {"catalog-schema", "information-schema"} and not args.input_path and (not args.catalog_name or not args.schema_name):
+        parser.error("--input-path <catalog>.<schema> or both --catalog-name and --schema-name are required for catalog-schema mode")
+
+    input_path = Path(args.input_path) if args.input_path else Path(f"{args.catalog_name}.{args.schema_name}")
     output_path = Path(args.output) if args.output else _default_output(input_path)
     custom_rule_ids = [rule_id.strip() for rule_id in args.custom_rule_ids.split(",") if rule_id.strip()]
-    output = create_odcs_xlsx_from_csv_folder(
-        input_path=input_path,
-        output_path=output_path,
-        template_path=Path(args.template),
-        sample_rows=args.sample_rows,
-        contract_name=args.contract_name,
-        domain=args.domain,
-        data_product=args.data_product,
-        tags=args.tags,
-        rules_path=Path(args.rules) if args.rules else None,
-        custom_rule_ids=custom_rule_ids,
-    )
+    table_filter = [table.strip() for table in args.table_names.split(",") if table.strip()]
+    try:
+        output = create_odcs_xlsx_from_csv_folder(
+            input_path=input_path,
+            output_path=output_path,
+            template_path=Path(args.template),
+            sample_rows=args.sample_rows,
+            contract_name=args.contract_name,
+            domain=args.domain,
+            data_product=args.data_product,
+            tags=args.tags,
+            rules_path=Path(args.rules) if args.rules else None,
+            custom_rule_ids=custom_rule_ids,
+            input_mode=args.input_mode,
+            catalog_name=args.catalog_name,
+            schema_name=args.schema_name,
+            databricks_server_hostname=args.databricks_server_hostname,
+            databricks_http_path=args.databricks_http_path,
+            databricks_token=args.databricks_token,
+            table_filter=table_filter,
+        )
+    except (FileNotFoundError, RuntimeError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        raise SystemExit(1) from None
     print(f"Generated: {output}")
 
 
