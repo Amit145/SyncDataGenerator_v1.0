@@ -276,6 +276,14 @@ Mode-scoped PRD raw folders are generated when `output_settings.generate_prd_raw
 
 `prd_01` is source 1. For `base`, it is the CRM raw shape. For `enhanced`, it contains the CRM raw shape plus an internal `addons/` staging folder and a final `vault_ready_28/` raw package; enhanced silver is rebuilt from this single PRD1 package. For `mlops`, PRD1 contains CRM raw plus mirrored MLOps source-1 delta files. `prd_02` is the SAP/source-2 raw shape for base, enhanced, and MLOps from `business_vault/bv.xlsx` sheet `Source2_Structure`; it uses different `SAP_*` source IDs while preserving matchable business attributes for later Business Vault mastering.
 
+Policy product raw is generated with `--include-policy-product` under `data/raw/policy/<run_id>`. It has the same two-source shape, but follows `policy_prd_inputs/nPolicy_BV_Mapping_Rules.xlsx` and `policy_prd_inputs/POLICY_LOGICAL_MODEL V3.PDF`: `prd_01` is the CRM/full policy logical model and includes `address.csv`, `natural_person.csv`, `legal_entity.csv`, and `insured_object.csv`; `prd_02` is the SAP/source-2 subset for `policy.csv`, `coverage.csv`, and `policy_coverage.csv`. Policy date rules remain unchanged: renewal date stays 0-10 days before policy end date, issue date is not after start date, `LAPSED` requires a completed policy cycle, and sub-one-year churn remains `CANCELLED`.
+
+Verify policy two-source raw after generation:
+
+```powershell
+.\venv\Scripts\python.exe .\misc\verify_policy_two_source_raw.py --run-id <run_id>
+```
+
 Enhanced PRD1 final raw package:
 
 - `data/raw/enhanced/prd_01/<run_id>/vault_ready_28`

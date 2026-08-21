@@ -25,6 +25,8 @@ Legacy raw CRM/API/claims/data_source, canonical, silver, and raw SCD2 outputs a
 
 Claims product raw is enabled separately with `--include-claims-product` or `output_settings.generate_claims_product=true`. It writes `data/raw/claims/<run_id>/raw`, full 23-file LDM `prd_01`, claims SAP/source-2 `prd_02`, and consolidated `raw_vault`. The PRD2 claims split follows `claims/Claims_2Sources_DataTables.xlsx` for claim, loss event, and claim investigation columns, then rebuilds `raw_vault` into the existing 23-file claims LDM raw shape used by claims bronze/silver/gold.
 
+Policy product raw is enabled separately with `--include-policy-product` or `output_settings.generate_policy_product=true`. It writes `data/raw/policy/<run_id>/prd_01` and `data/raw/policy/<run_id>/prd_02`. PRD1 is the CRM source-1 full policy logical model from `policy_prd_inputs/POLICY_LOGICAL_MODEL V3.PDF`, including explicit `address`, `natural_person`, `legal_entity`, and `insured_object` files. PRD2 is the SAP/source-2 subset defined in `policy_prd_inputs/nPolicy_BV_Mapping_Rules.xlsx`; only `policy`, `coverage`, and `policy_coverage` are emitted because those are the tables marked `CRM, SAP` in the workbook. Policy matching follows the workbook rules: use common policy number where available, otherwise use person identifier, product identifier, policy start date, and policy end date; coverage matching uses coverage identifier or coverage code/type/name; policy coverage matching uses policy coverage identifier or policy/coverage combination.
+
 Direct MLOps dimensional output is generated on demand from an existing MLOps synthetic vault run:
 
 ```powershell

@@ -295,6 +295,10 @@ RAW_META_COLUMNS = ["batch_ref", "pull_ts", "origin_sys"]
 
 
 LATEST_POLICY_PRD1_SCHEMAS = {
+    "address.csv": RAW_META_COLUMNS + [
+        "address_identifier", "address_type", "street_address", "postcode",
+        "region", "city", "country", "state",
+    ],
     "billing.csv": RAW_META_COLUMNS + [
         "billing_identifier", "billing_account_number", "billing_status",
         "billing_frequency", "payment_method", "annual_premium_amount",
@@ -328,12 +332,6 @@ LATEST_POLICY_PRD1_SCHEMAS = {
         "event_type_identifier", "event_type_code", "event_type_name",
         "event_type_description",
     ],
-    "geography.csv": RAW_META_COLUMNS + [
-        "applicable_jurisdiction", "census_zone", "commune_code",
-        "geocoding_level", "latitude", "longitude", "municipal_district",
-        "natcat_hazard_zone_scheme", "sub_region", "surface_elevation",
-        "city", "country", "state", "geography_identifier",
-    ],
     "home.csv": RAW_META_COLUMNS + [
         "is_existing_home_customer", "home_type",
         "roof_construction_material_type", "wall_construction_material_type",
@@ -358,6 +356,7 @@ LATEST_POLICY_PRD1_SCHEMAS = {
         "loss_event_source_system", "loss_event_created_date",
         "loss_event_update_date", "loss_event_severity", "loss_event_address",
         "catastrophe_code", "catastrophe_name", "geography_identifier",
+        "address_identifier",
     ],
     "motor.csv": RAW_META_COLUMNS + [
         "vehicle_risk_class_code", "vehicle_body_type", "vehicle_fuel_type",
@@ -370,6 +369,24 @@ LATEST_POLICY_PRD1_SCHEMAS = {
         "insured_object_current_status", "geography_identifier",
         "policy_identifier",
     ],
+    "insured_object.csv": RAW_META_COLUMNS + [
+        "insured_object_identifier", "insured_object_type",
+        "insured_object_subtype", "insured_object_description",
+        "insured_value", "insured_object_start_date", "insured_object_end_date",
+        "insured_object_current_status", "policy_identifier",
+        "address_identifier",
+    ],
+    "legal_entity.csv": RAW_META_COLUMNS + [
+        "person_identifier", "company_name", "date_of_constitution",
+    ],
+    "natural_person.csv": RAW_META_COLUMNS + [
+        "person_identifier", "role", "courtesy_title", "first_name",
+        "last_name", "full_name", "occupation", "birth_date", "gender",
+        "nationality", "job_title", "marital_status",
+        "assessed_disability_degree", "preferred_language",
+        "home_phone_number", "work_phone_number", "personal_email",
+        "work_email",
+    ],
     "person.csv": RAW_META_COLUMNS + [
         "person_identifier", "assessed_disability_degree",
         "preferred_language", "tenant_identifier", "source_identifier",
@@ -381,6 +398,7 @@ LATEST_POLICY_PRD1_SCHEMAS = {
         "street_address", "postcode", "home_phone_number", "work_phone_number",
         "personal_email", "work_email", "job_title", "role", "first_name",
         "company_name", "date_of_constitution", "geography_identifier",
+        "address_identifier",
     ],
     "policy.csv": RAW_META_COLUMNS + [
         "policy_cover_option", "is_fraud", "policy_cycle", "policy_end_date",
@@ -395,6 +413,7 @@ LATEST_POLICY_PRD1_SCHEMAS = {
         "policy_renewal_satisfaction_score", "policy_renewal_feedback",
         "number_of_insured_persons", "loyalty_discount_usage",
         "policy_identifier", "discount", "is_renewal_escalation",
+        "person_identifier",
     ],
     "policy_coverage.csv": RAW_META_COLUMNS + [
         "coverage_start_date", "coverage_amount", "deductible_amount",
@@ -1000,13 +1019,57 @@ def _logical_policy_rows_from_crm(prd1_dir: Path, batch_id: str) -> dict[str, li
     party_by_ref = {row.get("party_ref", ""): row for row in parties}
     product_by_ref = {row.get("product_ref", ""): row for row in products}
     policy_by_ref = {row.get("policy_ref", ""): row for row in policies}
+    policy_by_quote_ref = {row.get("quote_ref", ""): row for row in policies}
 
     geographies: dict[str, dict] = {}
+    address_rows: list[dict] = []
+    address_ids: set[str] = set()
 
     def register_geo(city: str, state: str, country: str, postcode: str = "") -> str:
         row = _build_geography_row(batch_id, city, state, country, postcode)
         geographies[row["geography_identifier"]] = row
         return row["geography_identifier"]
+
+    def register_address(
+        address_identifier: str,
+        address_type: str,
+        street_address: str,
+        postcode: str,
+        region: str,
+        city: str,
+        country: str,
+        state: str,
+    ) -> str:
+        address_id = str(address_identifier or "").strip()
+        if not address_id:
+            address_seed = "|".join([street_address or "", postcode or "", city or "", state or ""])
+            address_id = f"ADDR_{abs(_stable_index(address_seed, 999999)):06d}"
+        if address_id not in address_ids:
+            address_rows.append({
+                **_metadata(batch_id, "CRM"),
+                "address_identifier": address_id,
+                "address_type": address_type,
+                "street_address": street_address,
+                "postcode": postcode,
+                "region": region,
+                "city": city,
+                "country": country,
+                "state": state,
+            })
+            address_ids.add(address_id)
+        return address_id
+
+    for row in addresses:
+        register_address(
+            row.get("address_ref"),
+            row.get("address_type_txt"),
+            row.get("street_txt"),
+            row.get("postal_cd"),
+            row.get("region_txt"),
+            row.get("city_nm"),
+            row.get("country_cd"),
+            row.get("state_cd"),
+        )
 
     person_rows = []
     for party in parties:
@@ -1054,7 +1117,45 @@ def _logical_policy_rows_from_crm(prd1_dir: Path, batch_id: str) -> dict[str, li
             "company_name": party.get("legal_name"),
             "date_of_constitution": _date_part(party.get("constitution_dt")),
             "geography_identifier": geo_id,
+            "address_identifier": address.get("address_ref"),
         })
+
+    natural_person_rows = [
+        {
+            **_metadata(batch_id, "CRM"),
+            "person_identifier": row.get("person_identifier"),
+            "role": row.get("role"),
+            "courtesy_title": row.get("courtesy_title"),
+            "first_name": row.get("first_name"),
+            "last_name": row.get("last_name"),
+            "full_name": row.get("full_name"),
+            "occupation": row.get("occupation"),
+            "birth_date": row.get("birth_date"),
+            "gender": row.get("gender"),
+            "nationality": row.get("nationality"),
+            "job_title": row.get("job_title"),
+            "marital_status": row.get("marital_status"),
+            "assessed_disability_degree": row.get("assessed_disability_degree"),
+            "preferred_language": row.get("preferred_language"),
+            "home_phone_number": row.get("home_phone_number"),
+            "work_phone_number": row.get("work_phone_number"),
+            "personal_email": row.get("personal_email"),
+            "work_email": row.get("work_email"),
+        }
+        for row in person_rows
+        if str(row.get("person_type", "")).upper() == "NATURAL"
+    ]
+
+    legal_entity_rows = [
+        {
+            **_metadata(batch_id, "CRM"),
+            "person_identifier": row.get("person_identifier"),
+            "company_name": row.get("company_name"),
+            "date_of_constitution": row.get("date_of_constitution"),
+        }
+        for row in person_rows
+        if str(row.get("person_type", "")).upper() == "LEGAL"
+    ]
 
     product_rows = [
         {
@@ -1088,7 +1189,12 @@ def _logical_policy_rows_from_crm(prd1_dir: Path, batch_id: str) -> dict[str, li
             "underwriting_approval_type": row.get("uw_approval_type"),
             "renewal_current_period_amount": _money(row.get("renewal_amt_curr")),
             "renewal_previous_period_amount": _money(row.get("renewal_amt_next")),
-            "sales_channel_identifier": "",
+            "sales_channel_identifier": (
+                _sales_channel_identifier(
+                    policy_by_quote_ref.get(row.get("quote_ref", ""), {}).get("sales_channel_txt")
+                )
+                if row.get("quote_ref") in policy_by_quote_ref else ""
+            ),
             "quote_version_number": "1",
         }
         for row in quotes
@@ -1131,6 +1237,10 @@ def _logical_policy_rows_from_crm(prd1_dir: Path, batch_id: str) -> dict[str, li
             "policy_identifier": row.get("policy_ref"),
             "discount": row.get("no_claims_discount_years"),
             "is_renewal_escalation": row.get("is_renewal_escalation"),
+            "person_identifier": (
+                (party_by_ref.get(row.get("party_ref", ""), {}) or {}).get("person_identifier")
+                or row.get("party_ref")
+            ),
         })
 
     billing_rows = []
@@ -1203,10 +1313,21 @@ def _logical_policy_rows_from_crm(prd1_dir: Path, batch_id: str) -> dict[str, li
     ]
 
     home_rows = []
+    insured_object_rows = []
     for row in homes:
         geo_id = register_geo(row.get("city_nm"), row.get("state_cd"), row.get("country_cd"), row.get("postal_cd"))
         policy = policy_by_ref.get(row.get("policy_ref", ""), {})
         value = _money(float(_money(policy.get("gross_amt"))) * 120)
+        address_id = register_address(
+            row.get("address_ref") or f"ADDR_{row.get('property_ref', '')}",
+            "risk",
+            row.get("risk_address_txt"),
+            row.get("postal_cd"),
+            "",
+            row.get("city_nm"),
+            row.get("country_cd"),
+            row.get("state_cd"),
+        )
         home_rows.append({
             **_metadata(batch_id, "CRM"),
             "is_existing_home_customer": row.get("existing_home_ind"),
@@ -1230,11 +1351,34 @@ def _logical_policy_rows_from_crm(prd1_dir: Path, batch_id: str) -> dict[str, li
             "geography_identifier": geo_id,
             "policy_identifier": row.get("policy_ref"),
         })
+        insured_object_rows.append({
+            **_metadata(batch_id, "CRM"),
+            "insured_object_identifier": row.get("property_ref"),
+            "insured_object_type": "Home",
+            "insured_object_subtype": row.get("property_type_txt"),
+            "insured_object_description": row.get("risk_address_txt"),
+            "insured_value": value,
+            "insured_object_start_date": _date_part(policy.get("policy_start_dt")),
+            "insured_object_end_date": _date_part(policy.get("policy_end_dt")),
+            "insured_object_current_status": policy.get("policy_status_txt"),
+            "policy_identifier": row.get("policy_ref"),
+            "address_identifier": address_id,
+        })
 
     motor_rows = []
     for row in motors:
         geo_id = register_geo("", row.get("registration_state_cd"), "UK", "")
         policy = policy_by_ref.get(row.get("policy_ref", ""), {})
+        address_id = register_address(
+            row.get("address_ref") or f"ADDR_{row.get('vehicle_ref', '')}",
+            "risk",
+            row.get("garage_address_txt"),
+            "",
+            "",
+            "",
+            "UK",
+            row.get("registration_state_cd"),
+        )
         motor_rows.append({
             **_metadata(batch_id, "CRM"),
             "vehicle_risk_class_code": row.get("risk_class_cd"),
@@ -1259,6 +1403,19 @@ def _logical_policy_rows_from_crm(prd1_dir: Path, batch_id: str) -> dict[str, li
             "insured_object_current_status": policy.get("policy_status_txt"),
             "geography_identifier": geo_id,
             "policy_identifier": row.get("policy_ref"),
+        })
+        insured_object_rows.append({
+            **_metadata(batch_id, "CRM"),
+            "insured_object_identifier": row.get("vehicle_ref"),
+            "insured_object_type": "Motor",
+            "insured_object_subtype": row.get("vehicle_class_txt"),
+            "insured_object_description": row.get("model_nm"),
+            "insured_value": _money(row.get("insured_value_amt")),
+            "insured_object_start_date": _date_part(policy.get("policy_start_dt")),
+            "insured_object_end_date": _date_part(policy.get("policy_end_dt")),
+            "insured_object_current_status": policy.get("policy_status_txt"),
+            "policy_identifier": row.get("policy_ref"),
+            "address_identifier": address_id,
         })
 
     claim_rows = [
@@ -1297,6 +1454,16 @@ def _logical_policy_rows_from_crm(prd1_dir: Path, batch_id: str) -> dict[str, li
     loss_rows = []
     for row in losses:
         geo_id = row.get("geography_identifier") or register_geo("", "", "UK", "")
+        address_id = register_address(
+            row.get("address_ref") or f"ADDR_{row.get('loss_event_identifier', '')}",
+            "loss_event",
+            row.get("loss_event_address"),
+            "",
+            "",
+            "",
+            "UK",
+            "",
+        )
         loss_rows.append({
             **_metadata(batch_id, "CRM"),
             "loss_event_name": row.get("loss_event_name"),
@@ -1331,6 +1498,7 @@ def _logical_policy_rows_from_crm(prd1_dir: Path, batch_id: str) -> dict[str, li
             "catastrophe_code": row.get("catastrophe_code"),
             "catastrophe_name": row.get("catastrophe_name"),
             "geography_identifier": geo_id,
+            "address_identifier": address_id,
         })
 
     policy_event_rows = [
@@ -1391,8 +1559,45 @@ def _logical_policy_rows_from_crm(prd1_dir: Path, batch_id: str) -> dict[str, li
         }
         for row in risk_assessments
     ]
+    risk_policy_by_insured_object = {
+        row.get("insured_object_identifier", ""): row.get("policy_identifier", "")
+        for row in risk_assessments
+    }
+    insured_object_ids = {row.get("insured_object_identifier") for row in insured_object_rows}
+    for row in risk_rows:
+        insured_object_id = row.get("insured_object_identifier")
+        if not insured_object_id or insured_object_id in insured_object_ids:
+            continue
+        policy_identifier = risk_policy_by_insured_object.get(insured_object_id, "")
+        policy = policy_by_ref.get(policy_identifier, {})
+        policy_address = address_by_party.get(policy.get("party_ref", ""), {})
+        address_id = register_address(
+            policy_address.get("address_ref") or f"ADDR_{insured_object_id}",
+            "policy_risk",
+            policy_address.get("street_txt"),
+            policy_address.get("postal_cd"),
+            policy_address.get("region_txt"),
+            policy_address.get("city_nm"),
+            policy_address.get("country_cd"),
+            policy_address.get("state_cd"),
+        )
+        insured_object_rows.append({
+            **_metadata(batch_id, "CRM"),
+            "insured_object_identifier": insured_object_id,
+            "insured_object_type": row.get("risk_type") or "Policy Risk",
+            "insured_object_subtype": row.get("risk_classification"),
+            "insured_object_description": row.get("risk_number"),
+            "insured_value": row.get("exposure_amount"),
+            "insured_object_start_date": _date_part(policy.get("policy_start_dt")),
+            "insured_object_end_date": _date_part(policy.get("policy_end_dt")),
+            "insured_object_current_status": policy.get("policy_status_txt"),
+            "policy_identifier": policy_identifier,
+            "address_identifier": address_id,
+        })
+        insured_object_ids.add(insured_object_id)
 
     return {
+        "address.csv": address_rows,
         "billing.csv": billing_rows,
         "claim.csv": claim_rows,
         "coverage.csv": coverage_rows,
@@ -1406,10 +1611,12 @@ def _logical_policy_rows_from_crm(prd1_dir: Path, batch_id: str) -> dict[str, li
             }
             for row in events
         ],
-        "geography.csv": list(geographies.values()),
         "home.csv": home_rows,
+        "insured_object.csv": insured_object_rows,
+        "legal_entity.csv": legal_entity_rows,
         "loss_event.csv": loss_rows,
         "motor.csv": motor_rows,
+        "natural_person.csv": natural_person_rows,
         "person.csv": person_rows,
         "policy.csv": policy_rows,
         "policy_coverage.csv": policy_coverage_rows,
@@ -1482,6 +1689,7 @@ def _logical_policy_rows_from_sap(prd2_dir: Path, batch_id: str) -> dict[str, li
             "policy_identifier": row.get("crm_policy_ref") or _remove_sap_prefix(row.get("sap_policy_id")),
             "discount": "",
             "is_renewal_escalation": "",
+            "person_identifier": _remove_sap_prefix(row.get("sap_party_id")),
         }
         for row in policies
     ]

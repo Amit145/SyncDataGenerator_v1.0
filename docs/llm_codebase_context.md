@@ -69,6 +69,19 @@ Claims product outputs are generated from the claim LDM/CDM/DV references under 
 
 Claims `prd_01` is the full 23-file claims LDM raw source. Claims `prd_02` is generated from `claims/Claims_2Sources_DataTables.xlsx` as the SAP/source-2 view for claim, loss event, and claim investigation. `raw_vault` is the consolidated 23-file claims LDM raw shape consumed by the existing claims bronze/silver/gold pipeline. See `docs/claims_product_flow.md` before changing claim raw, silver vault, or gold logic.
 
+Optional policy product raw:
+
+```powershell
+.\venv\Scripts\python.exe .\main.py --include-policy-product
+```
+
+Policy product outputs are generated from `policy_prd_inputs/POLICY_LOGICAL_MODEL V3.PDF` and `policy_prd_inputs/nPolicy_BV_Mapping_Rules.xlsx` and write:
+
+- `data/raw/policy/<run_id>/prd_01`
+- `data/raw/policy/<run_id>/prd_02`
+
+Policy `prd_01` is the CRM/full logical model and includes explicit `address.csv`, `natural_person.csv`, `legal_entity.csv`, and `insured_object.csv`. Policy `prd_02` is the SAP/source-2 subset from the workbook and emits only `policy.csv`, `coverage.csv`, and `policy_coverage.csv`. Verify with `misc/verify_policy_two_source_raw.py --run-id <run_id>`. The verifier checks workbook source scope, headers, PRD1/PRD2 match keys, FK resolution, policy renewal/date rules, and insured-object date/status alignment to policy.
+
 Mode-scoped PRD raw folders are generated only when `config/scenario_v1.json` has `output_settings.generate_prd_raw=true`:
 
 - `data/raw/base/prd_01/<run_id>`

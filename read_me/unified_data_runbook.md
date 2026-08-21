@@ -50,6 +50,23 @@ Claims product creates a two-source claims raw split and a vault-ready consolida
 
 `prd_01` is the full 23-file claims LDM raw source, `prd_02` is SAP/source-2 from `claims/Claims_2Sources_DataTables.xlsx`, and `raw_vault` is the consolidated 23-file claims LDM input used by the claims vault builder.
 
+Policy product generation:
+
+```powershell
+.\venv\Scripts\python.exe .\main.py --include-policy-product
+```
+
+Policy product creates a two-source raw split:
+
+- `data/raw/policy/<run_id>/prd_01`
+- `data/raw/policy/<run_id>/prd_02`
+
+`prd_01` is the CRM/full policy logical model from the policy PDF. `prd_02` is the SAP/source-2 subset from `policy_prd_inputs/nPolicy_BV_Mapping_Rules.xlsx` and emits only policy, coverage, and policy coverage. Verify it with:
+
+```powershell
+.\venv\Scripts\python.exe .\misc\verify_policy_two_source_raw.py --run-id <run_id>
+```
+
 Large base-only streaming generation:
 
 ```powershell

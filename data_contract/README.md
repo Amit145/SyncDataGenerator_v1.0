@@ -45,6 +45,8 @@ The current implementation can generate and verify these contracts automatically
 ```text
 claims raw prd_01
 claims raw prd_02
+policy raw prd_01
+policy raw prd_02
 enhanced raw prd_01 vault_ready_28
 enhanced raw prd_02
 ```
