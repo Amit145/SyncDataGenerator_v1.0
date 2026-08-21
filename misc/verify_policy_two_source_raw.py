@@ -115,6 +115,11 @@ def _assert_policy_dates(rows: list[dict[str, str]], label: str) -> None:
         issue = _parse_date(row.get("policy_issue_date", ""))
         status = str(row.get("policy_status", "")).upper()
         cycle = int(float(row.get("policy_cycle") or 0))
+        renewal_flag = str(row.get("is_policy_renewal", "")).upper()
+        expected_renewal_flag = "Y" if cycle >= 1 else "N"
+        cancellation = _parse_date(row.get("policy_cancellation_date", ""))
+        status_date = _parse_date(row.get("policy_status_date", ""))
+        pull_ts = _parse_date(row.get("pull_ts", ""))
         if start and end and start > end:
             raise AssertionError(f"{label} {policy_id}: policy_start_date after policy_end_date")
         if issue and start and issue > start:
@@ -125,6 +130,23 @@ def _assert_policy_dates(rows: list[dict[str, str]], label: str) -> None:
                 raise AssertionError(f"{label} {policy_id}: renewal_date outside 0-10 day window")
         if status == "LAPSED" and cycle < 1:
             raise AssertionError(f"{label} {policy_id}: LAPSED policy has policy_cycle < 1")
+        if renewal_flag != expected_renewal_flag:
+            raise AssertionError(
+                f"{label} {policy_id}: is_policy_renewal={renewal_flag!r} "
+                f"is inconsistent with policy_cycle={cycle}"
+            )
+        if status in {"CANCELLED", "LAPSED"}:
+            if not cancellation:
+                raise AssertionError(f"{label} {policy_id}: {status} policy has no cancellation date")
+            if status_date != cancellation:
+                raise AssertionError(f"{label} {policy_id}: status date does not match cancellation date")
+            if pull_ts and end and end > pull_ts:
+                raise AssertionError(f"{label} {policy_id}: {status} policy ends after pull_ts")
+        elif status == "ACTIVE" and pull_ts:
+            if start and start > pull_ts:
+                raise AssertionError(f"{label} {policy_id}: ACTIVE policy starts after pull_ts")
+            if end and end <= pull_ts:
+                raise AssertionError(f"{label} {policy_id}: ACTIVE policy is not active at pull_ts")
         if status == "EXPIRED":
             raise AssertionError(f"{label} {policy_id}: EXPIRED status is not currently supported")
 
@@ -244,6 +266,13 @@ def verify(run_id: str | None, raw_root: Path, workbook: Path) -> None:
     _assert_fk(prd1["loss_event.csv"], "insured_object_identifier", prd1_insured_object_ids, "prd_01/loss_event")
     _assert_fk(prd1["loss_event.csv"], "address_identifier", prd1_address_ids, "prd_01/loss_event", True)
     _assert_fk(prd1["claim.csv"], "policy_identifier", prd1_policy_ids, "prd_01/claim", True)
+    _assert_fk(prd1["claim.csv"], "loss_event_identifier", _nonblank_set(prd1["loss_event.csv"], "loss_event_identifier"), "prd_01/claim", True)
+    _assert_fk(prd1["billing.csv"], "policy_identifier", prd1_policy_ids, "prd_01/billing", True)
+    _assert_fk(prd1["policy_event.csv"], "policy_identifier", prd1_policy_ids, "prd_01/policy_event", True)
+    _assert_fk(prd1["policy_event.csv"], "event_type_identifier", _nonblank_set(prd1["event_type.csv"], "event_type_identifier"), "prd_01/policy_event", True)
+    _assert_fk(prd1["policy_participant.csv"], "policy_identifier", prd1_policy_ids, "prd_01/policy_participant", True)
+    _assert_fk(prd1["policy_participant.csv"], "person_identifier", prd1_person_ids, "prd_01/policy_participant", True)
+    _assert_fk(prd1["policy_participant.csv"], "role_identifier", _nonblank_set(prd1["role.csv"], "role_identifier"), "prd_01/policy_participant", True)
 
     for label, rows in (("prd_01/policy", prd1["policy.csv"]), ("prd_02/policy", prd2["policy.csv"])):
         _assert_policy_dates(rows, label)
@@ -268,6 +297,8 @@ def verify(run_id: str | None, raw_root: Path, workbook: Path) -> None:
             raise AssertionError(f"insured_object status does not align to policy: {row}")
 
     _assert_match_rules(prd1, prd2)
+    if any(not row.get("loyalty_discount_usage", "").strip() for row in prd2["policy.csv"]):
+        raise AssertionError("prd_02/policy.loyalty_discount_usage must be populated for SAP priority")
     print(f"Policy two-source raw valid: {root}")
 
 

@@ -10,6 +10,11 @@ from helper.csv_writer import write_csv
 from helper.raw_metadata import RAW_PULL_TS
 
 
+# Updated for each synchronous policy generation run so raw metadata uses the
+# run's own snapshot timestamp instead of the legacy fixed timestamp.
+_ACTIVE_POLICY_PULL_TS = RAW_PULL_TS
+
+
 POLICY_SOURCE_FILES = [
     "party_master.csv",
     "contact_point.csv",
@@ -479,7 +484,8 @@ SAP_SOURCE_SCHEMAS = {
         "policy_issue_date", "renewal_date", "policy_cycle", "cover_option",
         "gross_written_premium", "gross_earned_premium", "current_renewal_premium",
         "next_renewal_premium", "sales_channel", "payment_method",
-        "auto_renew_flag", "fraud_flag",
+        "auto_renew_flag", "fraud_flag", "policy_cancellation_date",
+        "loyalty_discount_usage", "is_installment_default",
     ],
     "sap_coverage.csv": [
         "batch_ref", "pull_ts", "origin_sys", "sap_coverage_id",
@@ -561,6 +567,11 @@ def _int_text(value: str, default: int = 0) -> str:
         return str(default)
 
 
+def _is_policy_renewal(value: str) -> str:
+    """Derive renewal context from completed annual policy cycles."""
+    return "Y" if int(_int_text(value, 0)) >= 1 else "N"
+
+
 def _date_plus(value: str, days: int) -> str:
     text = _date_part(value)
     try:
@@ -594,7 +605,7 @@ def _first_value(*values: str) -> str:
 
 
 def _metadata(batch_id: str, origin_sys: str) -> dict:
-    return {"batch_ref": batch_id, "pull_ts": RAW_PULL_TS, "origin_sys": origin_sys}
+    return {"batch_ref": batch_id, "pull_ts": _ACTIVE_POLICY_PULL_TS, "origin_sys": origin_sys}
 
 
 def _first_existing_row(rows: list[dict], key: str, value: str) -> dict:
@@ -1219,14 +1230,18 @@ def _logical_policy_rows_from_crm(prd1_dir: Path, batch_id: str) -> dict[str, li
             "policy_sum_insured": _money(float(_money(row.get("gross_amt"))) * 120),
             "policy_tenure": row.get("policy_term_months"),
             "policy_type": product.get("product_type_txt") or product.get("product_line"),
-            "is_policy_renewal": "Y" if _int_text(row.get("policy_cycle_no"), 1) != "1" else "N",
+            "is_policy_renewal": _is_policy_renewal(row.get("policy_cycle_no")),
             "policy_cancellation_date": _date_part(row.get("policy_end_dt")) if row.get("policy_status_txt", "").upper() in {"CANCELLED", "LAPSED"} else "",
             "policy_cancellation_reason": "Non payment" if row.get("policy_status_txt", "").upper() in {"CANCELLED", "LAPSED"} else "",
             "policy_retention_limit": _money(float(_money(row.get("gross_amt"))) * 1.5),
             "policy_base_premium": _money(row.get("gross_amt")),
             "sales_channel_identifier": _sales_channel_identifier(row.get("sales_channel_txt")),
             "quote_identifier": row.get("quote_ref"),
-            "policy_status_date": _date_part(row.get("policy_start_dt")),
+            "policy_status_date": _date_part(
+                row.get("policy_end_dt")
+                if row.get("policy_status_txt", "").upper() in {"CANCELLED", "LAPSED"}
+                else row.get("policy_start_dt")
+            ),
             "limit_for_indemnification": _money(float(_money(row.get("gross_amt"))) * 120),
             "policy_expiry_date": _date_part(row.get("policy_end_dt")),
             "is_auto_renew_enabled": row.get("is_auto_renew_enabled"),
@@ -1671,21 +1686,25 @@ def _logical_policy_rows_from_sap(prd2_dir: Path, batch_id: str) -> dict[str, li
             "policy_sum_insured": _money(float(_money(row.get("gross_written_premium"))) * 120),
             "policy_tenure": "",
             "policy_type": "",
-            "is_policy_renewal": "Y" if _int_text(row.get("policy_cycle"), 1) != "1" else "N",
-            "policy_cancellation_date": "",
+            "is_policy_renewal": _is_policy_renewal(row.get("policy_cycle")),
+            "policy_cancellation_date": _date_part(row.get("policy_cancellation_date")),
             "policy_cancellation_reason": "",
             "policy_retention_limit": _money(float(_money(row.get("gross_written_premium"))) * 1.5),
             "policy_base_premium": _money(row.get("gross_written_premium")),
             "sales_channel_identifier": _sales_channel_identifier(row.get("sales_channel")),
             "quote_identifier": _remove_sap_prefix(row.get("sap_quote_id")),
-            "policy_status_date": _date_part(row.get("policy_start_date")),
+            "policy_status_date": _date_part(
+                row.get("policy_cancellation_date")
+                if row.get("policy_status", "").upper() in {"CANCELLED", "LAPSED"}
+                else row.get("policy_start_date")
+            ),
             "limit_for_indemnification": _money(float(_money(row.get("gross_written_premium"))) * 120),
             "policy_expiry_date": _date_part(row.get("policy_end_date")),
             "is_auto_renew_enabled": row.get("auto_renew_flag"),
             "policy_renewal_satisfaction_score": "",
             "policy_renewal_feedback": "",
             "number_of_insured_persons": "1",
-            "loyalty_discount_usage": "",
+            "loyalty_discount_usage": row.get("loyalty_discount_usage"),
             "policy_identifier": row.get("crm_policy_ref") or _remove_sap_prefix(row.get("sap_policy_id")),
             "discount": "",
             "is_renewal_escalation": "",
@@ -1784,6 +1803,13 @@ def _write_sap_view(prd1_dir: Path, prd2_dir: Path, batch_id: str) -> None:
             "payment_method": "DD" if row.get("payment_method") == "MONTHLY_DD" else row.get("payment_method", ""),
             "auto_renew_flag": row.get("is_auto_renew_enabled", ""),
             "fraud_flag": row.get("fraud_ind", ""),
+            "policy_cancellation_date": (
+                _date_part(row.get("policy_end_dt", ""))
+                if row.get("policy_status_txt", "").upper() in {"CANCELLED", "LAPSED"}
+                else ""
+            ),
+            "loyalty_discount_usage": row.get("loyalty_discount_usage", ""),
+            "is_installment_default": row.get("is_installment_default", ""),
         })
 
     sap_coverage_rows = []
@@ -1845,6 +1871,14 @@ def write_policy_two_source_raw(raw_root: str, batch_id: str, ctx: dict) -> dict
     and columns, while retaining CRM reference columns where useful for later
     Business Vault match/merge testing.
     """
+    global _ACTIVE_POLICY_PULL_TS
+    _ACTIVE_POLICY_PULL_TS = str(
+        ctx.get("sat_load_date")
+        or ctx.get("sat_date")
+        or ctx.get("extract_ts")
+        or RAW_PULL_TS
+    )
+
     root = Path(raw_root) / "policy" / batch_id
     prd1_dir = root / "prd_01"
     prd2_dir = root / "prd_02"
